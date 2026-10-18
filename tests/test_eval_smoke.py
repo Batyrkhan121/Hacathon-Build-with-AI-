@@ -350,3 +350,36 @@ def test_inprocess_counts_query_vectors(
     assert [r.search for r in results] == ["vector", "words"]
     summary = run_eval.search_summary(results)
     assert "вектор запроса (embed_query) у 1, только по словам 1" in summary
+
+
+# ---------------------------------------- RAG review R4: eval uses the validate guard
+
+
+@pytest.mark.parametrize(
+    "claim", ["Все места открыты сейчас.", "В данный момент работает.", "Қазір ашық.", "Open 24/7."]
+)
+def test_open_claim_check_uses_shared_guard(mock_answer: Answer, claim: str) -> None:
+    bad = mock_answer.model_copy(deep=True)
+    unknown = next(c for c in bad.cards if c.open_status == "unknown")
+    unknown.why = claim
+    assert check_expect(bad, {"forbid_open_claim_without_high": True})
+
+
+def test_open_claim_in_summary_is_caught(mock_answer: Answer) -> None:
+    bad = mock_answer.model_copy(deep=True)
+    bad.summary = "Все места открыты сейчас."
+    assert any("summary" in f for f in check_expect(bad, {"forbid_open_claim_without_high": True}))
+    all_open = bad.model_copy(deep=True)
+    for c in all_open.cards:
+        c.open_status, c.open_confidence = "open", "high"
+    assert check_expect(all_open, {"forbid_open_claim_without_high": True}) == []
+
+
+def test_24_7_template_reason_is_not_a_failed_claim(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    card = next(c for c in ans.cards if c.open_status == "unknown")
+    card.why = "≈20 мин пешком, круглосуточно."
+    card.tags = [*card.tags, "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True}) == []
+    card.tags = [t for t in card.tags if t != "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True})

@@ -37,6 +37,11 @@ WEIGHTS: dict[str, float] = {
     "weather": 0.05,
 }
 MMR_LAMBDA = 0.7
+# score_parts that explain the score but are not added to it
+#   semantic  — the cosine actually used for this POI (absent = lexical only / vector dropped)
+#   no_vector — this POI has no vector while others do: its semantic part is the pool median
+#   mmr       — the MMR value that decided the order
+INFO_PARTS = frozenset({"mmr", "semantic", "no_vector"})
 
 SEMANTIC_SHARE = 0.7  # relevance = 0.7*cosine + 0.3*lexical when embeddings are available
 MIN_VISIT_MIN = 30  # drop places that close sooner than this
@@ -208,7 +213,7 @@ REASONS: dict[str, dict[str, str]] = {
     "view": {"ru": "вид на город", "kk": "қалаға көрініс", "en": "city view"},
     "photo_spot": {"ru": "место для фото", "kk": "суретке түсетін орын", "en": "photo spot"},
     "night": {"ru": "подходит для вечера", "kk": "кешке қолайлы", "en": "good for the evening"},
-    "late_open": {"ru": "работает допоздна", "kk": "кешке дейін ашық", "en": "open late"},
+    "late_open": {"ru": "работает допоздна", "kk": "кеш жабылады", "en": "open late"},
     "24_7": {"ru": "круглосуточно", "kk": "тәулік бойы", "en": "open 24/7"},
     "free": {"ru": "вход бесплатный", "kk": "кіру тегін", "en": "free entry"},
     "wheelchair": {
@@ -287,6 +292,11 @@ def _doc_index(text: str) -> tuple[frozenset[str], frozenset[str], frozenset[str
     stems = frozenset(t[:_STEM] for t in tokens)
     prefixes = frozenset(d[:_MIN_PREFIX] for d in stems if len(d) >= _MIN_PREFIX)
     return frozenset(tokens), stems, prefixes
+
+
+def text_stems(text: str) -> frozenset[str]:
+    """5-char stems of meaningful words (stopwords dropped); shared with app.validate."""
+    return frozenset(t[:_STEM] for t in _tokens(text))
 
 
 def _query_stems(intent: QueryIntent) -> frozenset[str]:
@@ -388,16 +398,39 @@ def _passes_profile(poi: POI, intent: QueryIntent) -> bool:
     return not (intent.indoor == "outdoor" and indoor is True)
 
 
-def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
-    if verdict.status == "closed" and verdict.confidence in ("high", "medium"):
-        return False
+def _hours_drop_reason(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> str | None:
+    """Why the hours filter drops a place (None = it passes). Keys of hours_dropped()."""
+    if verdict.status == "closed" and verdict.confidence == "high":
+        return "closed"
+    if verdict.status == "closed" and verdict.confidence == "medium":
+        return "closed_partial"  # today not described in OSM: closed by the OSM spec
     if verdict.status == "open" and verdict.closes_in_min is not None:
         if verdict.closes_in_min < MIN_VISIT_MIN:
-            return False
+            return "closing_soon"
     if intent.night:
         open_now = verdict.status == "open" and verdict.confidence == "high"
-        return open_now or bool(NIGHT_TAGS & set(poi.tags))
-    return True
+        if not (open_now or NIGHT_TAGS & set(poi.tags)):
+            return "night"
+    return None
+
+
+def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
+    return _hours_drop_reason(poi, verdict, intent) is None
+
+
+def hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
+    """How many places in the radius (after profile filters) the hours filter removed, by
+    reason: closed, closed_partial (today not described in OSM), closing_soon, night.
+    For the pipeline's filters panel (FEATURES); retrieve() itself stays unchanged."""
+    counts = {"closed": 0, "closed_partial": 0, "closing_soon": 0, "night": 0}
+    for poi in store.pois:
+        if haversine_m(ctx.origin, poi.geo) > ctx.radius_m or not _passes_profile(poi, intent):
+            continue
+        reason = _hours_drop_reason(poi, evaluate_hours(poi.opening_hours, ctx.local_time),
+                                    intent)
+        if reason is not None:
+            counts[reason] += 1
+    return counts
 
 
 # ------------------------------------------------------------------ scoring
@@ -599,8 +632,8 @@ def explain(
 
     missing = [t for t in intent.must_tags if t in MISSING_TAG_WORDS and t not in poi.tags]
     if missing:
-        words = (MISSING_TAG_WORDS[t] for t in missing)
-        what = ", ".join(w.get(lang, w["ru"]) for w in words)
+        labels = (MISSING_TAG_WORDS[t] for t in missing)
+        what = ", ".join(label.get(lang, label["ru"]) for label in labels)
         keys.append(("no_data", {"what": what}))
     if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))
@@ -638,6 +671,26 @@ def explain(
     return reasons
 
 
+# ------------------------------------------------------------ no-match signal
+
+
+def query_unmatched(
+    store: Store, intent: QueryIntent, ctx: SearchContext, candidates: list[Candidate]
+) -> bool:
+    """True when the free-text query asked for something and no candidate matched it.
+
+    «порекомендуй казино», gibberish: the answer is then just the nearest places. The pipeline
+    (FEATURES) adds a warning like «точного совпадения нет, показано, что рядом» (ru/kk/en).
+    False for structured requests (must_tags / categories), queries made only of stopwords
+    or landmark words («я возле Mega Silk Way»), and when nothing was found at all.
+    """
+    if not candidates or intent.must_tags or intent.categories:
+        return False
+    if not _query_stems(intent) - _landmark_stems(store, intent, ctx):
+        return False
+    return max(c.score_parts.get("relevance", 0.0) for c in candidates) == 0.0
+
+
 # -------------------------------------------------------------------- main
 
 
@@ -662,17 +715,34 @@ def retrieve(
         return []
     semantic = _semantic_scores(store, query_vec)
     query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
-    pool: list[Candidate] = []
+    passed: list[tuple[int, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
         if distance > ctx.radius_m or not _passes_profile(poi, intent):
             continue
         # the note is written in the user's language by app.hours (FEATURES, T73)
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
-        if not _passes_hours(poi, verdict, intent):
-            continue
-        sem = None if semantic is None or np.isnan(semantic[i]) else float(semantic[i])
+        if _passes_hours(poi, verdict, intent):
+            passed.append((i, poi, distance, verdict))
+
+    # a POI without a vector gets the pool median instead of a lexical-only score: otherwise
+    # it sits on another scale than 0.7*cos + 0.3*lex of its neighbours
+    median: float | None = None
+    if semantic is not None:
+        finite = [float(semantic[i]) for i, *_ in passed if not np.isnan(semantic[i])]
+        median = float(np.median(finite)) if finite else None
+    pool: list[Candidate] = []
+    for i, poi, distance, verdict in passed:
+        sem: float | None = None
+        info: dict[str, float] = {}
+        if semantic is not None and not np.isnan(semantic[i]):
+            sem = float(semantic[i])
+            info["semantic"] = round(sem, 4)
+        elif semantic is not None and median is not None:
+            sem = median
+            info["no_vector"] = 1.0
         score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems)
+        parts.update(info)
         pool.append(
             Candidate(
                 poi=poi,

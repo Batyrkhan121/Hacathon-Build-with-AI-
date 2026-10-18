@@ -33,12 +33,12 @@ import yaml
 from pydantic import ValidationError
 
 from app.schemas import Answer, RecommendRequest
+from app.validate import has_open_claim
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIOS_PATH = Path(__file__).resolve().parent / "scenarios.yaml"
 MOCK_PATH = ROOT / "web" / "mock" / "answer_sample.json"
 
-OPEN_CLAIMS = ("открыто сейчас", "сейчас открыт", "open now", "қазір ашық")
 NIGHT_TAGS = {"late_open", "24_7"}
 ACCESS_MARKERS = ("коляск", "доступн", "не подтвержд", "wheelchair", "accessib", "кедергісіз")
 HOURS_MARKERS = ("нет данных", "не подтвержд", "проверьте", "no data", "not confirmed", "check",
@@ -187,12 +187,19 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
             if not c.facts_sources or not c.open_note.strip():
                 fails.append(f"{c.poi_id}: нет меток источника или пометки о часах")
     if exp.get("forbid_open_claim_without_high"):
+        # the same guard validate uses (ru/kk/en roots + markers, NFKC, homoglyphs)
         for c in ans.cards:
             if c.open_status == "open" and c.open_confidence == "high":
                 continue
-            text = f"{_card_text(c)} {c.open_note}".lower()
-            if any(p in text for p in OPEN_CLAIMS):
+            all_day = "24_7" in c.tags  # «круглосуточно» from the data is not a claim
+            texts = (c.why, c.what_to_do, c.open_note)
+            if any(has_open_claim(t, all_day_ok=all_day) for t in texts):
                 fails.append(f"{c.poi_id}: «открыто сейчас» без open/high")
+        all_open = bool(ans.cards) and all(
+            c.open_status == "open" and c.open_confidence == "high" for c in ans.cards
+        )
+        if not all_open and has_open_claim(ans.summary):
+            fails.append("summary: «открыто сейчас», хотя не все места open/high")
     if exp.get("warnings_required") and not ans.warnings:
         fails.append("нет предупреждений")
     if "warnings_any" in exp:
