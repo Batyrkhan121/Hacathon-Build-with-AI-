@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from app import geo, hours, retrieval, route, validate, weather
+from app import pipeline as pipeline_mod
 from app.config import Settings, get_settings
 from app.generate import build_prompt
 from app.llm import LLMUnavailable
@@ -155,8 +156,10 @@ class FakeLLM:
     def __init__(self, *, available: bool = True, fail: Exception | None = None,
                  intent: QueryIntent | None = None, embed: np.ndarray | None = None,
                  error_kind: str = "network", parse_fail: Exception | None = None,
-                 embed_status: str | None = None, enabled: bool = True) -> None:
+                 embed_status: str | None = None, enabled: bool = True,
+                 summary: str = "Идеи от модели") -> None:
         self.available = available
+        self.summary = summary
         self.enabled = enabled
         self.fail = fail
         self.parse_fail = parse_fail
@@ -187,7 +190,7 @@ class FakeLLM:
             return self.intent or QueryIntent(raw_query="x", parser="llm")
         ids = [line.split('"')[3] for line in prompt.splitlines() if line.strip()
                .startswith('"id":')]
-        return DraftResponse(summary="Идеи от модели", cards=[
+        return DraftResponse(summary=self.summary, cards=[
             CardDraft(poi_id=i, why="Рядом и подходит.", what_to_do="Загляните на 20 минут.",
                       visit_min_low=20, visit_min_high=30, idea_source="generated")
             for i in ids[:2]])
@@ -661,6 +664,54 @@ class TestRecommend:
                                                 monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(validate, "sanitize_summary", lambda summary, cards: summary)
         assert recommend(req("кофе"), deps).summary == "Идеи от модели"
+
+    # ----------------------------------- raw tags in the model summary (S5 live)
+
+    @pytest.mark.parametrize(("lang", "leak", "raw"), [
+        ("ru", "Поздним вечером: все с тегом night рядом с EXPO.", ("night", "тег")),
+        ("kk", "Кешке қарай late_open орындары жақын.", ("late_open",)),
+    ])
+    def test_model_summary_with_a_raw_tag_becomes_the_template(
+            self, deps: Deps, lang: str, leak: str, raw: tuple[str, ...]) -> None:
+        deps.llm = FakeLLM(summary=leak)
+        a = recommend(req("кофе", lang=lang), deps)
+        assert a.lang == lang and a.data_used.generation == "llm" and a.cards
+        assert a.summary == pipeline_mod._template_summary(pipeline_mod.TEXTS[lang],
+                                                           len(a.cards))
+        assert not any(word in a.summary for word in raw)
+
+    def test_english_night_is_a_word_not_a_tag(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(summary="A quiet night walk by the river.")
+        a = recommend(req("coffee", lang="en"), deps)
+        assert a.lang == "en" and a.summary == "A quiet night walk by the river."
+
+    def test_template_summary_is_not_checked_for_tags(self, deps: Deps,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(pipeline_mod, "_template_summary", lambda t, n: "Ночью: тег night")
+        assert recommend(req("кофе", use_llm=False), deps).summary == "Ночью: тег night"
+
+    @pytest.mark.parametrize(("lang", "text", "titles", "leak"), [
+        ("ru", "Поздним вечером: все с тегом night", [], True),
+        ("ru", "Здесь есть wifi и розетки", [], True),
+        ("ru", "Места с тегами для детей", [], True),
+        ("ru", "Работать удобно: power_outlets", [], True),
+        ("ru", "Кофейня 24_7 рядом", [], True),
+        ("ru", "Тихая прогулка вечером вдоль воды", [], False),
+        ("ru", "Кофе в зоне Wi-Fi", [], False),
+        ("ru", "Загляните в Kids Park", ["Kids Park"], False),
+        ("kk", "Кешке қарай late_open орындары", [], True),
+        ("kk", "Бұл орынның тегі бар", [], True),
+        ("kk", "Балаларға арналған kids орын", [], True),
+        ("kk", "Кешкі серуен", [], False),
+        ("en", "A quiet night walk by the river", [], False),
+        ("en", "Kids will love the view", [], False),
+        ("en", "Cafes with power_outlets nearby", [], True),
+        ("en", "Places tagged night are close", [], True),
+        ("en", "Everything with the kids tag", [], True),
+    ])
+    def test_tag_leak_detection(self, lang: str, text: str, titles: list[str],
+                                leak: bool) -> None:
+        assert pipeline_mod._tag_leak(text, lang, titles) is leak
 
     # ----------------------------------- no query vector: Claude picks from 16
 

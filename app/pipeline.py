@@ -29,9 +29,11 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import re
 import time
 import traceback
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -44,6 +46,7 @@ from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
 from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
+    TAG_VOCAB,
     Answer,
     Candidate,
     Card,
@@ -679,9 +682,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         # E11 / UI "tourist + departure": NQZ has a few cafes and nothing to see — say so,
         # whatever categories were asked (the UI sends no text categories at all)
         summary = _airport_summary(t, intent, has_cards=bool(cards))
+    by_llm = generation == "llm" and summary == llm_summary
+    if by_llm and _tag_leak(summary, intent.lang, [c.title for c in cards]):
+        # S5 live: «…все с тегом night…» — an internal id is no text for a person
+        log.info("request %s: model summary names a raw tag: template summary", request_id)
+        summary, by_llm = _template_summary(t, len(cards)), False
     # "open now" never leaks via the summary; model text is checked as model text
-    summary = _sanitize_summary(summary, cards,
-                                by_llm=generation == "llm" and summary == llm_summary)
+    summary = _sanitize_summary(summary, cards, by_llm=by_llm)
 
     answer = Answer(
         request_id=request_id,
@@ -839,6 +846,32 @@ def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
     except Exception as exc:  # noqa: BLE001 - a missing hint never kills the answer
         log.error("query_unmatched failed (%s)\n%s", type(exc).__name__, _frames(exc))
         return False
+
+
+# Raw TAG_VOCAB ids must not reach a person. Ids with "_" / digits are never words (any
+# language); a bare id (night, kids, wifi) is a tag in ru / kk text, in en only next to
+# "tag(s/ged)" («a quiet night walk» is English). Card titles are skipped: «Kids Park».
+_ID_ALT = "|".join(re.escape(x) for x in sorted(TAG_VOCAB, key=len, reverse=True))
+_STRUCT_ALT = "|".join(re.escape(x) for x in sorted(TAG_VOCAB)
+                       if "_" in x or any(ch.isdigit() for ch in x))
+_STRUCT_TAG_RE = re.compile(rf"(?<![\w-])(?:{_STRUCT_ALT})(?![\w-])")
+_BARE_TAG_RE = re.compile(rf"(?<![\w-])(?:{_ID_ALT})(?![\w-])")
+_TAG_WORD_RE = re.compile(r"(?<!\w)(?:тег(?:а|у|ом|е|и|ов|ам|ами|ах|і|тер|тері)?)(?!\w)",
+                          re.IGNORECASE)
+_EN_TAG_NEAR_RE = re.compile(
+    rf"\btag(?:s|ged)?\W+(?:\w+\W+){{0,2}}?(?:{_ID_ALT})\b"
+    rf"|\b(?:{_ID_ALT})\W+(?:\w+\W+){{0,2}}?tag(?:s|ged)?\b", re.IGNORECASE)
+
+
+def _tag_leak(text: str, lang: str, titles: Iterable[str]) -> bool:
+    for title in titles:
+        if title.strip():
+            text = re.sub(re.escape(title), " ", text, flags=re.IGNORECASE)
+    if _STRUCT_TAG_RE.search(text) or _TAG_WORD_RE.search(text):
+        return True
+    if lang == "en":
+        return _EN_TAG_NEAR_RE.search(text) is not None
+    return _BARE_TAG_RE.search(text) is not None
 
 
 def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool) -> str:
