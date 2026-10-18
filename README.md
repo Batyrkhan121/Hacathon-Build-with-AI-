@@ -4,15 +4,50 @@ Qadam подсказывает, куда сходить рядом. Вы зад�
 
 Проект сделан для хакатона Build with AI, кейс НИЦ Smart City.
 
-> Статус: каркас v1. Модули пишутся параллельно по [плану](docs/PLAN.md).
+> Статус: модули влиты в main, идёт доводка. Ход работ: [план](docs/PLAN.md).
 
 ## Запуск
+
+Сначала создайте окружение (один раз):
+
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt      # macOS/Linux: .venv/bin/python
-cp .env.example .env                                           # впишите ANTHROPIC_API_KEY
-.venv/Scripts/python -m uvicorn app.api:app --port 8000        # открыть http://localhost:8000
 ```
+
+В PowerShell пути те же, но с обратным слэшем: `.venv\Scripts\python`. На macOS и Linux вместо `.venv/Scripts/python` пишите `.venv/bin/python`.
+
+### 1. Только интерфейс на моке (без ключей и без сервера API)
+
+Из корня репозитория:
+
+```bash
+.venv/Scripts/python -m http.server 5500                       # macOS/Linux: .venv/bin/python
+```
+
+Откройте http://localhost:5500/web/?mock=1. Ответы берутся из `web/mock/answer_sample.json`, сеть и ключи не нужны.
+
+### 2. Всё приложение без ключей
+
+Файл `.env` не нужен, а если он пуст, всё равно работает. Без ключа Claude ответ строится по правилам и шаблонам: разбор запроса правилами, карточки из шаблонов, поиск лексический.
+
+```bash
+.venv/Scripts/python -m uvicorn app.api:app --reload --port 8000   # macOS/Linux: .venv/bin/python
+```
+
+Откройте http://localhost:8000.
+
+### 3. С ключами
+
+```bash
+cp .env.example .env
+```
+
+В `.env` впишите:
+- `ANTHROPIC_API_KEY` для текстов Claude (разбор запроса и «почему / что делать»);
+- `GEMINI_API_KEY` по желанию, для смыслового поиска по эмбеддингам. Без него поиск лексический.
+
+Потом запускайте так же, как во втором способе. Проверить окружение и ключи можно командой `.venv/Scripts/python scripts/check_env.py --llm`. Файл `.env` не коммитьте.
 
 ## Документы
 - [Кейс](docs/TASK.md)
