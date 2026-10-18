@@ -55,3 +55,9 @@ def test_alem_ai_record_from_official_site(pois) -> None:
     assert sphere.description_source == "manual" and "wikidata" in sphere.sources
     dump = sphere.model_dump_json().casefold()
     assert "energy" not in dump and "энерги" not in dump  # the old museum is gone
+
+
+def test_no_stale_typo_duplicate(pois) -> None:
+    names = [p.name for p in pois]
+    assert "25-ти летие Независемости" not in names  # June-only node, deleted in OSM since
+    assert names.count("25-ти летие Независимости") == 1

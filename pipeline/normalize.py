@@ -391,21 +391,59 @@ def fetched_date(payload: Mapping) -> str:
     return datetime.now(ASTANA_TZ).date().isoformat()
 
 
-def normalize_payloads(payloads: Iterable[Mapping]) -> list[POI]:
+def coverage(payload: Mapping) -> list[str]:
+    """Spatial filters the chunk was fetched with ("s,w,n,e" or "around:R,lat,lon")."""
+    meta = payload.get("qadam") or {}
+    if meta.get("filters"):
+        return list(meta["filters"])
+    if meta.get("area") == "fixture":  # fetched before chunks recorded their filters
+        from pipeline.fetch_osm import area_chunks
+
+        return list(area_chunks("fixture")[0].filters)
+    return []
+
+
+def covers(filters: Sequence[str], lat: float, lon: float) -> bool:
+    for flt in filters:
+        if flt.startswith("around:"):
+            radius, clat, clon = (float(x) for x in flt[len("around:"):].split(","))
+            if haversine_m(lat, lon, clat, clon) <= radius:
+                return True
+        else:
+            s, w, n, e = (float(x) for x in flt.split(","))
+            if s <= lat <= n and w <= lon <= e:
+                return True
+    return False
+
+
+def normalize_payloads(
+    payloads: Iterable[Mapping], stats: dict[str, int] | None = None
+) -> list[POI]:
     """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
     taken once, from the freshest OSM snapshot (mirrors lag: kumi served a June database
-    in October), then near-duplicates are merged by `dedupe`."""
+    in October). An element found only in an older snapshot whose point a fresher chunk
+    also covers is stale (deleted or retagged since) and is dropped. Then near-duplicates
+    are merged by `dedupe`. `stats["stale"]` counts the dropped ones."""
+    ordered = sorted(payloads, key=osm_base, reverse=True)  # stable for equal stamps
     seen: set[str] = set()
     pois: list[POI] = []
-    for payload in sorted(payloads, key=osm_base, reverse=True):  # stable for equal stamps
-        date = fetched_date(payload)
+    stale = 0
+    for i, payload in enumerate(ordered):
+        date, base = fetched_date(payload), osm_base(payload)
+        fresher = [coverage(q) for q in ordered[:i] if osm_base(q) > base]
         for el in payload.get("elements", []):
             key = f"{el.get('type')}/{el.get('id')}"
             if key in seen:
                 continue
             seen.add(key)
+            point = element_point(el)
+            if fresher and point and any(covers(f, *point) for f in fresher):
+                stale += 1
+                continue
             if poi := normalize_element(el, date):
                 pois.append(poi)
+    if stats is not None:
+        stats["stale"] = stale
     return dedupe(pois)
 
 

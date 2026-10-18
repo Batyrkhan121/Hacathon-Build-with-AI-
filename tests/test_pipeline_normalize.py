@@ -307,3 +307,24 @@ def test_inside_mall_footprint_marks_unknown_indoor_only() -> None:
     outlines["elements"][0]["tags"] = {"shop": "mall", "building": "retail"}
     out, marked = mark_inside_malls([park], outlines)
     assert marked == 1 and out[0].indoor is True and "outdoor" not in out[0].tags
+
+
+def test_element_only_in_an_older_snapshot_is_dropped_where_fresh_data_covers_it() -> None:
+    fresh = {"osm3s": {"timestamp_osm_base": "2026-10-18T10:00:00Z"},
+             "qadam": {"filters": ["51.03,71.35,51.11,71.5"]},
+             "elements": [{"type": "way", "id": 1460763574,
+                           "center": {"lat": 51.09345, "lon": 71.41756},
+                           "tags": {"tourism": "attraction",
+                                    "name": "25-ти летие Независимости"}}]}
+    june = {"osm3s": {"timestamp_osm_base": "2026-06-01T08:00:00Z"},
+            "qadam": {"filters": ["around:2000,51.08925,71.41619"]},
+            "elements": [
+                node(13041707198, {"tourism": "attraction", "name": "25-ти летие Независемости"},
+                     lat=51.09345, lon=71.41756),  # typo, deleted since June
+                node(7, {"amenity": "cafe", "name": "Вне свежего куска"}, lat=51.12, lon=71.40),
+            ]}
+    stats: dict[str, int] = {}
+    pois = normalize_payloads([june, fresh], stats)
+    names = sorted(p.name for p in pois)
+    assert names == ["25-ти летие Независимости", "Вне свежего куска"]
+    assert stats == {"stale": 1}
