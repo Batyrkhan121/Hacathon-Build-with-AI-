@@ -99,7 +99,7 @@
 | QUALITY (T70) | `app/retrieval.py`, `app/validate.py`, `app/generate.py`, `prompts/**`, `eval/**`, `tests/test_{retrieval,validate,generate}.py` |
 | FEATURES (T71–T74) | `app/route.py`, `app/query_parser.py`, `app/pipeline.py`, `app/weather.py`, `data/events.json`, `app/api.py`, `app/llm.py`, `app/hours.py`, `tests/fakes.py`, `tests/test_{route,query_parser,pipeline,api,hours}.py` |
 | POLISH (T75–T76 + интерфейс к T71–T73) | `web/**` |
-| DEPLOY (T77) | `Dockerfile`, `.dockerignore`, `docs/DEPLOY.md` |
+| DEPLOY (T77) | `Dockerfile`, `.dockerignore`, `docs/DEPLOY.md`. Удалённый участник, работает в клоне на своём компьютере, ветка `feat/deploy` (см. CLAUDE.md, «Удалённый участник») |
 
 Нужна правка чужого файла? Пиши REQUEST, интегратор передаст владельцу.
 
