@@ -414,3 +414,57 @@ def test_url_runner_503_without_data_stops_with_reason() -> None:
     assert "без данных" in notes[0]
     assert "status=degraded" in notes[0] and "POI=0" in notes[0]
     assert "poi.jsonl не найден" in notes[0]
+
+
+# ------------------------------------------------------- walking route on the graph (1.1.0)
+
+
+def graph_answer(mock_answer: Answer) -> Answer:
+    """The mock route marked as graph: its path already goes origin -> stops."""
+    data = mock_answer.model_dump()
+    data["route"]["path_source"] = "graph"
+    data["route"]["crossings"] = [{"lat": 51.09, "lon": 71.413, "kind": "signals"}]
+    return Answer.model_validate(data)
+
+
+def test_graph_route_consistent_passes(mock_answer: Answer) -> None:
+    assert run_eval.check_graph_route(graph_answer(mock_answer)) == []
+
+
+def test_straight_route_is_not_graph_checked(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.route.total_walk_m = 1  # would fail the graph checks
+    assert run_eval.check_graph_route(ans) == []
+
+
+def test_graph_route_far_start_and_wrong_total(mock_answer: Answer) -> None:
+    ans = graph_answer(mock_answer)
+    ans.route.path[0].lat += 0.002  # ≈220 m north of the start
+    ans.route.total_walk_m += 100
+    fails = run_eval.check_graph_route(ans)
+    assert any("начинается" in f for f in fails)
+    assert any("total_walk_m" in f for f in fails)
+
+
+def test_graph_route_minutes_not_below_straight(mock_answer: Answer) -> None:
+    ans = graph_answer(mock_answer)
+    ans.route.legs[1].walk_min = 1  # 380 m straight needs at least 6 min at 75 m/min
+    assert any("по прямой" in f for f in run_eval.check_graph_route(ans))
+
+
+def test_graph_loop_route_ends_at_start(mock_answer: Answer) -> None:
+    from app.schemas import RouteLeg
+
+    ans = graph_answer(mock_answer)
+    back = RouteLeg(from_id="mock:poi/mega_silk_way", to_id="origin", distance_m=157, walk_min=3)
+    ans.route.legs.append(back)
+    ans.route.total_walk_m += back.distance_m
+    ans.route.path.append(ans.context.origin.model_copy())
+    assert run_eval.check_graph_route(ans) == []
+
+
+def test_report_counts_graph_routes(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["routes"] == {"graph": 0, "straight": 16}
+    assert "Маршруты: по графу тротуаров 0" in (tmp_path / "report.md").read_text(encoding="utf-8")
