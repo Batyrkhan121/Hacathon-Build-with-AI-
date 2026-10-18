@@ -162,7 +162,7 @@ class LocationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     h3_cell: str | None = Field(default=None, pattern=r"^[0-9a-f]{15}$")
-    landmark_id: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$")
+    landmark_id: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$", max_length=64)
 
     @model_validator(mode="after")
     def _exactly_one(self) -> LocationInput:
@@ -182,7 +182,10 @@ class UserOverrides(BaseModel):
     wheelchair: bool | None = None
     indoor_only: bool | None = None
     group_size: int | None = Field(default=None, ge=1, le=20)
-    categories: list[Category] | None = None
+    categories: list[Category] | None = Field(default=None, max_length=10)
+    tourist: bool | None = None
+    departure_in_min: int | None = Field(default=None, ge=30, le=1440)
+    night: bool | None = None
 
 
 class RecommendRequest(BaseModel):

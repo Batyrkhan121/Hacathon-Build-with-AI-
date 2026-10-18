@@ -358,8 +358,8 @@ def test_titles_unique_even_at_same_distance() -> None:
 )
 def test_title_distance_units(lang: str, near: str, far: str) -> None:
     pois = [make_poi("1", "playground", "Детская площадка"), make_poi("2", "cafe", "Мю")]
-    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250), cand(pois[1], distance=1250)]
-    cards = template_cards(cs[:2], intent(lang=lang), ctx())
+    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250)]
+    cards = template_cards(cs, intent(lang=lang), ctx())
     assert cards[0].title.endswith(near)
     twin = [cand(make_poi("3", "cafe", "Мю"), distance=1250), cs[1]]
     assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)

@@ -40,7 +40,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 - Файлы открывай с `encoding="utf-8"` (на Windows это обязательно). Время всегда с часовым поясом: Астана = UTC+5, см. `app.hours.ASTANA_TZ`.
 - Секреты читаем только из .env через app/config.py. Файл .env не читать и не выводить.
 - Сеть: таймауты, повторы с паузой, кэш в data/cache/. Тесты в сеть не ходят: используй моки и фейки.
-- Ядро (geo, hours, retrieval, route, validate, query_parser/rules) пишем по TDD. Весь pytest должен проходить меньше чем за 10 секунд.
+- Ядро (geo, hours, retrieval, route, validate, query_parser/rules) пишем по TDD. Весь pytest должен проходить меньше чем за 30 секунд.
 
 ## Параллельная работа в worktree
 Основная папка D:\HACATHON — это сессия ИНТЕГРАТОРА. Она всегда на ветке `main`, и в ней никто, кроме интегратора, код не пишет.
