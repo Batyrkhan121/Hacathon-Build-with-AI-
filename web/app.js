@@ -103,6 +103,24 @@ function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+// Подписи легенды карты: тип линии (по графу OSM или по прямой) и виды переходов.
+function legendLabels() {
+  return {
+    straight: t('map.lineCaption'),
+    graph: t('map.graphCaption'),
+    crossings: {
+      signals: t('crossing.signals'),
+      marked: t('crossing.marked'),
+      unmarked: t('crossing.unmarked'),
+    },
+    crossingsShort: {
+      signals: t('crossing.signalsShort'),
+      marked: t('crossing.markedShort'),
+      unmarked: t('crossing.unmarkedShort'),
+    },
+  };
+}
+
 // Название старта того запроса, на который пришёл ответ (форма к этому времени могла измениться).
 function requestOriginName() {
   const loc = state.lastRequest?.location;
@@ -276,7 +294,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       : '',
     markerLabel: (card) =>
       `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
-    lineCaption: t('map.lineCaption'),
+    legend: legendLabels(),
   });
 }
 
@@ -299,7 +317,7 @@ function focusOnMap(rank) {
 }
 
 function showRoute(rank) {
-  mapView.showRoute(rank, t('map.lineCaption'));
+  mapView.showRoute(rank, legendLabels());
   scrollMapIntoView();
 }
 
@@ -603,7 +621,7 @@ function bindEvents() {
     else if (state.lastError) renderError();
     else if (!state.inflight) renderIntro();
     if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
-    mapView.setLineCaption(t('map.lineCaption'));
+    mapView.setLegendLabels(legendLabels());
     autoGrow();
     if (state.location.type === 'cell') {
       mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
