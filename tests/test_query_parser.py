@@ -11,6 +11,7 @@ from app import geo
 from app.llm import LLMUnavailable
 from app.query_parser import (
     apply_overrides,
+    departure_phrase,
     detect_lang,
     mentions_flight,
     parse_query,
@@ -334,10 +335,19 @@ def test_mentions_flight(text: str, flight: bool) -> None:
     assert mentions_flight(text) is flight
 
 
-_HAS_MODE_FIELDS = {"tourist", "night", "departure_in_min"} <= set(UserOverrides.model_fields)
+@pytest.mark.parametrize(
+    ("text", "departure"),
+    [("у меня 2 часа перед вылетом", True), ("до вылета 2 часа", True),
+     ("рейс через 3 часа, что посмотреть?", True), ("2 hours before my flight", True),
+     ("my flight is in 3 hours", True), ("ұшуға 2 сағат қалды", True),
+     ("прогулка на 30 минут, вечером рейс", False), ("у меня рейс в 21:00, погуляю час", False),
+     ("flight tonight, an hour to walk", False), ("я в аэропорту", False)],
+)
+def test_departure_phrase(text: str, departure: bool) -> None:
+    """The time budget means "time to departure" only when it is said relative to the flight."""
+    assert departure_phrase(text) is departure
 
 
-@pytest.mark.skipif(not _HAS_MODE_FIELDS, reason="UserOverrides mode fields not merged yet")
 def test_overrides_mode_switches() -> None:
     base = QueryIntent(raw_query="x", time_budget_min=60)
     out = apply_overrides(base, UserOverrides(tourist=True, night=True))

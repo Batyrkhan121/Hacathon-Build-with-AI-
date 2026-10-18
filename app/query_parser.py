@@ -79,6 +79,13 @@ _TOURIST_RE = _rx(r"турист|вылет|\bрейс\w*|аэропорт|са�
                   r"|\bflight|airport|layover|first time in|ұшақ|әуежай")
 _FLIGHT_RE = _rx(r"вылет|\bрейс\w*|аэропорт|самол[её]т|\bflight|airport|\bplane\b|ұшақ|әуежай"
                  r"|ұшу\w*|ұшам|ұшамын")
+_DEPARTURE_RE = _rx(
+    r"(?:до|перед)\s+(?:вылет|рейс|самолет|посадк)\w*"
+    r"|(?:вылет|рейс|самолет)\w*\s+через"
+    r"|before\s+(?:my\s+|the\s+|our\s+)?(?:flight|departure|plane)"
+    r"|(?:flight|plane|departure)\s+(?:is\s+|leaves\s+)?in\s+(?:\d|an?\b|one|two|three)"
+    r"|until\s+(?:my\s+|the\s+)?(?:flight|departure)"
+    r"|(?:ұшуға|ұшаққа|рейске)\s+(?:дейін|\d)|(?:ұшуға|ұшаққа)\b.*қалды")
 _INDOOR_RE = _rx(r"в помещени|внутри|в тепл|тепл\w* мест|под крыш|не на улиц|холодно|мороз"
                  r"|\bдожд|indoor|inside|warm place|somewhere warm|\bcold\b|\brain|жылы\b"
                  r"|ішінде|суық")
@@ -249,8 +256,16 @@ def parse_query(
 
 
 def mentions_flight(text: str) -> bool:
-    """A flight / the airport is mentioned: the "leave for the airport" rule applies only then."""
+    """A flight / the airport is mentioned (-> the general "leave time for the airport" tip)."""
     return bool(_FLIGHT_RE.search(_normalise(text)))
+
+
+def departure_phrase(text: str) -> bool:
+    """The time is said relative to the departure: «2 часа перед вылетом», «до вылета 2 часа»,
+    «рейс через 3 часа», "before my flight", "flight in 2 hours", «ұшуға 2 сағат қалды».
+    Only then the time budget is "time to departure" and the airport deadline rule applies;
+    «прогулка на 30 минут, вечером рейс» keeps 30 minutes as the walk."""
+    return bool(_DEPARTURE_RE.search(_normalise(text)))
 
 
 def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> QueryIntent:
