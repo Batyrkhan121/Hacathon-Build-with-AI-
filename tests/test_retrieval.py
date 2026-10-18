@@ -653,3 +653,18 @@ def test_english_reasons_read_as_phrases(tag: str, reason: str) -> None:
     q = intent("food", must_tags=[tag], lang="en")
     out = retrieve(make_store([poi]), q, make_ctx(), None)
     assert reason in explain(out[0], q, make_ctx(), lang="en")
+
+
+def test_night_needs_confirmed_hours_or_late_tags() -> None:
+    """E2 with Claude: bars tagged only `night` with unknown hours were shown at 02:30."""
+    at = datetime(2026, 10, 20, 2, 30, tzinfo=ASTANA_TZ)
+    pois = [
+        make_poi("1", "bar", 0.0010, tags=["night", "indoor"]),  # unknown hours, no late tag
+        make_poi("2", "bar", 0.0012, tags=["late_open"]),  # unknown hours, late tag
+        make_poi("3", "bar", 0.0014, opening_hours="Mo-Su 18:00-04:00"),  # open/high at 02:30
+        make_poi("4", "viewpoint", 0.0016, tags=["24_7"]),
+    ]
+    q = intent("ночью в бар", night=True, categories=["bar", "nightlife", "viewpoint"],
+               must_tags=["night", "late_open"])
+    out = retrieve(make_store(pois), q, make_ctx(at=at), None, k=5)
+    assert set(ids(out)) == {"test:poi/2", "test:poi/3", "test:poi/4"}

@@ -69,7 +69,9 @@ INDOOR_CATEGORIES = frozenset(
     | {"cinema", "library", "mall"}
 )
 OUTDOOR_CATEGORIES = frozenset({"park", "playground", "viewpoint", "monument"})
-NIGHT_TAGS = frozenset({"late_open", "24_7", "night"})
+# E2 (T70): the OSM-derived tag `night` says "a night venue", not "open now"; at night only
+# confirmed hours (open/high) or late_open / 24_7 let a place through
+NIGHT_TAGS = frozenset({"late_open", "24_7"})
 
 # Words that make POI text findable by ru / kk / en queries without embeddings.
 CATEGORY_WORDS: dict[str, str] = {
@@ -390,7 +392,8 @@ def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
         if verdict.closes_in_min < MIN_VISIT_MIN:
             return False
     if intent.night:
-        return bool(NIGHT_TAGS & set(poi.tags)) or verdict.status == "open"
+        open_now = verdict.status == "open" and verdict.confidence == "high"
+        return open_now or bool(NIGHT_TAGS & set(poi.tags))
     return True
 
 
@@ -643,7 +646,7 @@ def retrieve(
 
     Hard filters (in this order): distance <= ctx.radius_m; categories (if any);
     with_kids / wheelchair / indoor constraints; hours: drop places closed now with
-    high confidence or closing before a minimal visit; night -> late_open / 24_7 / night only.
+    high confidence or closing before a minimal visit; night -> open/high or late_open / 24_7.
     Unknown hours are allowed but penalised. Fill Candidate.matched with short
     deterministic reasons in Russian (e.g. "есть кофе", "≈6 мин пешком").
     Final order is MMR (score vs. redundancy); Candidate.score keeps the raw weighted score.

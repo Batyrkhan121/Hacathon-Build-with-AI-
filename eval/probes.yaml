@@ -120,3 +120,14 @@
   expect:
     min_cards: 1
     top1_why_any: ["нет данных"]
+
+- id: P11
+  title: "E2 без Claude: 02:30, бары — только подтверждённо открытые или late_open / 24_7"
+  request:
+    query: "Сейчас глубокая ночь, хочу посидеть в баре"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-20T02:30:00+05:00"
+    lang: ru
+    overrides: {night: true, categories: [bar, nightlife]}
+  expect:
+    night_safe: true
