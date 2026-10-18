@@ -1,10 +1,12 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 15:16 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 15:28 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 5 (zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol).
 - Сырых элементов: 1197; после нормализации и дедупликации: 533 POI.
+- Добавлено вручную: 0 (места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).
+- Ориентиры, добавленные как места (объект OSM + ручная разметка): 2.
 - Время выгрузки: 2026-10-18 14:45 … 2026-10-18 14:57 (UTC+5).
 - Зеркала Overpass: https://maps.mail.ru/osm/tools/overpass/api/interpreter (3), https://overpass.kumi.systems/api/interpreter (2).
 - Покрытие: только перечисленные куски (демо-зоны), без плиток всего города.

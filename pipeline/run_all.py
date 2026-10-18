@@ -62,6 +62,9 @@ def run(
         normalize.normalize_payloads(normalize.load_payloads(paths)),
         normalize.load_landmarks(settings.landmarks_path),
     )
+    # hand-checked reference places: compared with OSM first, the missing ones added
+    pois, etalon_notes = etalon.run_on(pois)
+    notes.extend(etalon_notes)
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 
@@ -80,9 +83,6 @@ def run(
     log.info("index: %s (%s)", idx.status, idx.reason)
     if idx.status == "skipped":
         notes.append(f"Индекс пропущен: {idx.reason}.")
-
-    if (etalon_note := etalon.run()) is not None:
-        notes.append(etalon_note + " Подробно: data/processed/ETALON.md.")
 
     out = report.write_report(area, notes=notes)
     log.info("report -> %s; total %.0f s", out, time.time() - started)

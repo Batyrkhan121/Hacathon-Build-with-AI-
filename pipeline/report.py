@@ -80,6 +80,10 @@ def build_report(
         "## Выгрузка",
         f"- Кусков выгрузки: {len(payloads)} ({', '.join(m.get('chunk', '?') for m in metas)}).",
         f"- Сырых элементов: {raw_elements}; после нормализации и дедупликации: {n} POI.",
+        f"- Добавлено вручную: {sum(1 for p in pois if p.id.startswith('manual:'))} "
+        "(места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).",
+        "- Ориентиры, добавленные как места (объект OSM + ручная разметка): "
+        f"{sum(1 for p in pois if p.id.startswith('osm:') and 'manual' in p.sources)}.",
     ]
     if stamps:
         lo = datetime.fromtimestamp(min(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
