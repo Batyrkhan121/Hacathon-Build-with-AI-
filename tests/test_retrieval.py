@@ -397,7 +397,7 @@ def test_real_s3_kids_near_expo(landmarks: dict[str, Landmark], categories: list
     if not categories:  # alternatives exist: diversity rule applies to the candidate list
         assert [c.poi.name for c in out[:3]].count("Детская площадка") <= 1
     cards = template_cards(out, q, ctx)  # cards never repeat an unnamed place
-    assert [c.title for c in cards].count("Детская площадка") == 1
+    assert sum(c.title.startswith("Детская площадка") for c in cards) == 1
 
 
 # --------------------------------------------------------- review follow-ups

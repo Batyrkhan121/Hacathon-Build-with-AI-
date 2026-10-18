@@ -252,13 +252,14 @@ def test_template_cards_one_unnamed_playground() -> None:
     pois.append(make_poi("9", "park", "Парк"))
     pois.append(make_poi("10", "museum", "Музей"))
     cards = template_cards([cand(p) for p in pois], intent(), ctx())
-    assert [c.title for c in cards].count("Детская площадка") == 1
+    assert sum(c.title.startswith("Детская площадка") for c in cards) == 1
 
 
 def test_template_cards_only_unnamed_playgrounds_gives_one_card() -> None:
     pois = [make_poi(str(i), "playground", "Детская площадка") for i in range(1, 5)]
     cards = template_cards([cand(p) for p in pois], intent(), ctx())
-    assert [c.title for c in cards] == ["Детская площадка"]
+    assert len(cards) == 1
+    assert cards[0].title.startswith("Детская площадка · ")
 
 
 def test_finalize_drops_second_unnamed_playground() -> None:
@@ -284,8 +285,13 @@ def test_template_visit_fits_budget(cands: list[Candidate]) -> None:
 
 @pytest.mark.parametrize(
     "claim",
-    ["Now open!", "Already open.", "Open until 10 PM.", "Заведение открыто до 22:00.",
-     "Работает до 02:00."],
+    [
+        "Now open!",
+        "Already open.",
+        "Open until 10 PM.",
+        "Заведение открыто до 22:00.",
+        "Работает до 02:00.",
+    ],
 )
 def test_strips_more_open_claims(cands: list[Candidate], claim: str) -> None:
     resp = DraftResponse(summary="", cards=[draft("test:poi/3", why=f"{claim} Тихое место.")])
@@ -312,3 +318,48 @@ def test_sanitize_summary(cands: list[Candidate]) -> None:
 def test_template_visit_leaves_room_for_a_route() -> None:
     cards = template_cards([cand(make_poi("1", "mall"))], intent(time_budget_min=60), ctx())
     assert (cards[0].visit_min_low, cards[0].visit_min_high) == (20, 60)
+
+
+# ------------------------------------------------ distinct titles (wave 3, QUALITY)
+
+
+def test_unnamed_place_title_gets_distance() -> None:
+    card = template_cards(
+        [cand(make_poi("1", "playground", "Детская площадка"), distance=350)], intent(), ctx()
+    )[0]
+    assert card.title == "Детская площадка · 350 м"
+
+
+def test_named_place_title_unchanged(cands: list[Candidate]) -> None:
+    cards = template_cards(cands, intent(), ctx())
+    assert cards[0].title == cands[0].poi.name
+
+
+def test_same_named_places_get_distance_in_title() -> None:
+    pois = [make_poi("1", "cafe", "Drinkit"), make_poi("2", "cafe", "Drinkit")]
+    cs = [cand(pois[0], distance=700), cand(pois[1], distance=1278)]
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1"), draft("test:poi/2")])
+    cards, _ = finalize(resp, cs, intent(), ctx())
+    assert [c.title for c in cards] == ["Drinkit · 700 м", "Drinkit · 1,3 км"]
+
+
+def test_titles_unique_even_at_same_distance() -> None:
+    pois = [
+        make_poi("1", "cafe", "Drinkit"),
+        make_poi("2", "cafe", "Drinkit", address="ул. Абая, 5"),
+    ]
+    cards = template_cards([cand(p, distance=500) for p in pois], intent(), ctx())
+    titles = [c.title.lower() for c in cards]
+    assert len(set(titles)) == len(titles)
+
+
+@pytest.mark.parametrize(
+    ("lang", "near", "far"), [("en", "350 m", "1.3 km"), ("kk", "350 м", "1,3 км")]
+)
+def test_title_distance_units(lang: str, near: str, far: str) -> None:
+    pois = [make_poi("1", "playground", "Детская площадка"), make_poi("2", "cafe", "Мю")]
+    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250), cand(pois[1], distance=1250)]
+    cards = template_cards(cs[:2], intent(lang=lang), ctx())
+    assert cards[0].title.endswith(near)
+    twin = [cand(make_poi("3", "cafe", "Мю"), distance=1250), cs[1]]
+    assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)
