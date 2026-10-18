@@ -398,16 +398,39 @@ def _passes_profile(poi: POI, intent: QueryIntent) -> bool:
     return not (intent.indoor == "outdoor" and indoor is True)
 
 
-def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
-    if verdict.status == "closed" and verdict.confidence in ("high", "medium"):
-        return False
+def _hours_drop_reason(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> str | None:
+    """Why the hours filter drops a place (None = it passes). Keys of hours_dropped()."""
+    if verdict.status == "closed" and verdict.confidence == "high":
+        return "closed"
+    if verdict.status == "closed" and verdict.confidence == "medium":
+        return "closed_partial"  # today not described in OSM: closed by the OSM spec
     if verdict.status == "open" and verdict.closes_in_min is not None:
         if verdict.closes_in_min < MIN_VISIT_MIN:
-            return False
+            return "closing_soon"
     if intent.night:
         open_now = verdict.status == "open" and verdict.confidence == "high"
-        return open_now or bool(NIGHT_TAGS & set(poi.tags))
-    return True
+        if not (open_now or NIGHT_TAGS & set(poi.tags)):
+            return "night"
+    return None
+
+
+def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
+    return _hours_drop_reason(poi, verdict, intent) is None
+
+
+def hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
+    """How many places in the radius (after profile filters) the hours filter removed, by
+    reason: closed, closed_partial (today not described in OSM), closing_soon, night.
+    For the pipeline's filters panel (FEATURES); retrieve() itself stays unchanged."""
+    counts = {"closed": 0, "closed_partial": 0, "closing_soon": 0, "night": 0}
+    for poi in store.pois:
+        if haversine_m(ctx.origin, poi.geo) > ctx.radius_m or not _passes_profile(poi, intent):
+            continue
+        reason = _hours_drop_reason(poi, evaluate_hours(poi.opening_hours, ctx.local_time),
+                                    intent)
+        if reason is not None:
+            counts[reason] += 1
+    return counts
 
 
 # ------------------------------------------------------------------ scoring

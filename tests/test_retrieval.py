@@ -13,6 +13,7 @@ from app.retrieval import (
     INFO_PARTS,
     WEIGHTS,
     explain,
+    hours_dropped,
     lexical_relevance,
     query_unmatched,
     retrieve,
@@ -756,3 +757,21 @@ def test_semantic_part_only_when_cosine_was_used(synthetic_pois: list[POI]) -> N
     for query_vec in (None, np.ones(3, np.float32), np.array([np.nan, 0, 0, 0], np.float32)):
         out = retrieve(store, intent("кофе"), make_ctx(), query_vec)
         assert not any("semantic" in c.score_parts for c in out)  # vector was not used
+
+
+# ------------------------------------- silent-failure review №2, item 4: hours drops
+
+
+def test_hours_dropped_counts_reasons(synthetic_pois: list[POI]) -> None:
+    store = make_store(synthetic_pois)
+    monday = hours_dropped(store, intent(), make_ctx(at=MON_NOON, radius=1500))
+    assert monday["closed"] == 2  # museum «Mo off» + bar (opens at 18:00)
+    assert monday["closed_partial"] == 1  # gallery: Monday not described in OSM
+    late = datetime(2026, 10, 20, 21, 45, tzinfo=ASTANA_TZ)
+    assert hours_dropped(store, intent(), make_ctx(at=late))["closing_soon"] >= 2
+    night = datetime(2026, 10, 20, 1, 0, tzinfo=ASTANA_TZ)
+    assert hours_dropped(store, intent(night=True), make_ctx(at=night))["night"] >= 1
+    # consistent with retrieve: dropped + kept = everything that passed radius/profile
+    out = retrieve(store, intent(), make_ctx(at=MON_NOON, radius=1500), None, k=50)
+    in_radius = [p for p in synthetic_pois if haversine_m(ORIGIN, p.geo) <= 1500]
+    assert len(out) + sum(monday.values()) == len(in_radius)
