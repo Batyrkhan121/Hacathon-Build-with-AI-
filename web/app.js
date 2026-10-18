@@ -276,6 +276,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       : '',
     markerLabel: (card) =>
       `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
+    lineCaption: t('map.lineCaption'),
   });
 }
 
@@ -298,7 +299,7 @@ function focusOnMap(rank) {
 }
 
 function showRoute(rank) {
-  mapView.showRoute(rank, t('route.direct'));
+  mapView.showRoute(rank, t('map.lineCaption'));
   scrollMapIntoView();
 }
 
@@ -602,6 +603,7 @@ function bindEvents() {
     else if (state.lastError) renderError();
     else if (!state.inflight) renderIntro();
     if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
+    mapView.setLineCaption(t('map.lineCaption'));
     autoGrow();
     if (state.location.type === 'cell') {
       mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));

@@ -220,7 +220,7 @@ export function renderAnswer(root, answer, ctx) {
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, when, ctx)),
+          answer.cards.map((c) => renderCard(c, when, { ...ctx, origin: answer.context?.origin })),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -415,10 +415,53 @@ function renderCard(card, when, ctx) {
         ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
         : null,
     ),
+    renderDirections(card, ctx.origin),
   );
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
   return li;
+}
+
+// «Как пройти»: пешеходный маршрут в 2GIS и Яндекс Картах, в новой вкладке.
+// Без начальной точки оба сервиса маршрут не строят (ждут геопозицию), поэтому старт — центр поиска
+// из ответа (context.origin: ориентир или центр H3-ячейки), от него же посчитаны минуты в карточке.
+// Наша страница к этим сервисам не обращается: уходит только переход по ссылке по клику.
+const coord = (x) => Number(x).toFixed(6);
+
+export function directionsUrls(dest, origin) {
+  const d = { lat: coord(dest.lat), lon: coord(dest.lon) };
+  const o = origin ? { lat: coord(origin.lat), lon: coord(origin.lon) } : null;
+  // Яндекс: rtext=широта,долгота~широта,долгота; rtt=pd — пешком.
+  const yandex = `https://yandex.kz/maps/?rtext=${o ? `${o.lat},${o.lon}` : ''}~${d.lat},${d.lon}&rtt=pd`;
+  // 2GIS: точки «долгота,широта» через «|», пешеходный режим — вкладка tab/pedestrian.
+  const twogis =
+    'https://2gis.kz/astana/directions/tab/pedestrian/points/' +
+    `${o ? `${o.lon}%2C${o.lat}` : ''}%7C${d.lon}%2C${d.lat}`;
+  return { yandex, twogis };
+}
+
+function renderDirections(card, origin) {
+  const { yandex, twogis } = directionsUrls(card.geo, origin);
+  const title = cardTitle(card);
+  const link = (href, app) =>
+    h(
+      'a',
+      {
+        class: 'btn btn-link btn-sm',
+        href,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        'aria-label': t('dir.aria', { title, app }),
+      },
+      app,
+    );
+  return h(
+    'div',
+    { class: 'directions' },
+    h('span', { class: 'directions-label', text: t('dir.title') }),
+    link(twogis, t('dir.2gis')),
+    link(yandex, t('dir.yandex')),
+  );
 }
 
 export function popupFor(card) {

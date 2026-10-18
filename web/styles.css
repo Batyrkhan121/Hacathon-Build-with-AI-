@@ -1109,6 +1109,42 @@ input[type="time"] {
   margin-top: 10px;
 }
 
+/* «Как пройти»: внешние навигаторы, отдельной строкой под действиями карточки. */
+.directions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.directions-label {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* Легенда к пунктиру на карте. */
+.line-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, 70vw);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  font: 12px/1.35 var(--font);
+  color: var(--ink);
+}
+
+.line-swatch {
+  flex: none;
+  width: 26px;
+  height: 0;
+  border-top: 3px dotted var(--accent);
+}
+
 /* --- loading */
 
 .sk {

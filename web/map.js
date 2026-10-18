@@ -53,7 +53,46 @@ export function setZoomTitles(zoomIn, zoomOut) {
   set('.leaflet-control-zoom-out', zoomOut);
 }
 
-export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel, markerLabel }) {
+// Подпись к пунктиру: он прямой, чтобы оценить расстояние; настоящий пеший маршрут — в навигаторе.
+// Постоянная легенда в углу карты (на телефоне нет hover) + тот же текст в подсказке у линии.
+let lineLegend = null;
+
+function showLineLegend(text) {
+  if (!map) return;
+  if (!lineLegend) {
+    lineLegend = L.control({ position: 'bottomleft' });
+    lineLegend.onAdd = () => {
+      const el = L.DomUtil.create('div', 'line-legend');
+      L.DomUtil.create('span', 'line-swatch', el).setAttribute('aria-hidden', 'true');
+      L.DomUtil.create('span', 'line-text', el);
+      L.DomEvent.disableClickPropagation(el);
+      return el;
+    };
+    lineLegend.addTo(map);
+  }
+  lineLegend.getContainer().querySelector('.line-text').textContent = text;
+}
+
+function hideLineLegend() {
+  lineLegend?.remove();
+  lineLegend = null;
+}
+
+export function setLineCaption(text) {
+  if (lineLegend) showLineLegend(text);
+}
+
+function lineTooltip(...lines) {
+  const el = document.createElement('div');
+  lines.filter(Boolean).forEach((line) => {
+    const row = document.createElement('div');
+    row.textContent = line;
+    el.append(row);
+  });
+  return el;
+}
+
+export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel, markerLabel, lineCaption }) {
   if (!map) return;
   clearAnswer();
   const pts = [];
@@ -72,7 +111,8 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
       dashArray: '2 9',
       lineCap: 'round',
     }).addTo(answerLayer);
-    routeLine.bindTooltip(routeLabel, { sticky: true });
+    routeLine.bindTooltip(lineTooltip(routeLabel, lineCaption), { sticky: true });
+    showLineLegend(lineCaption);
     pts.push(...latlngs);
   }
   for (const card of answer.cards) {
@@ -104,6 +144,7 @@ export function clearAnswer() {
   directLayer?.clearLayers();
   stopMarkers.clear();
   routeLine = null;
+  hideLineLegend();
 }
 
 export function focusStop(rank) {
@@ -115,7 +156,7 @@ export function focusStop(rank) {
 }
 
 // Маршрут: весь мини-маршрут, а если его нет — прямая от старта до места (честно помечена).
-export function showRoute(rank, directLabel) {
+export function showRoute(rank, lineCaption) {
   if (!map) return;
   directLayer.clearLayers();
   if (rank) highlightStop(rank);
@@ -131,7 +172,8 @@ export function showRoute(rank, directLabel) {
     dashArray: '2 9',
     lineCap: 'round',
   }).addTo(directLayer);
-  line.bindTooltip(directLabel, { sticky: true });
+  line.bindTooltip(lineTooltip(lineCaption), { sticky: true });
+  showLineLegend(lineCaption);
   map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: !reducedMotion() });
 }
 
