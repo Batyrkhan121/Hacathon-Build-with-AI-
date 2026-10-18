@@ -136,6 +136,8 @@
 - [x] **T76 Доступность UI.** `/ecc:accessibility`: клавиатура, контраст, aria.
   - Заметка (49f6906): влиты T71 (UI-таймлайн маршрута), T72 (переключатели режимов; серверный apply_overrides для tourist/departure_in_min/night ещё у FEATURES), T75, T76. T71 и T72 закрыть после серверной части. Не проверено: GPS на реальном устройстве; крайние случаи полуночи в бейдже «завтра».
 - [ ] **T77 Деплой (по желанию).** Dockerfile + Render или HF Spaces; публичная ссылка в README.
+  - Заметка (решение пользователя): Docker smoke делает Meyrban (DEPLOY) на своём компьютере и присылает лог сборки и запуска; Docker Desktop на машине интегратора не чиним. Перед вливанием feat/deploy в .dockerignore должны быть явно исключены .env, .git, .venv, data/cache, data/raw, .claude и явно разрешён web/vendor/**; HEALTHCHECK должен принимать status ok и degraded при poi_count>0. Публичный деплой — только после лимита расходов в Anthropic Console и выбора хостинга Megah.
+  - Заметка (эмбеддинги через OpenRouter): после пересборки индекса с EMBED_PROVIDER=openrouter ставим EMBED_PROVIDER=openrouter во все .env, где запускается сервер или eval (main, worktree дорожек), и в настройки хостинга. Иначе модель индекса (google/gemini-embedding-001) не совпадёт с моделью запросов, Store отбросит индекс и поиск уйдёт в слова.
 
 ## Волна 4: сдача
 - [ ] **T80 Код-фриз.** Финальный eval → `docs/SCENARIOS.md`; README (запуск за 3 команды); проверка, что `.env` не в истории.
