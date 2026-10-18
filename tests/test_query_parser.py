@@ -216,6 +216,28 @@ def test_indoor_outdoor(landmarks: dict[str, Landmark]) -> None:
     assert rules("кофе", landmarks).indoor == "any"
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["I'm near EXPO with one free hour. What's worth seeing nearby?",
+     "anything worth visiting around here?", "places to visit nearby",
+     "what’s interesting around?", "what to see near Baiterek",
+     "что посмотреть рядом?", "что интересного поблизости?", "куда сходить посмотреть город",
+     "Жақын жерде көретін жер бар ма?", "көруге тұрарлық орындар", "Мұнда не көруге болады?"],
+)
+def test_general_sightseeing_phrases_add_sights_and_parks(text: str,
+                                                          landmarks: dict[str, Landmark]) -> None:
+    cats = set(rules(text, landmarks).categories)
+    assert {"attraction", "monument", "museum", "viewpoint", "park"} <= cats
+
+
+@pytest.mark.parametrize("text", ["достопримечательности рядом", "famous landmarks nearby",
+                                  "sightseeing in Astana", "көрікті жерлер"])
+def test_specific_sights_words_do_not_add_parks(text: str,
+                                                landmarks: dict[str, Landmark]) -> None:
+    cats = rules(text, landmarks).categories
+    assert "attraction" in cats and "park" not in cats
+
+
 def test_viewpoint_is_not_playground(landmarks: dict[str, Landmark]) -> None:
     i = rules("смотровая площадка с видом на город", landmarks)
     assert "viewpoint" in i.categories and "playground" not in i.categories

@@ -200,7 +200,9 @@ class FakeLLM:
 
 
 def make_settings(tmp_path: Path) -> Settings:
-    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache", h3_res=9)
+    # index_dir too: the real data/index/meta.json may say "stale" — tests must not care
+    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
+                               index_dir=tmp_path / "index", h3_res=9)
 
 
 def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> Store:
@@ -570,6 +572,40 @@ class TestRecommend:
         assert calls == [True]  # the LLM wrote it
         recommend(req("кофе", use_llm=False), deps)
         assert calls == [True, False]  # template counters / airport times: default
+
+    def test_stale_index_is_named_in_the_search_line(self, deps: Deps, tmp_path: Path) -> None:
+        import json
+
+        index = tmp_path / "index"
+        index.mkdir()
+        (index / "meta.json").write_text(json.dumps({"status": "stale"}), encoding="utf-8")
+        deps.settings = dataclasses.replace(deps.settings, index_dir=index)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        filters = recommend(req("кофе"), deps).data_used.filters
+        assert "поиск: по смыслу и по словам (индекс устарел)" in filters
+        en = recommend(req("coffee", lang="en"), deps).data_used.filters
+        assert "search: by meaning and keywords (index outdated)" in en
+
+    def test_hours_dropped_in_filters(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda store, intent, ctx: {
+            "closed": 3, "closed_partial": 1, "closing_soon": 2, "night": 0}, raising=False)
+        ru = recommend(req("кофе", use_llm=False), deps).data_used.filters
+        assert ("по часам работы отсеяно 6: закрыто 3, сегодня не работает 1, "
+                "скоро закроется 2") in ru
+        kk = recommend(req("кофе", lang="kk", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("жұмыс уақыты бойынша алынып тасталды 6") for f in kk)
+        en = recommend(req("coffee", lang="en", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("removed by opening hours 6: closed 3") for f in en)
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda *a: {"closed": 0})
+        assert not any("отсеяно" in f
+                       for f in recommend(req("кофе", use_llm=False), deps).data_used.filters)
+
+        def boom(*_a: Any) -> dict[str, int]:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(retrieval, "hours_dropped", boom)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
 
     def test_old_sanitize_signature_still_works(self, deps: Deps,
                                                 monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1017,6 +1053,47 @@ class TestRealCore:
         cyrillic = [x for x in texts if re.search(r"[А-Яа-яЁё]", x)]
         assert cyrillic == []  # only POI titles / addresses may stay in the local script
         assert a.context.area_label.startswith("near EXPO")
+
+    def test_e7_without_ai_finds_sights_near_expo(self, real_deps: Deps,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+        """The video scene «AI off — answer from the data»: E7 must still show sights."""
+        names: list[str] = []
+        real = retrieval.retrieve
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            out = real(store, intent, ctx, qv, k)
+            names.extend(c.poi.name for c in out)
+            return out
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        a = recommend(real_req("I'm near EXPO with one free hour. What's worth seeing nearby?",
+                               "expo"), real_deps)
+        assert 2 <= len(a.cards) <= 3, (a.warnings, [c.title for c in a.cards])
+        assert {"attraction", "park"} <= set(a.intent.categories)
+        assert "25-ти летие Независимости" in names and "Аллея мира и согласия" in names
+        sightish = {"attraction", "monument", "museum", "viewpoint", "gallery", "religious",
+                    "park"}
+        assert all(c.category in sightish for c in a.cards)
+        assert all(c.walk_min <= 20 for c in a.cards)  # «nearby» = within a 20-min walk
+
+    def test_budget_radius_never_means_more_than_20_min_one_way(
+        self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[tuple[int | None, int | None]] = []
+        real = geo.radius_for
+
+        def spy(intent: QueryIntent) -> int:
+            seen.append((intent.time_budget_min, intent.max_walk_min))
+            return real(intent)
+
+        monkeypatch.setattr(geo, "radius_for", spy)
+        recommend(real_req("есть 2 часа, что посмотреть?", "baiterek"), real_deps)
+        assert seen[0] == (120, 20)  # 0.35 × 120 = 42 min one way would be too far
+        recommend(real_req("есть полчаса, что посмотреть?", "baiterek"), real_deps)
+        assert seen[-1] == (30, None)  # 0.35 × 30 ≈ 11 min: the budget decides
+        recommend(real_req("2 часа, не дальше 30 минут пешком", "baiterek"), real_deps)
+        assert seen[-1] == (120, 30)  # an explicit limit always wins
 
     def test_e6_kazakh_answer_has_no_russian_service_text(self, real_deps: Deps) -> None:
         a = recommend(real_req("Мен Бәйтерек жанындамын, бір сағатқа серуендегім келеді. "

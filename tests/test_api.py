@@ -94,6 +94,42 @@ def test_health_explains_index_and_llm(deps: Deps) -> None:
     assert h["index"] == "ready" and h["llm"] == "ok" and h["status"] == "ok"
 
 
+def test_missing_prompt_is_loud_at_startup(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                           caplog: pytest.LogCaptureFixture) -> None:
+    from app import generate
+
+    def missing() -> None:
+        raise FileNotFoundError("prompts/generate_cards.md")
+
+    monkeypatch.setattr(generate, "check_prompt", missing)
+    with caplog.at_level(logging.ERROR), TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded"
+    assert any("generate_cards" in w for w in h["warnings"])
+    assert any("prompt" in r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+
+
+def test_stale_index_makes_health_degraded(deps: Deps, tmp_path: Path) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"status": "stale", "stale_reason": "квота"}),
+                                     encoding="utf-8")
+    deps.settings = dataclasses.replace(deps.settings, index_dir=index)
+    deps.store.warnings = ["индекс эмбеддингов устарел (с 2026-10-19): квота; векторы используются"]
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+        m = c.get("/api/meta").json()
+    assert h["status"] == "degraded" and m["status"] == "degraded"
+    assert any("устарел" in w for w in h["warnings"])
+    (index / "meta.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    deps.store.warnings = []
+    with TestClient(api.create_app(deps)) as c:
+        assert c.get("/api/health").json()["status"] == "ok"
+
+
 def test_landmarks(client: TestClient, landmarks: dict[str, Landmark]) -> None:
     r = client.get("/api/landmarks")
     assert r.status_code == 200
