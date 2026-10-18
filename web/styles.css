@@ -71,6 +71,11 @@ textarea {
   color: inherit;
 }
 
+/* hidden должен побеждать display:flex/grid у компонентов */
+[hidden] {
+  display: none !important;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -543,6 +548,27 @@ select {
 
 .day-chips {
   margin-bottom: 6px;
+}
+
+.chip-icon {
+  margin-right: 5px;
+}
+
+.departure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.departure-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-strong);
 }
 
 .when-row {

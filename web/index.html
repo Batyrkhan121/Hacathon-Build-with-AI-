@@ -71,11 +71,20 @@
             <p class="where-note" id="where-note" aria-live="polite"></p>
           </fieldset>
 
+          <fieldset class="modes">
+            <legend class="label" data-i18n="mode.legend">Режим</legend>
+            <div class="chips" id="mode-chips"></div>
+            <div class="departure" id="departure" hidden>
+              <span class="departure-label" id="departure-label" data-i18n="departure.label">Вылет через</span>
+              <div class="chips" id="departure-chips" role="group" aria-labelledby="departure-label"></div>
+            </div>
+            <p class="hint" id="filter-hint" hidden></p>
+          </fieldset>
+
           <fieldset class="filters">
             <legend class="label" data-i18n="filters.legend">Фильтры</legend>
             <div class="chips" id="budget-chips" role="group" data-i18n-aria="budget.aria" aria-label="Сколько есть времени"></div>
             <div class="chips" id="flag-chips"></div>
-            <p class="hint" id="filter-hint" hidden></p>
           </fieldset>
 
           <fieldset class="when">

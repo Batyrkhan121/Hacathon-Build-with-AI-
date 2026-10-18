@@ -10,11 +10,17 @@ const PRESETS = [
   { id: 'S2', landmark: 'expo', time: '11:00' },
   { id: 'S3', landmark: 'khan_shatyr', time: '12:00', flags: { with_kids: true } },
   // S4: турист в центре (у аэропорта в данных почти пусто), сервер учитывает дорогу в NQZ.
-  { id: 'S4', landmark: 'baiterek', time: '16:00' },
-  { id: 'S5', landmark: 'baiterek', time: '23:30' },
+  { id: 'S4', landmark: 'baiterek', time: '16:00', flags: { tourist: true }, departure: 120 },
+  { id: 'S5', landmark: 'baiterek', time: '23:30', flags: { night: true } },
 ];
 const BUDGETS = [30, 60, 120];
-const FLAGS = ['with_kids', 'wheelchair', 'indoor_only', 'group'];
+// Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
+const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
+const FILTER_FLAGS = ['indoor_only'];
+const FLAGS = [...MODES, ...FILTER_FLAGS];
+const MODE_ICON = { tourist: '✈', night: '🌙', with_kids: '🧒', wheelchair: '♿', group: '👥' };
+const DEPARTURES = [90, 120, 180, 240]; // минут до вылета (контракт: 30–1440)
+const DEFAULT_DEPARTURE = 120;
 const GROUP_SIZE = 4; // «нас 3–5»
 const TIMES = [null, '10:00', '19:00', '23:30'];
 const DEFAULT_LANDMARK = 'expo';
@@ -27,7 +33,8 @@ const state = {
   location: { type: 'landmark', id: DEFAULT_LANDMARK },
   whereMsg: null, // { key, kind } — сообщение под «Где я»
   budget: null,
-  flags: { with_kids: false, wheelchair: false, indoor_only: false, group: false },
+  flags: Object.fromEntries(FLAGS.map((f) => [f, false])),
+  departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
@@ -52,6 +59,9 @@ const els = {
   presets: $('presets'),
   budgetChips: $('budget-chips'),
   flagChips: $('flag-chips'),
+  modeChips: $('mode-chips'),
+  departure: $('departure'),
+  departureChips: $('departure-chips'),
   filterHint: $('filter-hint'),
   dayChips: $('day-chips'),
   timeChips: $('time-chips'),
@@ -109,6 +119,12 @@ function buildRequest(query, useLlm = true) {
   if (state.flags.wheelchair) overrides.wheelchair = true;
   if (state.flags.indoor_only) overrides.indoor_only = true;
   if (state.flags.group) overrides.group_size = GROUP_SIZE;
+  // Выключенный режим не шлём совсем (а не false): иначе он перебил бы то, что понял парсер.
+  if (state.flags.tourist) {
+    overrides.tourist = true;
+    overrides.departure_in_min = state.departure;
+  }
+  if (state.flags.night) overrides.night = true;
   return {
     query,
     location,
@@ -316,10 +332,24 @@ function renderChips() {
       }),
     ),
   );
-  els.flagChips.replaceChildren(
-    ...FLAGS.map((f) =>
-      chip(t(`flag.${f}`), state.flags[f], () => {
-        state.flags[f] = !state.flags[f];
+  const toggle = (f) => () => {
+    state.flags[f] = !state.flags[f];
+    filtersChanged();
+  };
+  els.flagChips.replaceChildren(...FILTER_FLAGS.map((f) => chip(t(`flag.${f}`), state.flags[f], toggle(f))));
+  els.modeChips.replaceChildren(
+    ...MODES.map((f) => {
+      const b = chip(t(`flag.${f}`), state.flags[f], toggle(f));
+      b.prepend(Object.assign(document.createElement('span'), { className: 'chip-icon', textContent: MODE_ICON[f] }));
+      b.firstChild.setAttribute('aria-hidden', 'true');
+      return b;
+    }),
+  );
+  els.departure.hidden = !state.flags.tourist;
+  els.departureChips.replaceChildren(
+    ...DEPARTURES.map((m) =>
+      chip(t(`departure.${m}`), state.departure === m, () => {
+        state.departure = m;
         filtersChanged();
       }),
     ),
@@ -343,8 +373,11 @@ function renderChips() {
     ),
   );
   els.timeInput.value = state.time || '';
-  els.filterHint.hidden = !state.flags.wheelchair;
-  els.filterHint.textContent = state.flags.wheelchair ? t('hint.wheelchair') : '';
+  const hints = [];
+  if (state.flags.tourist) hints.push(t('hint.tourist'));
+  if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
+  els.filterHint.hidden = !hints.length;
+  els.filterHint.textContent = hints.join(' ');
 }
 
 function filtersChanged() {
@@ -499,7 +532,8 @@ function applyPreset(p) {
   autoGrow();
   state.budget = null;
   FLAGS.forEach((f) => (state.flags[f] = Boolean(p.flags?.[f])));
-  state.time = p.time;
+  state.departure = p.departure || DEFAULT_DEPARTURE;
+  state.time = p.time; // день (сегодня/завтра) пресет не трогает
   setLocation({ type: 'landmark', id: p.landmark });
   state.activePreset = p.id;
   renderChips();
