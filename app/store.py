@@ -11,6 +11,7 @@ If the index is missing, meta.model != settings.embed_model or meta.dim != setti
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -139,7 +140,35 @@ def _load_embeddings(
     norms = np.linalg.norm(aligned, axis=1, keepdims=True)
     aligned = np.divide(aligned, norms, out=np.zeros_like(aligned), where=norms > 0)
     warnings = [f"{missing} POI без эмбеддинга (только лексика)"] if missing else []
+    warnings.extend(_index_status_warnings(meta, pois))
     return aligned, str(model), warnings
+
+
+def ids_sha256(pois: list[POI]) -> str:
+    """Same hash pipeline.build_index writes to meta.json: sha256 of ids joined by newlines."""
+    joined = "\n".join(p.id for p in pois)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def _index_status_warnings(meta: dict[str, object], pois: list[POI]) -> list[str]:
+    """Stale index and count / id mismatches are warnings: the vectors are still used.
+
+    meta.json from the DATA lane: status "ok" | "stale" (+ stale_reason, stale_since);
+    count and ids_sha256 are written on a successful build. An old meta without these
+    fields is accepted silently.
+    """
+    out: list[str] = []
+    if meta.get("status") == "stale":
+        reason = meta.get("stale_reason") or "причина не указана"
+        since = meta.get("stale_since") or "неизвестно когда"
+        out.append(f"индекс эмбеддингов устарел (с {since}): {reason}; векторы используются")
+    count = meta.get("count")
+    if isinstance(count, int) and count != len(pois):
+        out.append(f"индекс построен для {count} POI, а загружено {len(pois)}")
+    expected = meta.get("ids_sha256")
+    if isinstance(expected, str) and expected and expected != ids_sha256(pois):
+        out.append("id POI в индексе не совпадают с poi.jsonl (ids_sha256)")
+    return out
 
 
 def load_store(settings: Settings, poi_path: Path | None = None) -> Store:
