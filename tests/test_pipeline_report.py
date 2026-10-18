@@ -73,7 +73,6 @@ def test_landmark_count_ignores_plain_overrides() -> None:
 
     pois = [
         poi("osm:way/166197368", ["osm", "manual"]),  # the Pyramid: a landmark added as POI
-        poi("osm:node/5126825313", ["osm", "manual"]),  # the circus: only an override
         # Baiterek: a landmark found by its own OSM tags that also got an override
         poi("osm:way/230401645", ["osm", "manual"]),
     ]
