@@ -44,3 +44,20 @@ def test_hours_without_source_are_not_applied() -> None:
     assert out.category == "museum" and out.opening_hours is None
     assert out.data_confidence == 0.5  # no bonus for hours that were not applied
     assert "Часы без ссылки на источник не применены: osm:way/454857501" in notes[0]
+
+
+def test_category_fix_brings_its_tags_and_flag_only_entry_changes_nothing() -> None:
+    kfc = POI.model_validate({
+        "id": "osm:way/242373803", "name": "KFC", "category": "mall",
+        "tags": ["indoor", "shopping"], "geo": {"lat": 51.1, "lon": 71.4}, "indoor": True,
+        "sources": ["osm"], "data_confidence": 0.3, "fetched_at": "2026-10-18",
+    })
+    flag_only = SPHERE.model_copy(update={"id": "osm:node/2388707906", "sources": ["osm"]})
+    out, _ = apply_overrides([kfc, flag_only], {
+        kfc.id: {"category": "fast_food"},
+        flag_only.id: {"generated_description": False, "note": "x"},
+    })
+    fixed, same = out
+    assert fixed.category == "fast_food" and set(fixed.tags) == {"indoor", "food"}
+    assert fixed.indoor is True and "manual" in fixed.sources
+    assert same == flag_only  # no field changed, no "manual" source added

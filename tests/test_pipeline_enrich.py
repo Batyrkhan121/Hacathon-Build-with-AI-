@@ -133,7 +133,8 @@ def test_only_notable_places_get_generated_text(tmp_path: Path) -> None:
     assert by_id["osm:node/70"].description is None
     assert by_id["osm:node/73"].description is None  # old generated text on a bar removed
     assert by_id["osm:node/74"].description == "Из OSM"  # data descriptions stay
-    assert "убрано старых: 1" in note and "1 из 1 заметных мест" in note
+    assert "Убрано прежних сгенерированных описаний: 1" in note
+    assert "1 из 1 заметных мест" in note
 
 
 def test_check_allows_plain_words() -> None:
@@ -142,3 +143,39 @@ def test_check_allows_plain_words() -> None:
     assert clean_sentence("Сцена театра под открытым небом.")
     assert clean_sentence("Цена билета — 2000.") is None
     assert clean_sentence("Отель на 5 звёзд.") is None
+
+
+def test_free_paid_and_star_words_are_rejected() -> None:
+    assert clean_sentence("Музей, вход бесплатный согласно тегам.") is None
+    assert clean_sentence("Платная парковка рядом.") is None
+    assert clean_sentence("Пятизвёздочный отель у набережной.") is None
+
+
+def test_skip_ids_and_malls_get_no_generated_text(tmp_path: Path) -> None:
+    gallery = poi(100, 0.5, category="gallery")
+    mall = poi(101, 0.9, category="mall", tags=["shopping"])
+    old = poi(102, 0.5, category="gallery", description="Галерея.",
+              description_source="llm_generated")
+    asked: list[str] = []
+
+    def fake(items: list[dict]) -> list[PlaceDescription]:
+        asked.extend(it["poi_id"] for it in items)
+        return [PlaceDescription(poi_id=it["poi_id"], text="Описание.") for it in items]
+
+    out, _ = llm_step([gallery, mall, old], None, tmp_path / "d.json", "m", describe=fake,
+                      skip_ids=frozenset({"osm:node/100", "osm:node/102"}))
+    assert asked == []  # gallery skipped by override, mall is not described any more
+    assert all(p.description is None for p in out)
+
+
+def test_cache_only_mode_applies_cache_without_asking(tmp_path: Path, monkeypatch) -> None:
+    from app import config
+
+    cache = tmp_path / "d.json"
+    museum = poi(110, 0.5)
+    llm_step([museum], None, cache, "m",
+             describe=lambda items: [PlaceDescription(poi_id=items[0]["poi_id"],
+                                                      text="Небольшой музей истории.")])
+    monkeypatch.setattr(config.Settings, "has_llm", property(lambda self: False))
+    (out,), note = llm_step([museum, poi(111, 0.4)][:1], None, cache, "m")
+    assert out.description == "Небольшой музей истории." and "только из кэша" in note

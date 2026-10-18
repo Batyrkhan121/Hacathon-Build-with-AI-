@@ -3,5 +3,17 @@
     "category": "museum",
     "note": "Шар Нур Алем (в OSM: Alem.ai, office), по Wikidata Q123643894 после EXPO-2017 стал музеем. Часы работы не указаны: нет официального источника. Добавить opening_hours можно только вместе со ссылкой в source.",
     "source": null
+  },
+  "osm:way/242373803": {
+    "category": "fast_food",
+    "note": "KFC: в OSM здание ошибочно размечено shop=mall (остальные 11 точек KFC — amenity=fast_food). Ревью интегратора 18.10.2026."
+  },
+  "osm:node/5126825313": {
+    "category": "entertainment",
+    "note": "Астаналық Цирк: в OSM amenity=arts_centre, отсюда была «галерея». Цирк — это представления, категория entertainment. Ревью интегратора 18.10.2026."
+  },
+  "osm:node/2388707906": {
+    "generated_description": false,
+    "note": "Астана-Экспо КС: в OSM tourism=gallery + amenity=community_centre; что это за место, не подтверждено, поэтому без сгенерированного описания. Ревью интегратора 18.10.2026."
   }
 }
