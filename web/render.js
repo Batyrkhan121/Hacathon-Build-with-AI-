@@ -83,9 +83,12 @@ function safeUrl(url) {
 }
 
 // Для какого момента считались часы: время из `at` и «завтра» ли это.
-function whenOf(request) {
-  if (!request?.at) return { time: null, tomorrow: false };
-  return { time: request.at.slice(11, 16), tomorrow: dayOffsetOf(request.at) === 1 };
+// Время в бейдже — то, на которое сервер считал часы (context.local_time), а не то, что ушло в запросе:
+// на живом API они совпадают, а мок отвечает своим фиксированным временем.
+function whenOf(request, answer) {
+  if (!request?.at) return { time: null, tomorrow: false }; // «сейчас» — без времени в бейдже
+  const at = answer?.context?.local_time || request.at;
+  return { time: at.slice(11, 16), tomorrow: dayOffsetOf(at) === 1 };
 }
 
 // «Открыто» — только при open + high (правило продукта 2).
@@ -192,7 +195,7 @@ export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onS
 // ------------------------------------------------------------------ answer
 
 export function renderAnswer(root, answer, ctx) {
-  const when = whenOf(ctx.request);
+  const when = whenOf(ctx.request, answer);
   const byId = new Map(answer.cards.map((c) => [c.poi_id, c]));
   const noAi = answer.data_used?.generation === 'template';
 
