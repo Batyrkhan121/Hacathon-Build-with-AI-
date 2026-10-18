@@ -201,9 +201,11 @@ class FakeLLM:
 
 def make_settings(tmp_path: Path) -> Settings:
     # index_dir too: the real data/index/meta.json may say "stale" — tests must not care
+    # no embeddings keys either: a test that needs one sets it explicitly (.env must not matter)
     return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
                                index_dir=tmp_path / "index", h3_res=9,
-                               embed_provider="gemini", embed_model="gemini-embedding-001")
+                               embed_provider="gemini", embed_model="gemini-embedding-001",
+                               gemini_api_key=None, openrouter_api_key=None)
 
 
 def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> Store:
@@ -587,6 +589,53 @@ class TestRecommend:
         assert "поиск: по смыслу и по словам (индекс устарел)" in filters
         en = recommend(req("coffee", lang="en"), deps).data_used.filters
         assert "search: by meaning and keywords (index outdated)" in en
+
+    @pytest.mark.parametrize(
+        ("lang", "line", "warning"),
+        [("ru", "поиск: по словам (индекс не подходит к модели запросов), отбор — Claude",
+          "Смысловой поиск недоступен: индекс построен другой моделью — поиск только по словам."),
+         ("kk", "іздеу: сөздері бойынша (индекс сұрау моделіне сәйкес емес), іріктеу — Claude",
+          "Мағыналық іздеу қолжетімсіз: индекс басқа модельмен құрылған — тек сөздер бойынша "
+          "іздеу."),
+         ("en", "search: by keywords (index does not match the query model), picked by Claude",
+          "Semantic search is unavailable: the index was built with another model — keyword "
+          "search only.")],
+    )
+    def test_index_of_another_model_is_named(self, deps: Deps, tmp_path: Path, lang: str,
+                                             line: str, warning: str) -> None:
+        """EMBED_PROVIDER=openrouter over an index built with gemini-embedding-001: Store drops
+        the vectors; the answer must say why instead of a bare «по словам»."""
+        import json
+
+        index = tmp_path / "index"
+        index.mkdir()
+        (index / "meta.json").write_text(json.dumps(
+            {"model": "gemini-embedding-001", "dim": 768, "status": "ok"}), encoding="utf-8")
+        deps.settings = dataclasses.replace(
+            deps.settings, index_dir=index, embed_provider="openrouter",
+            openrouter_api_key="or-key", embed_model="google/gemini-embedding-001", embed_dim=768)
+        deps.store.embeddings = None  # dropped by Store: model mismatch
+        a = recommend(req(lang=lang), deps)
+        assert line in a.data_used.filters
+        assert warning in a.warnings
+        b = recommend(req(lang=lang, use_llm=False), deps)  # the user chose no AI
+        assert not any("(" in f for f in b.data_used.filters if "Claude" in f or "по словам" in f)
+
+    def test_missing_index_with_a_key_is_named(self, deps: Deps, tmp_path: Path) -> None:
+        deps.settings = dataclasses.replace(deps.settings, index_dir=tmp_path / "none",
+                                            gemini_api_key="g-key")
+        deps.store.embeddings = None
+        a = recommend(req(), deps)
+        assert "поиск: по словам (индекс не загружен), отбор — Claude" in a.data_used.filters
+        assert ("Смысловой поиск недоступен: индекс эмбеддингов не загружен — поиск только по "
+                "словам.") in a.warnings
+
+    def test_no_key_and_no_index_stays_quiet(self, deps: Deps) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+        deps.store.embeddings = None
+        a = recommend(req(), deps)
+        assert "поиск: по словам, отбор — Claude" in a.data_used.filters
+        assert not any("Смысловой" in w for w in a.warnings)
 
     def test_hours_dropped_in_filters(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(retrieval, "hours_dropped", lambda store, intent, ctx: {

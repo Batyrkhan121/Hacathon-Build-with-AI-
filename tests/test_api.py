@@ -130,6 +130,25 @@ def test_stale_index_makes_health_degraded(deps: Deps, tmp_path: Path) -> None:
         assert c.get("/api/health").json()["status"] == "ok"
 
 
+def test_index_of_another_model_makes_health_degraded(deps: Deps, tmp_path: Path) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": "gemini-embedding-001", "dim": 768}),
+                                     encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+    deps.store.embeddings = None
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded" and h["index"] == "lexical (index mismatch)"
+    assert any("gemini-embedding-001/768" in w and "google/gemini-embedding-001/768" in w
+               for w in h["warnings"])
+
+
 def test_landmarks(client: TestClient, landmarks: dict[str, Landmark]) -> None:
     r = client.get("/api/landmarks")
     assert r.status_code == 200

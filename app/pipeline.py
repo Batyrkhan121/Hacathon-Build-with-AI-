@@ -123,6 +123,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "gen_check_failed": "Тексты ИИ не прошли проверку — показаны карточки по данным.",
         "route_failed": "Маршрут построить не удалось — карточки показаны без маршрута.",
         "semantic_down": "Смысловой поиск недоступен ({reason}) — поиск только по словам.",
+        "semantic_index_mismatch": "Смысловой поиск недоступен: индекс построен другой "
+                                   "моделью — поиск только по словам.",
+        "semantic_index_missing": "Смысловой поиск недоступен: индекс эмбеддингов не "
+                                  "загружен — поиск только по словам.",
         "weather_manual": "погода не учтена: время задано вручную",
         "landmark_mismatch": "В запросе упомянут ориентир «{name}», но подборка построена "
                              "от выбранной точки.",
@@ -187,6 +191,10 @@ TEXTS: dict[str, dict[str, str]] = {
                             "көрсетілді.",
         "route_failed": "Маршрут құру мүмкін болмады — карточкалар маршрутсыз көрсетілді.",
         "semantic_down": "Мағыналық іздеу қолжетімсіз ({reason}) — тек сөздер бойынша іздеу.",
+        "semantic_index_mismatch": "Мағыналық іздеу қолжетімсіз: индекс басқа модельмен "
+                                   "құрылған — тек сөздер бойынша іздеу.",
+        "semantic_index_missing": "Мағыналық іздеу қолжетімсіз: эмбеддинг индексі жүктелмеген "
+                                  "— тек сөздер бойынша іздеу.",
         "weather_manual": "ауа райы ескерілмеді: уақыт қолмен берілген",
         "landmark_mismatch": "Сұрауда «{name}» аталған, бірақ іріктеме таңдалған нүктеден "
                              "жасалды.",
@@ -246,6 +254,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "gen_check_failed": "The AI texts failed the check — showing cards built from the data.",
         "route_failed": "Could not build the route — showing the cards without it.",
         "semantic_down": "Semantic search is unavailable ({reason}) — keyword search only.",
+        "semantic_index_mismatch": "Semantic search is unavailable: the index was built with "
+                                   "another model — keyword search only.",
+        "semantic_index_missing": "Semantic search is unavailable: the embeddings index is not "
+                                  "loaded — keyword search only.",
         "weather_manual": "weather not considered: time set manually",
         "landmark_mismatch": "Your message mentions “{name}”, but results are built from the "
                              "selected starting point.",
@@ -371,15 +383,21 @@ EMBED_REASONS: dict[str, dict[str, str]] = {
     "ru": {"quota": "лимит запросов {p}", "minute_quota": "минутный лимит {p}",
            "daily_quota": "дневная квота {p}", "network": "нет связи с {p}",
            "error": "ошибка {p}", "bad_vector": "некорректный вектор запроса",
-           "auth": "ключ {p} недействителен", "no_credit": "нет кредитов {p}"},
+           "auth": "ключ {p} недействителен", "no_credit": "нет кредитов {p}",
+           "index_mismatch": "индекс не подходит к модели запросов",
+           "index_missing": "индекс не загружен"},
     "kk": {"quota": "{p} сұраулар лимиті", "minute_quota": "{p} минуттық лимиті",
            "daily_quota": "{p} күндік квотасы", "network": "{p}-мен байланыс жоқ",
            "error": "{p} қатесі", "bad_vector": "сұрау векторы дұрыс емес",
-           "auth": "{p} кілті жарамсыз", "no_credit": "{p} кредиттері жоқ"},
+           "auth": "{p} кілті жарамсыз", "no_credit": "{p} кредиттері жоқ",
+           "index_mismatch": "индекс сұрау моделіне сәйкес емес",
+           "index_missing": "индекс жүктелмеген"},
     "en": {"quota": "{p} rate limit", "minute_quota": "{p} per-minute limit",
            "daily_quota": "{p} daily quota", "network": "no connection to {p}",
            "error": "{p} error", "bad_vector": "invalid query vector",
-           "auth": "{p} key rejected", "no_credit": "no {p} credits"},
+           "auth": "{p} key rejected", "no_credit": "no {p} credits",
+           "index_mismatch": "index does not match the query model",
+           "index_missing": "index not loaded"},
 }
 EMBED_PROVIDER_NAMES = {"gemini": "Gemini", "openrouter": "OpenRouter"}
 # retrieval.hours_dropped() reasons, in this order, for the "data used" panel
@@ -514,6 +532,12 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             if semantic_reason in SEMANTIC_DOWN_KINDS:
                 warn.append(t["semantic_down"].format(
                     reason=_embed_reason(intent.lang, semantic_reason, deps.settings)))
+    elif req.use_llm and deps.llm is not None:
+        # the provider has a key but Store dropped the index (another model / dim, broken,
+        # missing): say so instead of a silent «по словам»
+        semantic_reason = index_problem(deps.settings, store)
+        if semantic_reason is not None:
+            warn.append(t[f"semantic_{semantic_reason}"])
 
     wide_pool = llm is not None and llm.available and query_vec is None
     pool_k = LLM_POOL_K if wide_pool else TOP_K
@@ -744,12 +768,12 @@ def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarr
     return q
 
 
-_META_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+_META_CACHE: dict[str, tuple[tuple[int, int], dict[str, object] | None]] = {}
 
 
-def index_status(settings: Settings) -> str | None:
-    """status from data/index/meta.json ("ok" | "stale" | None), re-read when the file
-    changes. The structured source: Store only keeps a human warning text about it."""
+def index_meta(settings: Settings) -> dict[str, object] | None:
+    """data/index/meta.json as a dict (None: no file / unreadable), re-read when the file
+    changes. The structured source: Store only keeps human warning texts about it."""
     path = settings.index_dir / "meta.json"
     try:
         stat = path.stat()
@@ -760,12 +784,33 @@ def index_status(settings: Settings) -> str | None:
     if hit is not None and hit[0] == stamp:
         return hit[1]
     try:
-        status = json.loads(path.read_text(encoding="utf-8")).get("status")
-    except (OSError, ValueError, AttributeError):
-        status = None
-    status = status if isinstance(status, str) else None
-    _META_CACHE[str(path)] = (stamp, status)
-    return status
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = None
+    meta = meta if isinstance(meta, dict) else None
+    _META_CACHE[str(path)] = (stamp, meta)
+    return meta
+
+
+def index_status(settings: Settings) -> str | None:
+    """status from meta.json: "ok" | "stale" | None."""
+    status = (index_meta(settings) or {}).get("status")
+    return status if isinstance(status, str) else None
+
+
+def index_problem(settings: Settings, store: Store) -> str | None:
+    """Why the vectors are not used although the embeddings provider has a key:
+    "index_mismatch" (meta.json model / dim differ from the settings, e.g. EMBED_PROVIDER=
+    openrouter over a gemini-embedding-001 index) or "index_missing" (no / broken index).
+    None when the index is in use or the key is deliberately empty."""
+    if store.embeddings is not None or not settings.has_embeddings:
+        return None
+    meta = index_meta(settings) or {}
+    model, dim = meta.get("model"), meta.get("dim")
+    if model is not None or dim is not None:
+        if str(model) != settings.embed_model or str(dim) != str(settings.embed_dim):
+            return "index_mismatch"
+    return "index_missing"
 
 
 def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
