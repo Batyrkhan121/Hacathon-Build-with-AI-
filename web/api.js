@@ -15,7 +15,8 @@ export class ApiError extends Error {
   constructor(kind, { status = null, detail = '' } = {}) {
     super(`${kind}${status ? ` ${status}` : ''}${detail ? `: ${detail}` : ''}`);
     this.name = 'ApiError';
-    this.kind = kind; // timeout | network | validation | server | format | mock | aborted
+    // timeout | network | validation | too_large | unavailable | server | format | mock | aborted
+    this.kind = kind;
     this.status = status;
     this.detail = detail;
   }
@@ -28,7 +29,10 @@ async function getJson(url, signal) {
 }
 
 export async function fetchLandmarks() {
-  const urls = isMock ? ['../data/landmarks.json', 'api/landmarks'] : ['api/landmarks', '../data/landmarks.json'];
+  // http.server из корня отдаёт страницу как /web/ — там API нет, файл ориентиров рядом.
+  const devServer = location.pathname.includes('/web/');
+  const urls =
+    isMock && devServer ? ['../data/landmarks.json', 'api/landmarks'] : ['api/landmarks', '../data/landmarks.json'];
   for (const url of urls) {
     try {
       const data = await getJson(url);
@@ -129,6 +133,10 @@ export async function recommend(body, outerSignal) {
         const err = await res.json().catch(() => null);
         throw new ApiError('validation', { status: 422, detail: validationDetail(err) });
       }
+      // 413: тело больше лимита ApiGuard (16 КБ) или прокси; повтор без ИИ тут не поможет.
+      if (res.status === 413) throw new ApiError('too_large', { status: 413 });
+      // 503: сервер жив, но данные ещё не загружены.
+      if (res.status === 503) throw new ApiError('unavailable', { status: 503 });
       if (!res.ok) throw new ApiError('server', { status: res.status });
       answer = await res.json().catch(() => {
         throw new ApiError('format');

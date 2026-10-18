@@ -82,11 +82,11 @@ def test_llm_top_n_by_popularity_with_validation(tmp_path: Path) -> None:
     assert by_id["osm:node/2"].description is None  # hours/price text rejected
     assert by_id["osm:node/4"].description == "есть"
     assert "osm:node/999" not in by_id
-    assert "отклонено проверкой: 1" in note
+    assert "отклонено проверкой на часы, цены и рейтинги: 1" in note
 
     seen.clear()
     llm_step(pois, 2, cache, "fake-model", describe=fake)
-    assert [it["poi_id"] for it in seen[0]] == ["osm:node/2"]  # only the uncached one
+    assert seen == []  # accepted and rejected answers are both cached: nothing re-asked
 
 
 def test_llm_error_keeps_going(tmp_path: Path) -> None:
@@ -110,3 +110,35 @@ def test_clean_sentence() -> None:
     assert clean_sentence("Работает круглосуточно.") is None
     assert clean_sentence("Высокий рейтинг гостей.") is None
     assert clean_sentence("х" * 300) is None
+
+
+def test_only_notable_places_get_generated_text(tmp_path: Path) -> None:
+    cafe = poi(70, 0.9, category="cafe", tags=["coffee"])
+    playground = poi(71, 0.8, category="playground", tags=["kids"])
+    park = poi(72, 0.1, category="park", tags=["walk"])
+    old_bar = poi(73, 0.5, category="bar", description="Бар.", description_source="llm_generated")
+    osm_cafe = poi(74, 0.5, category="cafe", description="Из OSM", description_source="osm")
+    asked: list[str] = []
+
+    def fake(items: list[dict]) -> list[PlaceDescription]:
+        asked.extend(it["poi_id"] for it in items)
+        return [PlaceDescription(poi_id=it["poi_id"], text="Городской парк для прогулок.")
+                for it in items]
+
+    out, note = llm_step([cafe, playground, park, old_bar, osm_cafe], None,
+                         tmp_path / "d.json", "m", describe=fake)
+    by_id = {p.id: p for p in out}
+    assert asked == ["osm:node/72"]  # only the park, despite the lowest popularity
+    assert by_id["osm:node/72"].description_source == "llm_generated"
+    assert by_id["osm:node/70"].description is None
+    assert by_id["osm:node/73"].description is None  # old generated text on a bar removed
+    assert by_id["osm:node/74"].description == "Из OSM"  # data descriptions stay
+    assert "убрано старых: 1" in note and "1 из 1 заметных мест" in note
+
+
+def test_check_allows_plain_words() -> None:
+    assert clean_sentence("Крупный торговый центр в центре города.")
+    assert clean_sentence("Памятник «Астана Жұлдызы» — звезда на набережной.")
+    assert clean_sentence("Сцена театра под открытым небом.")
+    assert clean_sentence("Цена билета — 2000.") is None
+    assert clean_sentence("Отель на 5 звёзд.") is None

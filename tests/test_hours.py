@@ -283,3 +283,47 @@ def test_real_opening_hours_parse_ratio(path: Path) -> None:
     low = [raw for raw in raws if evaluate_hours(raw, at("Tu", 15)).confidence == "low"]
     parsed = 1 - len(low) / len(raws)
     assert parsed >= 0.9, f"parsed {parsed:.0%}; not understood: {sorted(set(low))[:10]}"
+
+
+# ------------------------------------------------------------ T73: kk / en notes
+
+CYRILLIC = set("абвгдеёжзийклмнопрстуфхцчшщъыьэюя")
+
+
+@pytest.mark.parametrize(
+    ("raw", "moment"),
+    [(None, at("Mo", 12)), ("Mo-Fr 09:00-18:00", at("Mo", 17, 30)),
+     ("Mo-Fr 09:00-18:00", at("Mo", 8, 30)), ("Mo-Fr 09:00-18:00", at("Mo", 20)),
+     ("Mo-Fr 09:00-18:00", at("Sa", 12)), ("24/7", at("We", 3)), ("Tu-Su 10:00-20:00; Mo off",
+      at("Mo", 12)), ("sunrise-sunset", at("Mo", 12)), ("PH off", at("Mo", 12)),
+     ("Mo-Su 10:00-22:00; PH off", at("Mo", 21, 30)), ("Mo-Sa 10:00-14:00", at("Mo", 9))],
+)
+def test_language_changes_only_the_wording(raw: str | None, moment: datetime) -> None:
+    ru = evaluate_hours(raw, moment)
+    for lang in ("kk", "en"):
+        other = evaluate_hours(raw, moment, lang=lang)
+        assert (other.status, other.confidence, other.closes_in_min, other.opens_in_min) == (
+            ru.status, ru.confidence, ru.closes_in_min, ru.opens_in_min)
+        assert other.note and other.note != ru.note
+    assert not CYRILLIC & set(evaluate_hours(raw, moment, lang="en").note.lower())
+
+
+def test_english_and_kazakh_notes_read_naturally() -> None:
+    assert evaluate_hours("Mo-Fr 09:00-18:00", at("Mo", 17, 30), lang="en").note == (
+        "closes in 30 min · per OSM: Mo–Fr 09:00–18:00")
+    assert evaluate_hours("Mo-Fr 09:00-18:00", at("Mo", 8, 30), lang="en").note == (
+        "closed, opens in 30 min · per OSM: Mo–Fr 09:00–18:00")
+    assert evaluate_hours("24/7", at("We", 3), lang="en").note == "per OSM: daily 24/7"
+    kk = evaluate_hours("Mo-Fr 09:00-18:00", at("Mo", 20), lang="kk").note
+    assert kk == "жабық, ертең сағат 09:00-де ашылады · OSM деректері бойынша: Дс–Жм 09:00–18:00"
+    assert evaluate_hours("Mo-Fr 09:00-18:00", at("Mo", 17, 30)).note == (
+        "закроется через 30 мин · по данным OSM: Пн–Пт 09:00–18:00")  # ru is unchanged
+
+
+def test_unknown_note_by_language() -> None:
+    from app.hours import unknown_note
+    from app.validate import UNKNOWN_HOURS_NOTE
+
+    assert unknown_note() == UNKNOWN_HOURS_NOTE
+    assert unknown_note("en") == "no opening-hours data, check before you go"
+    assert "тексеріңіз" in unknown_note("kk")

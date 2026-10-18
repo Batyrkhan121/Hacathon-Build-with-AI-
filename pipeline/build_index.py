@@ -99,6 +99,24 @@ def gemini_embedder() -> EmbedFn:
     return embed
 
 
+def is_daily_quota(exc: Exception) -> bool:
+    text = str(exc)
+    return "RESOURCE_EXHAUSTED" in text and "PerDay" in text
+
+
+def failure_reason(exc: Exception) -> str:
+    """Short human reason for REPORT.md instead of the raw SDK error JSON."""
+    text = str(exc)
+    if is_daily_quota(exc):
+        return (
+            "дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: "
+            "1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты"
+        )
+    if "RESOURCE_EXHAUSTED" in text or "429" in text:
+        return "лимит запросов Gemini (429), повторы не помогли"
+    return f"эмбеддинги не получены ({type(exc).__name__}: {text[:120]})"
+
+
 def with_retries(
     fn: EmbedFn,
     pauses: Sequence[float] = RETRY_PAUSES_S,
@@ -109,8 +127,8 @@ def with_retries(
             try:
                 return fn(batch)
             except Exception as exc:  # SDK raises its own error types; retry any of them
-                if attempt == len(pauses):
-                    raise
+                if attempt == len(pauses) or is_daily_quota(exc):
+                    raise  # a daily quota resets in hours: retrying in seconds only wastes time
                 log.warning("embed batch failed (%s), retry in %ss", exc, pauses[attempt])
                 sleep(pauses[attempt])
         raise AssertionError("unreachable")
@@ -169,7 +187,8 @@ def build_index(
     except Exception as exc:  # quota / network: keep what we have, do not fail the pipeline
         if cache:
             save_cache(cache_path, cache)
-        return IndexResult("skipped", f"эмбеддинги не получены ({type(exc).__name__}): {exc}"[:300])
+        missing = len({k for k in keys if k not in cache})
+        return IndexResult("skipped", f"{failure_reason(exc)}; без вектора {missing} текстов")
     if todo:
         save_cache(cache_path, cache)
 
@@ -191,6 +210,7 @@ def build_index(
         "created_at": datetime.now(ASTANA_TZ).isoformat(timespec="seconds"),
         "task_type": TASK_TYPE,
         "doc_template": DOC_TEMPLATE,
+        "docs_sha256": docs_hash(pois),
     }
     (index_dir / "meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -198,7 +218,13 @@ def build_index(
     return IndexResult("built", f"{len(pois)} векторов, {model}, dim={dim}", len(pois))
 
 
-def index_status(index_dir: Path, poi_count: int) -> str:
+def docs_hash(pois: Sequence[POI]) -> str:
+    """One hash over all (id, document text): tells whether the index matches poi.jsonl."""
+    joined = "\n".join(f"{p.id}\t{doc_text(p)}" for p in pois)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def index_status(index_dir: Path, pois: Sequence[POI]) -> str:
     """One line for REPORT.md describing the index on disk."""
     meta_path = index_dir / "meta.json"
     if not meta_path.exists():
@@ -207,7 +233,15 @@ def index_status(index_dir: Path, poi_count: int) -> str:
             "Retrieval работает лексически по названиям, категориям и тегам."
         )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    stale = "" if meta.get("count") == poi_count else f" — устарел: в poi.jsonl {poi_count} POI"
+    if meta.get("count") != len(pois):
+        stale = f" — **устарел**: в poi.jsonl {len(pois)} POI"
+    elif meta.get("docs_sha256") != docs_hash(pois):
+        stale = (
+            " — **устарел**: тексты POI (описания) изменились после сборки индекса; "
+            "id и порядок совпадают, векторы части мест считаны по старым текстам"
+        )
+    else:
+        stale = ""
     return (
         f"Векторный индекс: {meta.get('count')} векторов, модель `{meta.get('model')}`, "
         f"dim={meta.get('dim')}, создан {meta.get('created_at')}{stale}."

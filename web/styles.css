@@ -71,6 +71,11 @@ textarea {
   color: inherit;
 }
 
+/* hidden должен побеждать display:flex/grid у компонентов */
+[hidden] {
+  display: none !important;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -541,6 +546,31 @@ select {
   color: #fff;
 }
 
+.day-chips {
+  margin-bottom: 6px;
+}
+
+.chip-icon {
+  margin-right: 5px;
+}
+
+.departure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.departure-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
 .when-row {
   display: flex;
   flex-wrap: wrap;
@@ -707,48 +737,65 @@ input[type="time"] {
   font-variant-numeric: tabular-nums;
 }
 
-.legs {
+/* Таймлайн маршрута: точки (старт, остановки) и пунктирные отрезки между ними. */
+.timeline {
   list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
   margin: 10px 0 0;
   padding: 0;
-  font-size: 12.5px;
+  font-size: 13px;
+}
+
+.tl-point {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.tl-leg {
+  margin-left: 10px;
+  padding: 3px 0 3px 17px;
+  border-left: 2px dashed var(--accent);
+  font-size: 12px;
+  color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
 }
 
-.legs li {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.legs li + li::before {
-  content: "→";
-  color: var(--accent);
-  margin-right: 2px;
-}
-
-.leg-origin {
+.tl-dot {
+  flex: none;
   width: 12px;
   height: 12px;
+  margin: 0 5px;
   border-radius: 50%;
   background: var(--ink);
   box-shadow: 0 0 0 2px #fff;
 }
 
-.leg-to {
-  display: inline-grid;
+.tl-rank {
+  flex: none;
+  display: grid;
   place-items: center;
   width: 22px;
   height: 24px;
   clip-path: var(--hex);
-  background: var(--accent);
-  color: #fff;
+  background: var(--gold);
+  color: var(--ink);
   font-size: 11px;
   font-weight: 800;
+}
+
+.tl-rank.rank-generated {
+  background: #d9ccf5;
+}
+
+.tl-name {
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.tl-visit {
+  color: var(--ink-2);
 }
 
 .route-over {
@@ -775,7 +822,7 @@ input[type="time"] {
 }
 
 .btn-link {
-  min-height: 32px;
+  min-height: 34px;
   padding: 4px 6px;
   background: transparent;
   color: var(--accent-strong);
@@ -1361,6 +1408,89 @@ input[type="time"] {
 
 .cell-tooltip.leaflet-tooltip-top::before {
   border-top-color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------------------ polish (T75/T76) */
+
+/* Зона клика ≥ 40 px без изменения вида: псевдоэлемент на 3 px сверху и снизу
+   (ровно половина зазора 6 px между рядами, так что зоны соседей не пересекаются). */
+.chip,
+.btn-sm,
+.btn-link {
+  position: relative;
+}
+
+.chip::after,
+.btn-sm::after,
+.btn-link::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+}
+
+.lang button {
+  min-height: 36px;
+}
+
+.leaflet-bar a,
+.leaflet-touch .leaflet-bar a {
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+}
+
+/* Атрибуция OSM: ссылка была 3,9:1 на полупрозрачном фоне — делаем ≥ 4,5:1. */
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink-2);
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--accent-strong);
+}
+
+/* Переносы: заголовки ровными строками, короткие тексты без висячих слов. */
+.summary,
+.card-title,
+.error-title,
+.empty-title {
+  text-wrap: balance;
+}
+
+.card-text dd,
+.warning,
+.hint,
+.where-note,
+.intro p,
+.tl-name,
+.disclaimer {
+  text-wrap: pretty;
+}
+
+/* Тактильное нажатие. */
+.btn,
+.chip {
+  transition-property: background-color, border-color, color, transform;
+  transition-duration: 0.15s, 0.15s, 0.15s, 0.1s;
+  transition-timing-function: ease-out;
+}
+
+.btn:active:not(:disabled),
+.chip:active {
+  transform: scale(0.97);
+}
+
+/* Ответ появляется мягко: сдвиг на 4 px и лёгкая прозрачность. Начальная прозрачность 0,7, не 0:
+   если браузер поставит анимацию на паузу (фоновая вкладка, запись экрана), текст останется читаемым. */
+.answer {
+  animation: answer-in 0.22s ease-out;
+}
+
+@keyframes answer-in {
+  from {
+    opacity: 0.7;
+    transform: translateY(4px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

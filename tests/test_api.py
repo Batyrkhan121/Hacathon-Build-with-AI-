@@ -193,6 +193,17 @@ def test_static_web_is_mounted_after_api(client: TestClient) -> None:
     assert client.get("/api/nope").status_code == 404
 
 
+def test_web_files_are_not_cached(client: TestClient) -> None:
+    first = client.get("/")
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache"
+    js = client.get("/app.js")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
+    etag = js.headers.get("etag")
+    if etag:  # revalidation stays cheap
+        again = client.get("/app.js", headers={"If-None-Match": etag})
+        assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+
+
 def test_cors_for_dev_ui(client: TestClient) -> None:
     r = client.options("/api/recommend", headers={
         "Origin": "http://localhost:5500", "Access-Control-Request-Method": "POST"})
