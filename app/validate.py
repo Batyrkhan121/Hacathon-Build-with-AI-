@@ -6,6 +6,7 @@ Owner: CORE lane (task T24). Pure functions, no network.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Literal
 
 from app.retrieval import explain, generic_key
@@ -252,6 +253,35 @@ def _card(
     )
 
 
+def _distance_label(metres: int, lang: Lang) -> str:
+    if metres < 1000:
+        return f"{metres} m" if lang == "en" else f"{metres} м"
+    tenths = int(metres / 100 + 0.5)  # round half up: 1250 m -> 1,3 km
+    sep = "." if lang == "en" else ","
+    km = f"{tenths // 10}{sep}{tenths % 10}"
+    return f"{km} km" if lang == "en" else f"{km} км"
+
+
+def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> list[Card]:
+    """Unnamed places and same-named branches get the distance: «Детская площадка · 350 м».
+
+    110 of 111 playgrounds in OSM are «Детская площадка», chains repeat (two «Drinkit»).
+    If name and distance still collide, the address (or the rank) is appended.
+    """
+    counts = Counter(c.title.casefold() for c in cards)
+    used: set[str] = set()
+    out: list[Card] = []
+    for card, cand in zip(cards, cands, strict=True):
+        title = card.title
+        if generic_key(cand.poi) is not None or counts[title.casefold()] > 1:
+            title = f"{title} · {_distance_label(card.distance_m, lang)}"
+        if title.casefold() in used:
+            title = f"{title} · {cand.poi.address or f'№{card.rank}'}"
+        used.add(title.casefold())
+        out.append(card if title == card.title else card.model_copy(update={"title": title}))
+    return out
+
+
 # ------------------------------------------------------------------ public
 
 
@@ -278,6 +308,7 @@ def finalize(
       come from the Candidate, never from the draft;
     - strip FORBIDDEN_OPEN_CLAIMS unless hours.status == "open" and confidence == "high";
     - clamp visit minutes (low <= high), trim texts to limits, rank 1..3;
+    - card titles are distinct: unnamed / same-named places get the distance;
     - if fewer than 1 valid card remains -> return template_cards(...) and a warning.
     """
     if not candidates:
@@ -332,7 +363,7 @@ def finalize(
     if not cards:
         warnings.append("ИИ не дал подходящих карточек, показаны карточки по данным")
         return template_cards(candidates, intent, ctx), warnings
-    return cards, warnings
+    return _distinct_titles(cards, [by_id[c.poi_id] for c in cards], intent.lang), warnings
 
 
 def template_cards(
@@ -362,7 +393,7 @@ def template_cards(
             if strict and sum(c.poi.category == cand.poi.category for c in chosen) >= 2:
                 continue
             chosen.append(cand)
-    return [
+    cards = [
         _card(
             rank=rank,
             cand=cand,
@@ -374,3 +405,4 @@ def template_cards(
         )
         for rank, cand in enumerate(chosen, start=1)
     ]
+    return _distinct_titles(cards, chosen, intent.lang)
