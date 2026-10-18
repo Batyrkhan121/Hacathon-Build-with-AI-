@@ -83,7 +83,7 @@ out center tags;
   - `art` и `history`: museum/gallery/historic.
   - `indoor` и `outdoor` выводим из категории.
 - Поля: `wheelchair` из OSM, иначе `unknown`. `kids_friendly` и `indoor` по категории или тегам, иначе `None`.
-- `opening_hours` как в OSM, без изменений. Его разбор делает `app/hours.py` (дорожка CORE).
+- `opening_hours` как в OSM, без изменений. Его разбор делает `app/hours.py`. Ручные поправки в `data/manual/overrides.json`: часы (`opening_hours`) и описание принимаются только вместе со ссылкой `http(s)` в `source` (официальный сайт места); без ссылки поле не применяется, а в REPORT.md пишется причина.
 - `data_confidence` = 0.3 + 0.15 (opening_hours) + 0.1 (website или phone) + 0.15 (описание из данных) + 0.1 (wikidata) + 0.1 (адрес) + 0.1 (больше одного языка имени), максимум 1.0. Формулу записать в docs/DATA.md.
 - `popularity`: прокси, не рейтинг. Складывается так: +0.4 за wikidata или wikipedia, +0.3 × (число тегов / 30), +0.2 за attraction/museum/viewpoint, +0.1 за brand. Максимум 1.0. Поле `rating` оставляем `None`: настоящих рейтингов у нас нет, выдумывать нельзя.
 - Дедупликация: одинаковое имя (casefold) и расстояние меньше 60 м → оставляем запись с большим `data_confidence`.
@@ -91,14 +91,14 @@ out center tags;
 
 ## Обогащение
 - Wikidata: `wbgetentities`, до 50 id за раз, `props=descriptions|sitelinks`, `languages=ru|kk|en`. Используем, когда в OSM есть тег `wikidata`. Пишем `description_source="wikidata"`.
-- Claude: только для топ-300 по popularity без описания. Вызываем `anthropic` прямо в `pipeline/enrich.py` (клиент с `default_headers=settings.anthropic_headers`; `client.messages.parse(model=settings.claude_model, ..., output_format=<Pydantic-модель>, output_config={"effort": "low"})`, без `temperature`), потому что T12 идёт параллельно с T30. В тестах сеть подменяем фейком. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ `ANTHROPIC_API_KEY` берём из app/config.py; без ключа шаг пропускается с пометкой в REPORT.md.
+- Claude: только для заметных категорий (museum, gallery, theatre, cinema, library, park, viewpoint, attraction, monument, religious, entertainment) и только если описание уместно. У кафе, баров, фастфуда и площадок описаний нет; торговые центры тоже без шаблонных LLM-описаний. Лучше `null`, чем вода: модель пишет одно предложение о том, чему посвящено место и что там смотреть, только если уверена; код дополнительно обнуляет пересказ названия, категории и тегов, а также любое упоминание часов, цен, бесплатности, адресов, удобств и оценок. Вызываем `anthropic` прямо в `pipeline/enrich.py` (клиент с `default_headers=settings.anthropic_headers`; `client.messages.parse(model=settings.claude_model, ..., output_format=<Pydantic-модель>, output_config={"effort": "low"})`, без `temperature`), потому что T12 идёт параллельно с T30. В тестах сеть подменяем фейком. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок; нет уверенности — `null`. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ `ANTHROPIC_API_KEY` берём из app/config.py; без ключа шаг пропускается с пометкой в REPORT.md.
 
 ## Индекс
 - Текст документа: `"{name}. {category_ru}. Теги: {tags}. {description}"`. Шаблон записать в meta.json.
 - Эмбеддинги делает Gemini, только если задан `GEMINI_API_KEY` (`settings.has_embeddings`): у Anthropic API эмбеддингов нет. Без ключа индекс не строим (см. ниже).
 - `google-genai`: `client.models.embed_content(model=settings.embed_model, contents=batch, config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionality=settings.embed_dim))`. Батчи по 100, кэш по sha256 текста. Затем L2-нормализация, float32.
 - `meta.json`: `{"model","dim","count","created_at","task_type","doc_template"}`. Порядок строк индекса совпадает с `ids.json`.
-- Индекс не собирается (нет ключа или квоты)? Пайплайн не падает. Пишем предупреждение в REPORT.md, retrieval работает лексически.
+- Индекс не собирается (нет ключа или квоты)? Пайплайн не падает. Пишем предупреждение в REPORT.md, retrieval работает лексически. Квота Gemini общая на проект и суточная (1000 эмбеддингов): индекс пересобираем, когда квота свободна (сброс в полночь по тихоокеанскому времени, то есть в 12:00 по Астане) или с биллингом; эмбеддинги живых запросов (`embed_query`) делят ту же квоту, поэтому оставляем ей запас. После сборки в `meta.json` есть `docs_sha256`, а устаревших векторов 0.
 
 ## REPORT.md
 Число POI по категориям; доля записей с opening_hours, wheelchair, описанием (по источникам), wikidata; 5 примеров записей; время выгрузки; использованные эндпоинты.
@@ -106,7 +106,7 @@ out center tags;
 ## Готово, когда
 - `python -m pipeline.run_all` с нуля проходит меньше чем за 15 минут.
 - `pytest -q` зелёный, `tests/test_contract.py` валидирует `poi.jsonl`.
-- В Астане ≥ 1500 POI. Видно, где плотность данных хорошая, а где нет: это нужно для слайда «ограничения».
+- Сколько POI удалось собрать, сказано честно в REPORT.md и DATA.md (на 19.10 их 1222: больше в OSM по нашим селекторам нет). Видно, где плотность данных хорошая, а где нет: это нужно для слайда «ограничения».
 - Координаты ориентиров в `data/landmarks.json` сверены с OSM (`verified: true`), добавлены «Астана Опера», «Нұрлы Жол», «Центральный парк», если они есть в OSM.
 
 ## Нельзя

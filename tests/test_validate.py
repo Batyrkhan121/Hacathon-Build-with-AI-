@@ -7,7 +7,8 @@ from datetime import datetime
 import pytest
 
 from app.geo import to_h3
-from app.hours import ASTANA_TZ
+from app.hours import ASTANA_TZ, evaluate_hours, unknown_note
+from app.retrieval import retrieve
 from app.schemas import (
     POI,
     Candidate,
@@ -18,6 +19,7 @@ from app.schemas import (
     QueryIntent,
     SearchContext,
 )
+from app.store import Store
 from app.validate import (
     MAX_TODO_CHARS,
     MAX_WHY_CHARS,
@@ -27,6 +29,10 @@ from app.validate import (
 )
 
 from .conftest import EXPO
+
+
+def make_store_for(pois: list[POI]) -> Store:
+    return Store(pois=pois, by_id={p.id: p for p in pois}, landmarks={})
 
 ORIGIN = GeoPoint(lat=EXPO[0], lon=EXPO[1])
 OPEN_HIGH = HoursVerdict(status="open", confidence="high", note="по данным OSM: ежедневно")
@@ -92,7 +98,7 @@ def cands(synthetic_pois: list[POI]) -> list[Candidate]:
     by_id = {p.id: p for p in synthetic_pois}
     return [
         cand(by_id["test:poi/1"], OPEN_HIGH, 250),
-        cand(by_id["test:poi/3"], UNKNOWN, 150),
+        cand(by_id["test:poi/3"].model_copy(update={"opening_hours": None}), UNKNOWN, 150),
         cand(by_id["test:poi/7"], OPEN_HIGH, 300),
         cand(by_id["test:poi/4"], UNKNOWN, 900),
     ]
@@ -358,8 +364,72 @@ def test_titles_unique_even_at_same_distance() -> None:
 )
 def test_title_distance_units(lang: str, near: str, far: str) -> None:
     pois = [make_poi("1", "playground", "Детская площадка"), make_poi("2", "cafe", "Мю")]
-    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250), cand(pois[1], distance=1250)]
-    cards = template_cards(cs[:2], intent(lang=lang), ctx())
+    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250)]
+    cards = template_cards(cs, intent(lang=lang), ctx())
     assert cards[0].title.endswith(near)
     twin = [cand(make_poi("3", "cafe", "Мю"), distance=1250), cs[1]]
     assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_unknown_hours_note_in_user_language(cands: list[Candidate], lang: str) -> None:
+    note = unknown_note(lang)  # texts live in app.hours (FEATURES); validate only picks them
+    cards = template_cards(cands, intent(lang=lang), ctx())
+    unknown = [c for c in cards if c.open_status == "unknown"]
+    assert unknown
+    assert all(c.open_note == note for c in unknown)
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3")])
+    finalized, _ = finalize(resp, cands, intent(lang=lang), ctx())
+    assert finalized[0].open_note == note
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_hours_note_is_passed_through_in_user_language(lang: str) -> None:
+    """retrieval asks app.hours for the note in the user's language; validate keeps it."""
+    at = datetime(2026, 10, 19, 23, 15, tzinfo=ASTANA_TZ)
+    poi = make_poi("1", "cafe", "Мю", opening_hours="Mo-Su 10:00-24:00")
+    q = intent(lang=lang)
+    context = ctx().model_copy(update={"local_time": at})
+    out = retrieve(make_store_for([poi]), q, context, None)
+    expected = evaluate_hours("Mo-Su 10:00-24:00", at, lang=lang).note
+    assert out[0].hours.note == expected
+    assert template_cards(out, q, context)[0].open_note == expected
+    if lang != "ru":
+        assert "по данным OSM" not in expected
+
+
+@pytest.mark.parametrize(
+    ("lang", "name", "distance", "title"),
+    [
+        ("kk", "Детская площадка", 350, "Балалар алаңы · 350 м"),
+        ("en", "Детская площадка", 350, "Playground · 350 m"),
+        ("ru", "Детская площадка", 350, "Детская площадка · 350 м"),
+        ("en", "Сквер", 1250, "Public garden · 1.3 km"),
+        ("en", "Детская площадка у Хатико", 300, "Playground near Хатико"),
+        ("kk", "Детская площадка у Хатико", 300, "Хатико маңындағы балалар алаңы"),
+        ("ru", "Детская площадка у Хатико", 300, "Детская площадка у Хатико"),
+    ],
+)
+def test_unnamed_place_titles_are_translated(
+    lang: str, name: str, distance: int, title: str
+) -> None:
+    category = "park" if name == "Сквер" else "playground"
+    poi = make_poi("1", category, name)
+    card = template_cards([cand(poi, distance=distance)], intent(lang=lang), ctx())[0]
+    assert card.title == title
+
+
+def test_own_translation_wins_over_generic_title() -> None:
+    poi = make_poi("1", "playground", "Детская площадка", name_i18n={"en": "Rainbow playground"})
+    assert template_cards([cand(poi)], intent(lang="en"), ctx())[0].title == "Rainbow playground"
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_indoor_attraction_gets_indoor_advice(lang: str) -> None:
+    """Rides inside Khan Shatyr are attractions with indoor=True: no «оденьтесь по погоде»."""
+    ride = make_poi("1", "attraction", "Gold Mine Coaster", indoor=True)
+    square = make_poi("2", "attraction", "Монумент", indoor=False)
+    inside = template_cards([cand(ride)], intent(lang=lang), ctx())[0].what_to_do
+    outside = template_cards([cand(square)], intent(lang=lang), ctx())[0].what_to_do
+    assert inside != outside
+    assert not any(w in inside for w in ("оденьтесь", "киініңіз", "dress"))

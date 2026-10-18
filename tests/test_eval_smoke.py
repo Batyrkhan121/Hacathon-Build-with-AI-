@@ -17,7 +17,7 @@ def mock_answer() -> Answer:
     return Answer.model_validate(json.loads(run_eval.MOCK_PATH.read_text(encoding="utf-8")))
 
 
-def test_scenarios_are_15_valid_requests() -> None:
+def test_scenarios_are_16_valid_requests() -> None:
     scenarios = run_eval.load_scenarios()
     ids = [s["id"] for s in scenarios]
     assert ids == [f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 12)]
@@ -27,13 +27,14 @@ def test_scenarios_are_15_valid_requests() -> None:
 
 
 def test_mock_mode_writes_reports(tmp_path: Path) -> None:
-    code = run_eval.main(["--mock", "--out", str(tmp_path)])
+    code = run_eval.main(["--mock", "--out", str(tmp_path), "--note", "индекс устарел"])
     assert code == 0
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["mode"] == "mock"
     assert report["total"] == 16
     assert {r["id"] for r in report["results"]} >= {"S1", "E10"}
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "- индекс устарел" in md
     assert f"Итог: {report['passed']}/16" in md
     # the mock answer is a sane walk near EXPO: S1 must pass, kk/en scenarios must not
     by_id = {r["id"]: r for r in report["results"]}
@@ -172,3 +173,180 @@ def test_url_runner_unreachable_fails_fast() -> None:
     runner, notes = run_eval.url_runner("http://down", client=client)
     assert runner is None
     assert "недоступен" in notes[0]
+
+
+# ------------------------------------------------------------------ --smoke mode
+
+SMOKE_CSV = """\
+id,query,location,at,lang
+# comment lines are skipped
+Q1,"Хочу тихое место с кофе, розетка обязательна",expo,,
+Q2,Куда сходить с ребёнком?,892153833a7ffff,2026-10-19T12:00:00+05:00,ru
+Q3,Where can I get coffee at night?,,,en
+Q4,Неизвестное место,Bad Id!,,
+"""
+
+
+def write_queries(tmp_path: Path, text: str = SMOKE_CSV, encoding: str = "utf-8") -> Path:
+    path = tmp_path / "queries_team.csv"
+    path.write_text(text, encoding=encoding)
+    return path
+
+
+def test_load_queries_skips_comments_and_bom(tmp_path: Path) -> None:
+    rows = run_eval.load_queries(write_queries(tmp_path, encoding="utf-8-sig"))
+    assert [r["id"] for r in rows] == ["Q1", "Q2", "Q3", "Q4"]
+    assert rows[0]["query"] == "Хочу тихое место с кофе, розетка обязательна"
+
+
+def test_smoke_request_defaults() -> None:
+    req = run_eval.smoke_request({"id": "Q", "query": "кофе"}, no_llm=True)
+    assert req.location.landmark_id == run_eval.SMOKE_DEFAULT_LOCATION
+    assert req.use_llm is False
+    assert req.at is not None and req.at.utcoffset() is not None
+    cell = run_eval.smoke_request({"query": "кофе", "location": "892153833a7ffff"}, no_llm=False)
+    assert cell.location.h3_cell == "892153833a7ffff"
+    assert cell.use_llm is True
+
+
+def test_smoke_mode_with_mock_writes_readable_report(tmp_path: Path, mock_answer: Answer) -> None:
+    queries = write_queries(tmp_path)
+    code = run_eval.main(["--smoke", "--mock", "--queries", str(queries), "--out", str(tmp_path)])
+    assert code == 0
+    md = (tmp_path / "smoke_report.md").read_text(encoding="utf-8")
+    assert "Хочу тихое место с кофе, розетка обязательна" in md
+    assert "Where can I get coffee at night?" in md
+    for card in mock_answer.cards:
+        assert card.title in md
+        assert card.why in md
+    assert "Bad Id!" in md  # invalid row is listed with its error, not dropped
+    assert "не по схеме" in md
+    assert "Ответили: 3/4" in md
+    assert not (tmp_path / "report.md").exists()  # smoke never overwrites the strict report
+
+
+def test_smoke_mode_without_pipeline_reports_every_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_pipeline(no_llm: bool) -> tuple[None, list[str]]:
+        return None, ["pipeline ещё не готов"]
+
+    monkeypatch.setattr(run_eval, "inprocess_runner", no_pipeline)
+    queries = write_queries(tmp_path)
+    run_eval.main(["--smoke", "--no-llm", "--queries", str(queries), "--out", str(tmp_path)])
+    md = (tmp_path / "smoke_report.md").read_text(encoding="utf-8")
+    assert "Ответили: 0/4" in md
+    assert md.count("pipeline ещё не готов") >= 4
+
+
+def test_default_queries_csv_is_valid() -> None:
+    """--smoke without --queries uses eval/queries_team.csv: it must exist and parse."""
+    rows = run_eval.load_queries()
+    assert rows
+    for row in rows:
+        run_eval.smoke_request(row, no_llm=True)
+
+
+def test_smoke_without_queries_file_does_not_crash(tmp_path: Path, capsys) -> None:
+    code = run_eval.main(["--smoke", "--mock", "--queries", str(tmp_path / "nope.csv"),
+                          "--out", str(tmp_path)])
+    assert code == 0
+    assert "нет файла запросов" in capsys.readouterr().out
+
+
+# ------------------------------------------------ T70 probe checks (QUALITY, wave 3)
+
+
+def test_top1_checks(mock_answer: Answer) -> None:
+    first = mock_answer.cards[0]
+    assert check_expect(mock_answer, {"top1_categories_any": [first.category]}) == []
+    assert check_expect(mock_answer, {"top1_categories_any": ["bar"]})
+    assert check_expect(mock_answer, {"top1_note_forbid": ["закроется через"]}) == []
+    bad = mock_answer.model_copy(deep=True)
+    bad.cards[0].open_note = "закроется через 30 мин · по данным OSM: ежедневно 10:00–24:00"
+    assert check_expect(bad, {"top1_note_forbid": ["закроется через"]})
+
+
+def test_unknown_note_lang(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    unknown = [c for c in ans.cards if c.open_status == "unknown"]
+    assert unknown
+    unknown[0].open_note = "no opening hours data, check before you go"
+    assert check_expect(ans, {"unknown_note_lang": "en"}) == []
+    unknown[0].open_note = "нет данных о часах, проверьте перед визитом"
+    assert check_expect(ans, {"unknown_note_lang": "en"})
+
+
+def test_probes_file_is_valid() -> None:
+    probes = run_eval.load_scenarios(run_eval.SCENARIOS_PATH.parent / "probes.yaml")
+    assert len(probes) >= 6
+    assert all(p["id"].startswith("P") for p in probes)
+    for p in probes:
+        RecommendRequest.model_validate(p["request"])
+
+
+def test_top1_why_any(mock_answer: Answer) -> None:
+    word = mock_answer.cards[0].why.split()[0]
+    assert check_expect(mock_answer, {"top1_why_any": [word]}) == []
+    assert check_expect(mock_answer, {"top1_why_any": ["нет данных"]})
+
+
+def test_notes_lang(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    for c in ans.cards:
+        c.open_note = "OSM hours: daily 10:00–22:00"
+    assert check_expect(ans, {"notes_lang": "en"}) == []
+    ans.cards[0].open_note = "по данным OSM: ежедневно 10:00–22:00"
+    assert check_expect(ans, {"notes_lang": "en"})
+
+
+@pytest.mark.parametrize(
+    ("line", "mode"),
+    [
+        ("поиск: по смыслу и по словам", "vector"),
+        ("поиск: по словам", "words"),
+        ("search: by meaning and by words", "vector"),
+        ("іздеу: сөздер бойынша", "words"),
+    ],
+)
+def test_search_mode_from_filters(mock_answer: Answer, line: str, mode: str) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.data_used.filters = ["пешком ≤ 15 мин", line]
+    assert run_eval.search_mode(Outcome(answer=ans)) == mode
+    assert run_eval.search_mode(Outcome(answer=mock_answer)) is None  # no such line -> unknown
+
+
+def test_inprocess_counts_query_vectors(
+    monkeypatch: pytest.MonkeyPatch, mock_answer: Answer
+) -> None:
+    """The runner wraps embed_query: a vector for S1, None (quota) for the rest."""
+    import app.config
+    import app.llm
+    import app.pipeline
+    import app.store
+    from app.store import Store
+
+    class FakeSettings:
+        has_llm = True
+
+    class FakeLLM:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        def embed_query(self, text: str) -> list[float] | None:
+            return [1.0] if "Mega" in text else None
+
+    def fake_recommend(req: RecommendRequest, deps: object) -> Answer:
+        deps.llm.embed_query(req.query)  # type: ignore[attr-defined]
+        return mock_answer
+
+    monkeypatch.setattr(app.config, "get_settings", lambda: FakeSettings())
+    monkeypatch.setattr(app.llm, "LLMClient", FakeLLM)
+    monkeypatch.setattr(app.store, "load_store", lambda s: Store(pois=[], by_id={}, landmarks={}))
+    monkeypatch.setattr(app.pipeline, "recommend", fake_recommend)
+    runner, _ = run_eval.inprocess_runner(no_llm=False)
+    assert runner is not None
+    results = run_eval.run_all(run_eval.load_scenarios()[:2], runner)
+    assert [r.search for r in results] == ["vector", "words"]
+    summary = run_eval.search_summary(results)
+    assert "вектор запроса (embed_query) у 1, только по словам 1" in summary

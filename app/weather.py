@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.hours import ASTANA_TZ
-from app.schemas import GeoPoint, WeatherInfo
+from app.schemas import GeoPoint, Lang, WeatherInfo
 
 log = logging.getLogger(__name__)
 
@@ -115,10 +115,25 @@ def _to_info(data: dict) -> WeatherInfo:
     )
 
 
-def _summary(temp: float, precip: float, wind: float | None) -> str:
+_WORDS = {
+    "ru": ("ветер {w} м/с", "осадки {p} мм", ","),
+    "kk": ("жел {w} м/с", "жауын-шашын {p} мм", ","),
+    "en": ("wind {w} m/s", "precipitation {p} mm", "."),
+}
+
+
+def _summary(temp: float, precip: float, wind: float | None, lang: str = "ru") -> str:
+    wind_fmt, precip_fmt, sep = _WORDS.get(lang, _WORDS["ru"])
     parts = [f"{round(temp):+d}°C"]
     if wind is not None:
-        parts.append(f"ветер {round(wind)} м/с")
+        parts.append(wind_fmt.format(w=round(wind)))
     if precip > 0:
-        parts.append(f"осадки {precip:.1f} мм".replace(".", ","))
+        parts.append(precip_fmt.format(p=f"{precip:.1f}".replace(".", sep)))
     return ", ".join(parts)
+
+
+def summary_for(info: WeatherInfo, lang: Lang = "ru") -> str:
+    """WeatherInfo.summary is Russian; the same numbers in kk / en for the answer (T73)."""
+    if lang == "ru":
+        return info.summary
+    return _summary(info.temp_c, info.precipitation_mm, info.wind_ms, lang)

@@ -17,7 +17,7 @@ argument-hint: "[ID задачи, например T41]"
 ## Библиотеки (CDN)
 - Leaflet 1.9.4: `https://unpkg.com/leaflet@1.9.4/dist/leaflet.css` и `.../leaflet.js`.
 - h3-js 4.1.0: `https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js` (глобальный объект `h3`). Проверь, что файл реально грузится.
-- Тайлы: CARTO Voyager `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`. Атрибуция обязательна: «© OpenStreetMap contributors © CARTO».
+- Тайлы: стандартные OSM `https://tile.openstreetmap.org/{z}/{x}/{y}.png` (CARTO basemaps с 2026 года отдают без ключа заглушку «API KEY REQUIRED»). Атрибуция обязательна: «© OpenStreetMap contributors». Сервер тайлов видит IP и участок карты, это записано в docs/ETHICS.md.
 
 ## Экран
 Слева панель (на мобильном снизу), справа карта.
@@ -31,7 +31,7 @@ argument-hint: "[ID задачи, например T41]"
    - S1: «Я возле Mega Silk Way, хочу прогуляться 30–60 минут» → mega_silk_way, 15:00;
    - S2: «Хочу тихое место с кофе и розеткой» → expo, 11:00;
    - S3: «Еду с ребёнком — где рядом площадка или музей с интерактивом?» → khan_shatyr, 12:00, с ребёнком;
-   - S4: «Я турист, у меня 2 часа перед вылетом» → airport_nqz, 16:00;
+   - S4: «Я турист, у меня 2 часа перед вылетом» → baiterek, 16:00, режим «турист до вылета» (`tourist: true`, `departure_in_min: 120`), не airport_nqz: у аэропорта в данных почти пусто, сервер сам вычитает дорогу в аэропорт;
    - S5: «Ищу необычную ночную активность» → baiterek, 23:30.
 6. Язык ru / kk / en: переводит интерфейс и уходит в `lang`.
 

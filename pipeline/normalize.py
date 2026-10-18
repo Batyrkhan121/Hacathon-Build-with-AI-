@@ -79,6 +79,7 @@ INDOOR_CATEGORIES: frozenset[str] = frozenset(
 OUTDOOR_CATEGORIES: frozenset[str] = frozenset({"park", "playground", "viewpoint", "monument"})
 INDOOR_VALUES = frozenset({"aquarium", "sports_centre", "coworking_space"})
 OUTDOOR_VALUES = frozenset({"zoo", "theme_park"})
+INDOOR_TAG_VALUES = frozenset({"yes", "room", "area", "corridor"})
 KIDS_VALUES = frozenset({"playground", "zoo", "aquarium", "theme_park", "water_park"})
 LOCAL_CUISINES = frozenset({"kazakh", "central_asian", "uzbek", "uyghur"})
 HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "historic"})
@@ -86,6 +87,25 @@ HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "
 MIN_PREFIX_LEN = 5
 PLAYGROUND_NEAR_M = 150.0
 LANDMARK_NEAR_M = 150.0
+# words that name a kind of place, not a place: "у Сквер" is not a usable anchor
+GENERIC_NAME_WORDS: frozenset[str] = frozenset(
+    {
+        # ru
+        "сквер", "парк", "сад", "аллея", "бульвар", "площадь", "фонтан", "кафе", "кофейня",
+        "ресторан", "столовая", "бар", "паб", "фастфуд", "шаурма", "пиццерия", "магазин",
+        "трц", "тц", "торговый", "центр", "памятник", "монумент", "мечеть", "церковь", "храм",
+        "библиотека", "кинотеатр", "театр", "музей", "галерея", "спортзал", "стадион",
+        "бассейн", "каток", "детская", "площадка", "двор", "зона", "отдыха", "и", "на", "у",
+        # kk
+        "саябақ", "саябағы", "бақ", "бағы", "сквері", "алаң", "алаңы", "кафесі", "мейрамхана",
+        "мейрамханасы", "дәмхана", "мешіт", "мешіті", "ескерткіш", "ескерткіші", "мұражай",
+        "мұражайы", "кітапхана", "кітапханасы", "ойын", "балалар", "алаңшасы",
+        # en
+        "park", "garden", "square", "cafe", "coffee", "restaurant", "bar", "pub", "mall",
+        "museum", "monument", "mosque", "church", "library", "cinema", "theatre", "gym",
+        "playground", "the", "of",
+    }
+)
 # landmarks are curated by the team (source "manual"): famous buildings worth a photo
 LANDMARK_TAGS: tuple[str, ...] = ("architecture", "photo_spot")
 
@@ -193,7 +213,7 @@ def vocab_tags(tags: Mapping[str, str], category: Category, value: str) -> list[
     if value == "coworking_space":
         out |= {"work_friendly", "wifi"}
 
-    indoor = indoor_flag(category, value)
+    indoor = indoor_flag(category, value, tags)
     if indoor is True:
         out.add("indoor")
     elif indoor is False:
@@ -201,11 +221,15 @@ def vocab_tags(tags: Mapping[str, str], category: Category, value: str) -> list[
     return sorted(out & TAG_VOCAB)
 
 
-def indoor_flag(category: Category, value: str) -> bool | None:
+def indoor_flag(
+    category: Category, value: str, tags: Mapping[str, str] | None = None
+) -> bool | None:
     if value in INDOOR_VALUES or category in INDOOR_CATEGORIES:
         return True
     if value in OUTDOOR_VALUES or category in OUTDOOR_CATEGORIES:
         return False
+    if tags and tags.get("indoor") in INDOOR_TAG_VALUES:  # explicit OSM indoor mapping
+        return True
     return None
 
 
@@ -308,7 +332,7 @@ def normalize_element(el: Mapping, fetched_at: str) -> POI | None:
         website=website,
         wheelchair=wheelchair if wheelchair in {"yes", "limited", "no"} else "unknown",
         kids_friendly=True if kids else None,
-        indoor=indoor_flag(category, value),
+        indoor=indoor_flag(category, value, tags),
         popularity=popularity(tags, category),
         sources=["osm"],
         data_confidence=confidence,
@@ -367,21 +391,68 @@ def fetched_date(payload: Mapping) -> str:
     return datetime.now(ASTANA_TZ).date().isoformat()
 
 
-def normalize_payloads(payloads: Iterable[Mapping]) -> list[POI]:
+def coverage(payload: Mapping) -> list[str]:
+    """Spatial filters the chunk was fetched with ("s,w,n,e" or "around:R,lat,lon")."""
+    meta = payload.get("qadam") or {}
+    if meta.get("filters"):
+        return list(meta["filters"])
+    if meta.get("area") == "fixture":  # fetched before chunks recorded their filters
+        from pipeline.fetch_osm import area_chunks
+
+        return list(area_chunks("fixture")[0].filters)
+    return []
+
+
+def covers(filters: Sequence[str], lat: float, lon: float) -> bool:
+    for flt in filters:
+        if flt.startswith("around:"):
+            radius, clat, clon = (float(x) for x in flt[len("around:"):].split(","))
+            if haversine_m(lat, lon, clat, clon) <= radius:
+                return True
+        else:
+            s, w, n, e = (float(x) for x in flt.split(","))
+            if s <= lat <= n and w <= lon <= e:
+                return True
+    return False
+
+
+def normalize_payloads(
+    payloads: Iterable[Mapping], stats: dict[str, int] | None = None
+) -> list[POI]:
     """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
     taken once, from the freshest OSM snapshot (mirrors lag: kumi served a June database
-    in October), then near-duplicates are merged by `dedupe`."""
+    in October). An element found only in an older snapshot whose point a fresher *complete*
+    chunk also covers is stale (deleted or retagged since) and is dropped; a partial chunk
+    (Overpass `remark`) never proves absence. Then near-duplicates are merged by `dedupe`.
+    `stats["stale"]` counts dropped elements, `stats["stale_pois"]` the names of former POIs."""
+    from pipeline.fetch_osm import is_partial
+
+    ordered = sorted(payloads, key=osm_base, reverse=True)  # stable for equal stamps
     seen: set[str] = set()
     pois: list[POI] = []
-    for payload in sorted(payloads, key=osm_base, reverse=True):  # stable for equal stamps
-        date = fetched_date(payload)
+    stale = 0
+    stale_pois: list[str] = []
+    for i, payload in enumerate(ordered):
+        date, base = fetched_date(payload), osm_base(payload)
+        fresher = [
+            coverage(q) for q in ordered[:i] if osm_base(q) > base and not is_partial(q)
+        ]
         for el in payload.get("elements", []):
             key = f"{el.get('type')}/{el.get('id')}"
             if key in seen:
                 continue
             seen.add(key)
+            point = element_point(el)
+            if fresher and point and any(covers(f, *point) for f in fresher):
+                stale += 1
+                if gone := normalize_element(el, date):
+                    stale_pois.append(f"{gone.name} ({gone.id})")
+                continue
             if poi := normalize_element(el, date):
                 pois.append(poi)
+    if stats is not None:
+        stats["stale"] = stale
+        stats["stale_pois"] = stale_pois  # type: ignore[assignment]
     return dedupe(pois)
 
 
@@ -458,12 +529,19 @@ def is_unnamed_playground(poi: POI) -> bool:
     return poi.category == "playground" and poi.name == PLAYGROUND_NAME
 
 
+def has_proper_name(name: str) -> bool:
+    """A name of its own, not just a kind of place: "Сквер Акжайык", "Coffee Boom" yes;
+    "Сквер", "Кафе 24", "саябақ" no (what is left after generic words has < 3 letters)."""
+    words = re.findall(r"[^\W\d_]+", name.casefold())
+    return sum(len(w) for w in words if w not in GENERIC_NAME_WORDS) >= 3
+
+
 def name_playgrounds(pois: Sequence[POI], radius_m: float = PLAYGROUND_NEAR_M) -> list[POI]:
-    """"Детская площадка" -> "Детская площадка у <nearest named non-playground POI>"
-    when one is within radius_m; otherwise the generic name stays."""
+    """"Детская площадка" -> "Детская площадка у <nearest non-playground POI with a proper
+    name>" when one is within radius_m; otherwise the generic name stays."""
     buckets: dict[str, list[POI]] = {}
     for p in pois:
-        if p.category != "playground":
+        if p.category != "playground" and has_proper_name(p.name):
             buckets.setdefault(h3.latlng_to_cell(p.geo.lat, p.geo.lon, 8), []).append(p)
     out: list[POI] = []
     for p in pois:
@@ -491,6 +569,76 @@ def finalize(pois: Sequence[POI], landmarks: Sequence[Mapping]) -> list[POI]:
 
     extra = landmark_pois(pois, landmarks, LANDMARK_OSM, LANDMARK_WIKIDATA, LANDMARKS_CHECKED_AT)
     return sorted(name_playgrounds([*pois, *extra]), key=lambda p: p.id)
+
+
+Edge = tuple[tuple[float, float], tuple[float, float]]
+Footprint = tuple[str, tuple[float, float, float, float], list[Edge], bool]  # .., is building
+
+
+def mall_footprints(payload: Mapping) -> list[Footprint]:
+    """(mall id, bbox s/w/n/e, boundary edges) from an `out geom` answer. Multipolygon
+    members are not joined into rings: the even-odd test below only needs the edges."""
+    out = []
+    for el in payload.get("elements", []):
+        lines = [el.get("geometry") or []] if el.get("type") == "way" else [
+            m.get("geometry") or [] for m in el.get("members", []) if m.get("type") == "way"
+        ]
+        edges: list[Edge] = [
+            ((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+            for line in lines
+            for a, b in zip(line, line[1:], strict=False)
+        ]
+        if not edges:
+            continue
+        lats = [pt[0] for e in edges for pt in e]
+        lons = [pt[1] for e in edges for pt in e]
+        bbox = (min(lats), min(lons), max(lats), max(lons))
+        is_building = "building" in (el.get("tags") or {})
+        out.append((f"osm:{el['type']}/{el['id']}", bbox, edges, is_building))
+    return out
+
+
+def inside(lat: float, lon: float, edges: Sequence[Edge]) -> bool:
+    """Even-odd ray casting along the latitude line (holes count as boundaries too)."""
+    crossings = 0
+    for (lat1, lon1), (lat2, lon2) in edges:
+        if (lat1 > lat) != (lat2 > lat):
+            lon_at = lon1 + (lat - lat1) * (lon2 - lon1) / (lat2 - lat1)
+            if lon < lon_at:
+                crossings += 1
+    return crossings % 2 == 1
+
+
+def mark_inside_malls(pois: Sequence[POI], outlines: Mapping | None) -> tuple[list[POI], int]:
+    """indoor=True for places whose point lies inside a mall footprint from OSM (e.g. rides
+    inside Khan Shatyr). Inside a mall *building* this beats the category default (Fame City,
+    a theme park, or a playground under the roof); inside a mall area that is not a building
+    only an unknown value is filled."""
+    if not outlines:
+        return list(pois), 0
+    malls = mall_footprints(outlines)
+    out: list[POI] = []
+    marked = 0
+    for p in pois:
+        if p.indoor is not True and p.category != "mall":
+            lat, lon = p.geo.lat, p.geo.lon
+            if any(
+                (is_building or p.indoor is None)
+                and s <= lat <= n
+                and w <= lon <= e
+                and inside(lat, lon, edges)
+                for _, (s, w, n, e), edges, is_building in malls
+            ):
+                tags = sorted({*p.tags, "indoor"} - {"outdoor"})
+                p = p.model_copy(update={"indoor": True, "tags": tags})
+                marked += 1
+        out.append(p)
+    return out, marked
+
+
+def load_outlines(raw_dir: Path) -> dict | None:
+    path = raw_dir / "osm_mall_outlines.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 def load_landmarks(path: Path) -> list[dict]:
@@ -535,6 +683,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     pois = normalize_payloads(load_payloads(paths))
     if args.area != "fixture":  # the T10 test fixture stays plain OSM around EXPO/Mega
         pois = finalize(pois, load_landmarks(settings.landmarks_path))
+        pois, _ = mark_inside_malls(pois, load_outlines(settings.data_dir / "raw"))
     write_jsonl(pois, out)
     print(f"{len(pois)} POI from {len(paths)} raw files -> {out}")
 

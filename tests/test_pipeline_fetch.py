@@ -171,3 +171,25 @@ def test_fetch_until_retries_missing_chunks(tmp_path: Path) -> None:
     assert not res.failed
     assert len(calls) == 5 + 2  # two failures in round 1, refetched in round 2
     assert 60.0 in pauses
+
+
+def test_partial_answer_is_saved_flagged_and_refetched(tmp_path: Path) -> None:
+    from pipeline.fetch_osm import is_partial_file
+
+    calls: list[str] = []
+
+    def cut_short(query: str, **kwargs: object) -> dict:
+        calls.append(query)
+        return {"elements": [{"type": "node", "id": 1}], "qadam": {"endpoint": "e"},
+                "remark": "runtime error: Query timed out"}
+
+    res = fetch_area("zones", raw_dir=tmp_path, query_fn=cut_short, sleep=lambda s: None)
+    assert len(res.failed) == 5 and all("partial answer" in f for f in res.failed)
+    first = tmp_path / f"osm_{area_chunks('zones')[0].name}.json"
+    assert is_partial_file(first)
+    saved = json.loads(first.read_text(encoding="utf-8"))
+    assert saved["qadam"]["partial"] is True and saved["elements"]
+
+    calls.clear()
+    fetch_area("zones", raw_dir=tmp_path, query_fn=cut_short, sleep=lambda s: None)
+    assert len(calls) == 5  # partial files are not fresh cache

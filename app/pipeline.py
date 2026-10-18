@@ -12,6 +12,8 @@ recommend():
  6. draft_cards (LLM) -> finalize                  app.generate + app.validate (CORE)
     LLMUnavailable / use_llm=False -> template_cards
  7. plan_route for >= 2 cards when want_route      app.route (CORE)
+    (T71: "прогулка на N минут" = walk tag + budget -> route.plan_walk picks <= 3 stops that
+    fit the budget as a loop BEFORE the cards are written; the route closes on the start)
  8. DataUsed + warnings + disclaimer -> Answer
 Every step degrades gracefully; never raise to the API except for invalid input.
 
@@ -37,12 +39,14 @@ from app import geo, hours, retrieval, route, validate, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
-from app.query_parser import apply_overrides, parse_query
+from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
     Answer,
     Candidate,
     Card,
     DataUsed,
+    Landmark,
+    Lang,
     LocationInput,
     MiniRoute,
     QueryIntent,
@@ -72,11 +76,20 @@ DISCLAIMERS: dict[str, str] = {
 }
 TOP_K = 8
 SPARSE_MIN = 3  # fewer candidates than this -> "few places nearby" warning
-# Tourist before a flight (EVAL request for S4 / E11): walk budget = budget - transfer - reserve.
+# Tourist before a flight (wave 3 rule): walk budget = time to departure - transfer - reserve.
+# Applies only when a flight / the airport is mentioned or the UI sent departure_in_min.
 AIRPORT_ID = "airport_nqz"
-AIRPORT_TRANSFER_MIN = 35  # city centre -> NQZ by taxi, approximate
-AIRPORT_RESERVE_MIN = 15
+AIRPORT_TRANSFER_MIN = 35  # city centre -> NQZ by taxi: an estimate, said so in the warning
+AIRPORT_RESERVE_MIN = 60  # check-in and security before departure
+MIN_WALK_LEFT_MIN = 15  # less than this left -> no cards, "leave now"
 TOURIST_MAX_CARDS = 2
+HUB_MAX_WALK_MIN = 15  # at a transport hub and for tourists: short walks, no radius widening
+CAREFUL_MAX_WALK_MIN = 15  # kids / wheelchair / night, unless the user set a limit
+NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
+GROUP_MIN = 3
+FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
+SIGHT_CATEGORIES = frozenset({"attraction", "monument", "museum", "viewpoint", "gallery",
+                              "religious", "park", "theatre"})
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
 MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
@@ -87,7 +100,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "llm_down": "LLM недоступна — показаны карточки по данным.",
         "hours_unknown_1": "Для 1 места нет данных о часах работы — проверьте перед визитом.",
         "hours_unknown_n": "Для {n} мест нет данных о часах работы — проверьте перед визитом.",
-        "night": "Ночь: выбирайте освещённые людные места и заранее продумайте дорогу обратно.",
+        "night": "Ночь: выбирайте освещённые людные места; обратно лучше на такси.",
+        "kids_night": "Уже поздно для прогулки с ребёнком — лучше место в помещении рядом.",
+        "night_far": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
+                     "показаны ближайшие подтверждённые; лучше доехать на такси.",
+        "group": "Для компании из {n} человек: столик в кафе лучше уточнить заранее.",
+        "f_night_clock": "ночь (по времени)",
         "widened": "Рядом мало вариантов — радиус поиска расширен до {r} м.",
         "nothing": "Подходящих мест не нашлось. Попробуйте увеличить время, убрать часть "
                    "фильтров или выбрать другую точку.",
@@ -102,13 +120,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Под запрошенный тип мест рядом ничего нет в данных — показано, что есть "
                    "поблизости.",
         "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
-        "airport_deadline": "Выезжайте в аэропорт не позже {hhmm}.",
+        "airport_plan": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
+                        "{res} мин — на прогулку {w} мин. Выезжайте в аэропорт не позже {hhmm}.",
+        "airport_now": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
+                       "{res} мин — на прогулку времени не остаётся. Выезжайте в аэропорт "
+                       "сейчас.",
+        "summary_leave_now": "Времени на прогулку перед вылетом нет — выезжайте в аэропорт "
+                             "сейчас.",
         "airport_nothing": "Рядом с аэропортом почти ничего нет; ехать в город за {dur} до "
                            "вылета не советуем.",
         "airport_nothing_nodur": "Рядом с аэропортом почти ничего нет; ехать в город перед "
                                  "вылетом не советуем.",
         "airport_nothing_tail": "Ниже — что есть в пешей доступности.",
-        "f_budget_airport": "время на прогулку {v} мин (с учётом дороги в аэропорт)",
+        "f_budget_airport": "время на прогулку {v} мин ({b} − {tr} дорога − {res} запас)",
         "route_over": "Маршрут не укладывается в заданное время — начните с первой карточки.",
         "summary_1": "Подборка по открытым данным: 1 идея рядом.",
         "summary_n": "Подборка по открытым данным: {n} идеи рядом.",
@@ -120,14 +144,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_outdoor": "на улице", "f_night": "ночь", "f_tourist": "турист",
         "f_group": "группа {v}", "f_categories": "категории: {v}", "f_tags": "теги: {v}",
         "f_no_ai": "режим без ИИ",
+        "f_search_semantic": "поиск: по смыслу и по словам",
+        "f_search_lexical": "поиск: по словам",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
         "hours_unknown_1": "1 орынның жұмыс уақыты туралы дерек жоқ — барар алдында тексеріңіз.",
         "hours_unknown_n": "{n} орынның жұмыс уақыты туралы дерек жоқ — барар алдында "
                            "тексеріңіз.",
-        "night": "Түн: жарық әрі адамы көп жерлерді таңдаңыз, қайтар жолды алдын ала "
-                 "ойластырыңыз.",
+        "night": "Түн: жарық әрі адамы көп жерлерді таңдаңыз; кері қарай таксимен қайтқан "
+                 "дұрыс.",
+        "kids_night": "Баламен серуендеуге кеш — жақын жердегі жабық орынды таңдаған дұрыс.",
+        "night_far": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
+                     "орындар көрсетілді; таксимен барған дұрыс.",
+        "group": "{n} адамдық топқа: кафеде үстелді алдын ала нақтылаңыз.",
+        "f_night_clock": "түн (уақыт бойынша)",
         "widened": "Жақын жерде нұсқа аз — іздеу радиусы {r} м-ге дейін ұлғайтылды.",
         "nothing": "Сәйкес орын табылмады. Уақытты көбейтіп, кейбір сүзгілерді алып тастап "
                    "немесе басқа нүкте таңдап көріңіз.",
@@ -142,13 +173,17 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Сұралған түрдегі орын жақын жерде деректерде жоқ — маңайдағы бар орындар "
                    "көрсетілді.",
         "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
-        "airport_deadline": "Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
+        "airport_plan": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
+                        "қор — серуенге {w} мин. Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
+        "airport_now": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
+                       "қор — серуенге уақыт қалмайды. Әуежайға қазір шығыңыз.",
+        "summary_leave_now": "Ұшар алдында серуенге уақыт жоқ — әуежайға қазір шығыңыз.",
         "airport_nothing": "Әуежай маңында ештеңе дерлік жоқ; ұшарға {dur} қалғанда қалаға "
                            "баруды ұсынбаймыз.",
         "airport_nothing_nodur": "Әуежай маңында ештеңе дерлік жоқ; ұшар алдында қалаға "
                                  "баруды ұсынбаймыз.",
         "airport_nothing_tail": "Төменде — жаяу жетуге болатын орындар.",
-        "f_budget_airport": "серуенге {v} мин (әуежайға жолды ескергенде)",
+        "f_budget_airport": "серуенге {v} мин ({b} − {tr} жол − {res} қор)",
         "route_over": "Маршрут берілген уақытқа сыймайды — бірінші карточкадан бастаңыз.",
         "summary_1": "Ашық деректер бойынша жақын жерде 1 ұсыныс.",
         "summary_n": "Ашық деректер бойынша жақын жерде {n} ұсыныс.",
@@ -160,12 +195,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_wheelchair": "кедергісіз орта", "f_indoor": "ғимарат ішінде", "f_outdoor": "далада",
         "f_night": "түн", "f_tourist": "турист", "f_group": "топ {v}",
         "f_categories": "санаттар: {v}", "f_tags": "тегтер: {v}", "f_no_ai": "ЖИ-сыз режим",
+        "f_search_semantic": "іздеу: мағынасы мен сөздері бойынша",
+        "f_search_lexical": "іздеу: сөздері бойынша",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
         "hours_unknown_1": "No opening-hours data for 1 place — check before you go.",
         "hours_unknown_n": "No opening-hours data for {n} places — check before you go.",
-        "night": "Night: choose well-lit, busy places and plan your way back in advance.",
+        "night": "Night: choose well-lit, busy places; better take a taxi back.",
+        "kids_night": "It is late for a walk with a child — an indoor place nearby is better.",
+        "night_far": "No surely-open place within a 15-minute walk tonight — showing the "
+                     "nearest confirmed ones; better take a taxi.",
+        "group": "For a group of {n}: check table availability at cafes in advance.",
+        "f_night_clock": "night (by the clock)",
         "widened": "Few options nearby — search radius widened to {r} m.",
         "nothing": "No matching places found. Try more time, fewer filters or another "
                    "starting point.",
@@ -178,13 +220,19 @@ TEXTS: dict[str, dict[str, str]] = {
                        "make your departure.",
         "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
         "sparse": "Few places nearby in the open data ({n}) — a short list.",
-        "airport_deadline": "Leave for the airport no later than {hhmm}.",
+        "airport_plan": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
+                        "{res}-min reserve leaves {w} min for a walk. Leave for the airport no "
+                        "later than {hhmm}.",
+        "airport_now": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
+                       "{res}-min reserve leaves no time for a walk. Leave for the airport now.",
+        "summary_leave_now": "There is no time for a walk before your flight — leave for the "
+                             "airport now.",
         "airport_nothing": "There is almost nothing near the airport; we don't recommend going "
                            "into the city {dur} before your flight.",
         "airport_nothing_nodur": "There is almost nothing near the airport; we don't recommend "
                                  "going into the city right before your flight.",
         "airport_nothing_tail": "Below is what is within walking distance.",
-        "f_budget_airport": "walk time {v} min (airport transfer included)",
+        "f_budget_airport": "walk time {v} min ({b} − {tr} transfer − {res} reserve)",
         "route_over": "The route does not fit your time — start with the first card.",
         "summary_1": "1 nearby idea picked from open data.",
         "summary_n": "{n} nearby ideas picked from open data.",
@@ -196,7 +244,63 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_outdoor": "outdoor", "f_night": "night", "f_tourist": "tourist",
         "f_group": "group of {v}", "f_categories": "categories: {v}", "f_tags": "tags: {v}",
         "f_no_ai": "no-AI mode",
+        "f_search_semantic": "search: by meaning and keywords",
+        "f_search_lexical": "search: by keywords",
     },
+}
+
+
+# T73: names in the "data used" panel follow the answer language (codes stay in Answer.intent).
+CATEGORY_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"cafe": "кафе", "restaurant": "ресторан", "fast_food": "фастфуд", "bar": "бар",
+           "nightlife": "ночная жизнь", "museum": "музей", "gallery": "галерея",
+           "theatre": "театр", "cinema": "кино", "library": "библиотека", "park": "парк",
+           "playground": "детская площадка", "viewpoint": "смотровая площадка",
+           "attraction": "достопримечательность", "monument": "памятник",
+           "religious": "культовое место", "mall": "ТРЦ", "sport": "спорт",
+           "entertainment": "развлечения", "other": "другое"},
+    "kk": {"cafe": "кафе", "restaurant": "мейрамхана", "fast_food": "фастфуд", "bar": "бар",
+           "nightlife": "түнгі өмір", "museum": "мұражай", "gallery": "галерея",
+           "theatre": "театр", "cinema": "кино", "library": "кітапхана", "park": "саябақ",
+           "playground": "балалар алаңы", "viewpoint": "көру алаңы",
+           "attraction": "көрікті жер", "monument": "ескерткіш", "religious": "ғибадат орны",
+           "mall": "сауда орталығы", "sport": "спорт", "entertainment": "ойын-сауық",
+           "other": "басқа"},
+    "en": {"cafe": "cafe", "restaurant": "restaurant", "fast_food": "fast food", "bar": "bar",
+           "nightlife": "nightlife", "museum": "museum", "gallery": "gallery",
+           "theatre": "theatre", "cinema": "cinema", "library": "library", "park": "park",
+           "playground": "playground", "viewpoint": "viewpoint", "attraction": "sight",
+           "monument": "monument", "religious": "place of worship", "mall": "mall",
+           "sport": "sport", "entertainment": "entertainment", "other": "other"},
+}
+TAG_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"coffee": "кофе", "wifi": "Wi-Fi", "power_outlets": "розетки", "quiet": "тихо",
+           "work_friendly": "можно поработать", "kids": "для детей",
+           "interactive": "интерактив", "indoor": "в помещении", "outdoor": "на улице",
+           "view": "вид", "photo_spot": "фото", "night": "ночь", "late_open": "допоздна",
+           "24_7": "круглосуточно", "free": "бесплатно", "wheelchair": "доступная среда",
+           "vegetarian": "вегетарианское", "local_cuisine": "местная кухня",
+           "live_music": "живая музыка", "walk": "прогулка", "water": "у воды",
+           "architecture": "архитектура", "history": "история", "art": "искусство",
+           "shopping": "шопинг", "sport": "спорт", "food": "еда"},
+    "kk": {"coffee": "кофе", "wifi": "Wi-Fi", "power_outlets": "розетка", "quiet": "тыныш",
+           "work_friendly": "жұмыс істеуге болады", "kids": "балаларға",
+           "interactive": "интерактив", "indoor": "ғимарат ішінде", "outdoor": "далада",
+           "view": "көрініс", "photo_spot": "фото", "night": "түн", "late_open": "кешке дейін",
+           "24_7": "тәулік бойы", "free": "тегін", "wheelchair": "кедергісіз орта",
+           "vegetarian": "вегетариандық", "local_cuisine": "ұлттық тағам",
+           "live_music": "тірі музыка", "walk": "серуен", "water": "су жағасы",
+           "architecture": "сәулет", "history": "тарих", "art": "өнер",
+           "shopping": "сауда", "sport": "спорт", "food": "тамақ"},
+    "en": {"coffee": "coffee", "wifi": "Wi-Fi", "power_outlets": "power outlets",
+           "quiet": "quiet", "work_friendly": "work-friendly", "kids": "for kids",
+           "interactive": "interactive", "indoor": "indoor", "outdoor": "outdoor",
+           "view": "view", "photo_spot": "photo spot", "night": "night",
+           "late_open": "open late", "24_7": "24/7", "free": "free",
+           "wheelchair": "wheelchair access", "vegetarian": "vegetarian",
+           "local_cuisine": "local cuisine", "live_music": "live music", "walk": "walk",
+           "water": "waterside", "architecture": "architecture", "history": "history",
+           "art": "art", "shopping": "shopping", "sport": "sport", "food": "food"},
 }
 
 
@@ -247,16 +351,41 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             name = lm.names.get(intent.lang) or next(iter(lm.names.values()), lm.id)
             warn.append(t["landmark_mismatch"].format(name=name))
 
-    # Tourist with a flight: plan only the time left after the transfer (not at the airport).
+    # Modes. `plan_intent` is what the search actually uses; `intent` stays what was asked.
     at_airport = landmark_id == AIRPORT_ID
-    walk_budget: int | None = None
-    plan_intent = intent
-    if intent.tourist and intent.time_budget_min and not at_airport:
+    at_hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
+    departure = getattr(req.overrides, "departure_in_min", None) if req.overrides else None
+    flight = intent.tourist and not at_airport and (
+        departure is not None or mentions_flight(req.query))
+    # The budget is "time to departure" only when said so («2 часа перед вылетом») or sent by
+    # the UI; «прогулка на 30 минут, вечером рейс» is a 30-minute walk plus the general tip.
+    to_departure = flight and (departure is not None or departure_phrase(req.query))
+    walk_budget: int | None = None  # minutes left for the walk before leaving for the airport
+    plan_update: dict[str, object] = {}
+    if to_departure and intent.time_budget_min:
         walk_budget = intent.time_budget_min - AIRPORT_TRANSFER_MIN - AIRPORT_RESERVE_MIN
-        plan_intent = intent.model_copy(
-            update={"time_budget_min": max(MIN_WALK_BUDGET_MIN, walk_budget)})
+        plan_update["time_budget_min"] = max(MIN_WALK_BUDGET_MIN, walk_budget)
+    short_walks = at_hub or intent.tourist
+    if short_walks:
+        plan_update["max_walk_min"] = min(intent.max_walk_min or HUB_MAX_WALK_MIN,
+                                          HUB_MAX_WALK_MIN)
+    # Night by the clock (22:00–06:00), unless the UI switched night mode off explicitly:
+    # retrieval then keeps late_open / 24_7 / open-now places only.
+    night_switch = getattr(req.overrides, "night", None) if req.overrides else None
+    night_by_clock = (not intent.night and night_switch is None
+                      and (local_time.hour >= NIGHT_FROM_H or local_time.hour < NIGHT_TO_H))
+    if night_by_clock:
+        plan_update["night"] = True
+    careful = intent.with_kids or intent.wheelchair or intent.night or night_by_clock
+    careful_cap = careful and intent.max_walk_min is None and "max_walk_min" not in plan_update
+    if careful_cap:
+        plan_update["max_walk_min"] = CAREFUL_MAX_WALK_MIN
+    plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
+    no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
-    # 3. context
+    # 3. context (the area label is in the answer language: the LLM and the panel read it)
+    lm_here = store.landmarks.get(landmark_id) if landmark_id else None
+    area_label = _localized_area(intent.lang, lm_here, h3_cell, area_label)
     wx = weather.get_weather(origin, local_time)
     ctx = SearchContext(
         origin=origin,
@@ -277,22 +406,59 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
     search_intent = plan_intent
-    candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
-    if not candidates and not failed:
+    if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
+        candidates, failed = [], False
+    else:
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+    if short_walks:  # "two cards beat a third one 48 minutes away"
+        candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
+    if not candidates and not failed and not no_time and not short_walks:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
             candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
-    requested_found = len(candidates)  # places of the requested type, before relaxing
-    if not candidates and not failed and plan_intent.categories:
+    if plan_intent.night and not no_time:
+        # At night "surely open" beats "close": keep open / late_open / 24_7 places; if none
+        # is within the short-walk cap, look further (the taxi back is advised anyway).
+        sure = [c for c in candidates if _night_sure(c)]
+        if not sure and careful_cap and not short_walks and not failed:
+            far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
+            far_ctx = ctx.model_copy(update={"radius_m": min(
+                round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec)
+            sure = [c for c in more if _night_sure(c)]
+            if sure:
+                search_intent, ctx = far_intent, far_ctx
+                warn.append(t["night_far"])
+        if sure:
+            candidates = sure
+    if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        if short_walks:
+            candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
+        if plan_intent.night:
+            candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
+
+    # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
+    walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
+                 and not intent.tourist and not plan_intent.night)
+    gen_candidates = candidates
+    if walk_loop and req.want_route and len(candidates) >= 2:
+        picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0,
+                                 wanted_categories=set(plan_intent.categories))
+        if len(picked) >= 2:
+            gen_candidates = picked
+        elif picked:  # one stop fits: it goes first, the rest stay as alternatives
+            wanted = set(plan_intent.categories)
+            gen_candidates = picked + [c for c in candidates if c not in picked
+                                       and route.walk_eligible(c, wanted)]
 
     # 6. cards
     cards: list[Card] = []
@@ -301,8 +467,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     gen_model: str | None = None
     if candidates and llm is not None:
         try:
-            draft = draft_cards(search_intent, ctx, candidates, llm)
-            cards, fin_warnings = validate.finalize(draft, candidates, search_intent, ctx)
+            draft = draft_cards(search_intent, ctx, gen_candidates, llm)
+            cards, fin_warnings = validate.finalize(draft, gen_candidates, search_intent, ctx)
             warn.extend(fin_warnings)
             draft_ids = {d.poi_id for d in draft.cards}
             if any(c.poi_id in draft_ids for c in cards):
@@ -317,29 +483,39 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             cards = []
     if candidates and not cards:
         try:
-            cards = validate.template_cards(candidates, search_intent, ctx)
+            cards = validate.template_cards(gen_candidates, search_intent, ctx)
         except Exception as exc:  # noqa: BLE001
             log.error("request %s: template_cards failed (%s)", request_id, type(exc).__name__)
             failed = True
     cards = cards[: TOURIST_MAX_CARDS if walk_budget is not None else 3]
+    cards = _localize_hours(cards, candidates, local_time, intent.lang)
 
     # 7. route
-    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route, request_id)
+    note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
+                            wheelchair=intent.wheelchair)
+    # At a transport hub people pick one place to wait: a tour of three cafes makes no sense.
+    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route and not at_hub,
+                        request_id, loop=walk_loop, note=note)
 
     # 8. warnings, data used, answer
     if failed and not cards:
         warn.append(t["search_error"])
-    elif not cards:
+    elif not cards and not no_time:
         warn.append(t["nothing"])
-    hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
-    deadline = (local_time + timedelta(minutes=max(0, walk_budget))
-                if walk_budget is not None else None)
-    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route, at_hub=hub,
-                                  deadline=deadline))
+    if walk_budget is not None:
+        # first: the deadline matters more than any other warning (POLISH request)
+        warn.insert(0, _airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
+    warn.extend(_context_warnings(t, plan_intent, cards, candidates, mini_route, at_hub=at_hub,
+                                  flight=flight, deadline_given=walk_budget is not None))
     if summary is None:
         summary = _template_summary(t, len(cards))
-    if at_airport and intent.tourist and requested_found < 2:
+    if no_time:
+        summary = t["summary_leave_now"]
+    elif at_airport and intent.tourist and _sights(candidates) < 2 and not _food_only(intent):
+        # E11 / UI "tourist + departure": NQZ has a few cafes and nothing to see — say so,
+        # whatever categories were asked (the UI sends no text categories at all)
         summary = _airport_summary(t, intent, has_cards=bool(cards))
+    summary = validate.sanitize_summary(summary, cards)  # "open now" never leaks via summary
 
     answer = Answer(
         request_id=request_id,
@@ -352,9 +528,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         data_used=DataUsed(
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
-            weather=wx.summary if wx is not None else t["weather_unknown"],
-            filters=_filters(t, search_intent, ctx, req.use_llm,
-                             airport_budget=walk_budget is not None),
+            weather=(weather.summary_for(wx, intent.lang) if wx is not None
+                     else t["weather_unknown"]),
+            filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
+                             semantic=query_vec is not None,
+                             night_by_clock=night_by_clock,
+                             airport=(intent.time_budget_min or 0) if walk_budget is not None
+                             else None),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -374,6 +554,56 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _sights(candidates: list[Candidate]) -> int:
+    return sum(1 for c in candidates if c.poi.category in SIGHT_CATEGORIES)
+
+
+def _food_only(intent: QueryIntent) -> bool:
+    """The person asked for food / coffee only: «nothing to see here» would be off-topic."""
+    return bool(intent.categories) and set(intent.categories) <= FOOD_CATEGORIES
+
+
+def _night_sure(c: Candidate) -> bool:
+    """Open now by the data, or marked as working late / round the clock."""
+    return c.hours.status == "open" or bool({"late_open", "24_7"} & set(c.poi.tags))
+
+
+def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:
+    """CORE builds the Russian label («у EXPO», «ваш район (≈0,1 км²) у …»); kk / en here."""
+    if lang == "ru":
+        return ru_label
+    if landmark is not None:
+        name = landmark.names.get(lang) or landmark.names.get("ru") or landmark.id
+        return f"near {name}" if lang == "en" else f"{name} маңында"
+    area = f"{h3.cell_area(cell, unit='km^2'):.1f}"
+    if lang == "en":
+        return f"your area (≈{area} km²)"
+    return f"сіздің ауданыңыз (≈{area.replace('.', ',')} км²)"
+
+
+def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime, lang: Lang
+                    ) -> list[Card]:
+    """Hours notes in kk / en (texts live in app.hours). Status and confidence are untouched:
+    a card is only re-worded when hours.py gives the very same verdict."""
+    if lang == "ru":
+        return cards
+    by_id = {c.poi.id: c for c in candidates}
+    out: list[Card] = []
+    for card in cards:
+        cand = by_id.get(card.poi_id)
+        if cand is None:
+            out.append(card)
+            continue
+        verdict = hours.evaluate_hours(cand.poi.opening_hours, at, lang=lang)
+        if (verdict.status, verdict.confidence) != (card.open_status, card.open_confidence):
+            out.append(card)
+            continue
+        raw = (cand.poi.opening_hours or "").strip()
+        note = hours.unknown_note(lang) if verdict.status == "unknown" and not raw else verdict.note
+        out.append(card.model_copy(update={"open_note": note}))
+    return out
 
 
 def _coarsen(loc: LocationInput, res: int) -> LocationInput:
@@ -422,6 +652,9 @@ def _route(
     intent: QueryIntent,
     want_route: bool,
     request_id: str,
+    *,
+    loop: bool = False,
+    note: str | None = None,
 ) -> MiniRoute | None:
     if not want_route or len(cards) < 2:
         return None
@@ -429,7 +662,8 @@ def _route(
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
     try:
         return route.plan_route(
-            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards}
+            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards},
+            loop=loop, note=note,
         )
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)", request_id, type(exc).__name__)
@@ -444,7 +678,8 @@ def _context_warnings(
     mini_route: MiniRoute | None,
     *,
     at_hub: bool = False,
-    deadline: datetime | None = None,
+    flight: bool = False,
+    deadline_given: bool = False,
 ) -> list[str]:
     out: list[str] = []
     unknown = sum(1 for c in cards if c.open_status == "unknown")
@@ -454,18 +689,34 @@ def _context_warnings(
         out.append(t["hours_unknown_n"].format(n=unknown))
     if intent.night:
         out.append(t["night"])
+        if intent.with_kids:
+            out.append(t["kids_night"])
     if intent.wheelchair and cards:
         wheel = {c.poi.id: c.poi.wheelchair for c in candidates}
         confirmed = sum(1 for c in cards if wheel.get(c.poi_id) == "yes")
         if confirmed < len(cards):  # OSM marks wheelchair for ~1% of places
             out.append(t["wheelchair"].format(k=confirmed, n=len(cards)))
-    if deadline is not None:
-        out.append(t["airport_deadline"].format(hhmm=f"{deadline:%H:%M}"))
-    elif intent.tourist and cards:
-        out.append(t["tourist_hub"] if at_hub else t["tourist"])
+    if intent.tourist and cards and not deadline_given:
+        if at_hub:
+            out.append(t["tourist_hub"])
+        elif flight:  # a tourist without a flight gets no airport advice
+            out.append(t["tourist"])
+    if (intent.group_size or 0) >= GROUP_MIN and any(c.category in FOOD_CATEGORIES
+                                                      for c in cards):
+        out.append(t["group"].format(n=intent.group_size))
     if mini_route is not None and not mini_route.fits_budget:
         out.append(t["route_over"])
     return out
+
+
+def _airport_warning(t: dict[str, str], budget: int, walk_budget: int, local_time: datetime
+                     ) -> str:
+    """The calculation is shown, not just the result: «до вылета 120 − 35 − 60 = 25 мин»."""
+    fmt = {"b": budget, "tr": AIRPORT_TRANSFER_MIN, "res": AIRPORT_RESERVE_MIN}
+    if walk_budget < MIN_WALK_LEFT_MIN:
+        return t["airport_now"].format(**fmt)
+    leave_at = local_time + timedelta(minutes=walk_budget)
+    return t["airport_plan"].format(**fmt, w=walk_budget, hhmm=f"{leave_at:%H:%M}")
 
 
 def _airport_summary(t: dict[str, str], intent: QueryIntent, *, has_cards: bool) -> str:
@@ -508,23 +759,34 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
-             *, airport_budget: bool = False) -> list[str]:
+             *, lang: Lang = "ru", airport: int | None = None,
+             night_by_clock: bool = False, semantic: bool = False) -> list[str]:
+    """`semantic`: the query vector was computed. The Gemini quota can run out silently
+    (embed_query then returns None), so the panel always says which search actually ran."""
+    """`airport` = minutes to departure when the flight rule shaped the time budget."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
-    if intent.time_budget_min:
-        key = "f_budget_airport" if airport_budget else "f_budget"
-        out.append(t[key].format(v=intent.time_budget_min))
+    if intent.time_budget_min and airport is not None:
+        out.append(t["f_budget_airport"].format(v=intent.time_budget_min, b=airport,
+                                                tr=AIRPORT_TRANSFER_MIN, res=AIRPORT_RESERVE_MIN))
+    elif intent.time_budget_min:
+        out.append(t["f_budget"].format(v=intent.time_budget_min))
     if intent.max_walk_min:
         out.append(t["f_walk"].format(v=intent.max_walk_min))
     flags = (("f_kids", intent.with_kids), ("f_wheelchair", intent.wheelchair),
              ("f_indoor", intent.indoor == "indoor"), ("f_outdoor", intent.indoor == "outdoor"),
-             ("f_night", intent.night), ("f_tourist", intent.tourist))
+             ("f_night_clock" if night_by_clock else "f_night", intent.night),
+             ("f_tourist", intent.tourist))
     out.extend(t[key] for key, on in flags if on)
     if intent.group_size:
         out.append(t["f_group"].format(v=intent.group_size))
     if intent.categories:
-        out.append(t["f_categories"].format(v=", ".join(intent.categories)))
+        names = CATEGORY_NAMES[lang]
+        out.append(t["f_categories"].format(v=", ".join(names.get(c, c)
+                                                         for c in intent.categories)))
     if intent.must_tags:
-        out.append(t["f_tags"].format(v=", ".join(intent.must_tags)))
+        tags = TAG_NAMES[lang]
+        out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
+    out.append(t["f_search_semantic" if semantic else "f_search_lexical"])
     if not use_llm:
         out.append(t["f_no_ai"])
     return out

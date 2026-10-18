@@ -5,17 +5,22 @@ Usage:
   python -m eval.run_eval                     # in-process app.pipeline.recommend + real Store
   python -m eval.run_eval --no-llm            # same, but use_llm=false in every request
   python -m eval.run_eval --url http://localhost:8000
-Options: --only S1,E3   --out DIR (default eval/)
+  python -m eval.run_eval --smoke [--no-llm | --url URL | --mock]   # team queries, no grading
+Options: --only S1,E3   --out DIR (default eval/)   --queries CSV (default eval/queries_team.csv)
 
 Checks use only fields of app.schemas.Answer. Writes report.md + report.json.
-Exit code is always 0: the summary line "EVAL <mode>: N/15" is the result.
+--smoke runs every query from the CSV without strict checks and writes smoke_report.md
+for reading by eye (common invariants are listed as remarks, not failures).
+Exit code is always 0: the summary line "EVAL <mode>: N/16" is the result.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
+import statistics
 import sys
 import time
 from collections.abc import Callable
@@ -53,6 +58,7 @@ class Outcome:
     rejected: bool = False  # 422 / KeyError / ValueError: invalid input handled correctly
     error: str | None = None  # crash, 5xx, invalid JSON — always a failure
     latency_ms: int = 0
+    search: str | None = None  # "vector" | "words"; None = unknown (see search_mode)
 
 
 @dataclass
@@ -65,6 +71,7 @@ class Result:
     latency_ms: int = 0
     cards: int = 0
     generation: str | None = None
+    search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -211,6 +218,29 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         text = " ".join([ans.summary, *ans.warnings]).lower()
         if not any(s.lower() in text for s in exp["text_any"]):
             fails.append(f"в summary/warnings нет ни одного из {exp['text_any']}")
+    # ranking probes (eval/probes.yaml, T70): what comes first matters, not just what is there
+    top = ans.cards[0] if ans.cards else None
+    if "top1_categories_any" in exp and top is not None:
+        if top.category not in exp["top1_categories_any"]:
+            fails.append(f"первая карточка {top.category} ({top.title}), ожидали "
+                         f"{exp['top1_categories_any']}")
+    if "top1_why_any" in exp and top is not None:
+        if not any(w.lower() in top.why.lower() for w in exp["top1_why_any"]):
+            fails.append(f"в why первой карточки нет ни одного из {exp['top1_why_any']}")
+    if "top1_note_forbid" in exp and top is not None:
+        hits = [s for s in exp["top1_note_forbid"] if s.lower() in top.open_note.lower()]
+        if hits:
+            fails.append(f"первая карточка: {hits} в «{top.open_note[:60]}»")
+    if "notes_lang" in exp:
+        for c in ans.cards:
+            got = detect_script(c.open_note)
+            if got != exp["notes_lang"]:
+                fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
+    if "unknown_note_lang" in exp:
+        for c in ans.cards:
+            got = detect_script(c.open_note)
+            if c.open_status == "unknown" and got != exp["unknown_note_lang"]:
+                fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
     for key, want in (exp.get("intent") or {}).items():
         got = getattr(ans.intent, key, None)
         if got != want:
@@ -230,6 +260,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
         expected_type=scn.get("expected_type", ""),
         passed=False,
         latency_ms=out.latency_ms,
+        search=search_mode(out),
     )
     if out.error:
         res.failures.append(f"ошибка: {out.error}")
@@ -285,15 +316,33 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
         return None, [f"не удалось поднять pipeline: {type(exc).__name__}: {exc}"]
     if llm is None and not no_llm:
         notes.append("LLM недоступна (нет ключа или LLM_ENABLED=0): ответы шаблонные")
-    notes.append(f"POI в Store: {len(store.pois)}; эмбеддинги: "
-                 f"{'есть' if store.embeddings is not None else 'нет, лексика'}")
+    if store.embeddings is None:
+        emb = "нет, лексика"
+    elif no_llm:
+        emb = "есть, но в режиме без ИИ не используются (лексика)"
+    else:
+        emb = "есть"
+    notes.append(f"POI в Store: {len(store.pois)}; эмбеддинги: {emb}")
+    notes += [f"Store: {w}" for w in store.warnings]
     deps = Deps(store=store, llm=llm, settings=settings)
+    got_vector: list[bool] = []  # set by the embed_query wrapper during one request
+    if llm is not None:
+        real_embed = llm.embed_query
+
+        def counting_embed(text: str) -> Any:
+            vec = real_embed(text)
+            got_vector.append(vec is not None)
+            return vec
+
+        llm.embed_query = counting_embed  # type: ignore[method-assign]
 
     def run(req: RecommendRequest) -> Outcome:
+        got_vector.clear()
         t0 = time.perf_counter()
         try:
             ans = recommend(req, deps)
-            return Outcome(answer=ans, latency_ms=_ms(t0))
+            return Outcome(answer=ans, latency_ms=_ms(t0),
+                           search="vector" if any(got_vector) else "words")
         except (KeyError, ValueError, ValidationError):
             return Outcome(rejected=True, latency_ms=_ms(t0))
         except Exception as exc:  # noqa: BLE001 — a crash is a failed scenario
@@ -366,6 +415,33 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
     return results
 
 
+SEARCH_LABEL = {"vector": "по смыслу", "words": "по словам"}
+_SEMANTIC_MARKERS = ("смысл", "мағына", "meaning", "semantic")
+_SEARCH_PREFIXES = ("поиск", "іздеу", "search")
+
+
+def search_mode(out: Outcome) -> str | None:
+    """Did the query get an embedding? In-process mode knows it from the embed_query wrapper;
+    over --url it is read from the data_used.filters line «поиск: по смыслу и по словам / по
+    словам» (FEATURES). No such line -> None (unknown)."""
+    if out.search is not None:
+        return out.search
+    if out.answer is None:
+        return None
+    for line in out.answer.data_used.filters:
+        low = line.lower()
+        if low.startswith(_SEARCH_PREFIXES):
+            return "vector" if any(m in low for m in _SEMANTIC_MARKERS) else "words"
+    return None
+
+
+def search_summary(results: list[Result]) -> str:
+    vec = sum(r.search == "vector" for r in results)
+    words = sum(r.search == "words" for r in results)
+    unknown = sum(r.search is None for r in results)
+    return f"вектор запроса (embed_query) у {vec}, только по словам {words}, неизвестно {unknown}"
+
+
 def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
     passed = sum(r.passed for r in results)
     lines = [
@@ -374,18 +450,19 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
         f"- Режим: `{mode}`",
         f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
         f"- **Итог: {passed}/{len(results)}**",
+        f"- Поиск: {search_summary(results)}",
     ]
     lines += [f"- {n}" for n in notes]
     lines += [
         "",
-        "| id | сценарий | итог | что не прошло | карточек | генерация | latency, мс |",
-        "|---|---|---|---|---:|---|---:|",
+        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | latency, мс |",
+        "|---|---|---|---|---:|---|---|---:|",
     ]
     for r in results:
         why = "; ".join(r.failures).replace("|", "/") or "—"
         lines.append(
             f"| {r.id} | {r.title} | {'pass' if r.passed else 'FAIL'} | {why} | {r.cards} "
-            f"| {r.generation or '—'} | {r.latency_ms} |"
+            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} | {r.latency_ms} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -398,11 +475,226 @@ def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[st
         "passed": sum(r.passed for r in results),
         "total": len(results),
         "notes": notes,
+        "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+# ------------------------------------------------------------------------ smoke
+
+QUERIES_PATH = Path(__file__).resolve().parent / "queries_team.csv"
+SMOKE_DEFAULT_LOCATION = "expo"
+SMOKE_DEFAULT_AT = "2026-10-19T15:00:00+05:00"  # Monday, same day as scenarios.yaml
+_H3_CELL = re.compile(r"^[0-9a-f]{15}$")
+
+
+@dataclass
+class SmokeItem:
+    id: str
+    query: str
+    location: str
+    at: str
+    outcome: Outcome
+    remarks: list[str] = field(default_factory=list)  # common invariants, informational only
+
+
+def load_queries(path: Path = QUERIES_PATH) -> list[dict[str, str]]:
+    """CSV with header id,query[,location,at,lang]. Blank and '#' lines are skipped.
+
+    location: landmark id (expo, baiterek, ...) or an H3 cell; empty -> SMOKE_DEFAULT_LOCATION.
+    """
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        lines = [ln for ln in fh if ln.strip() and not ln.lstrip().startswith("#")]
+    rows: list[dict[str, str]] = []
+    for n, raw in enumerate(csv.DictReader(lines), start=1):
+        row = {k.strip(): (v or "").strip() for k, v in raw.items() if isinstance(k, str)}
+        if not row.get("query"):
+            continue
+        row["id"] = row.get("id") or f"Q{n:02d}"
+        rows.append(row)
+    return rows
+
+
+def smoke_request(row: dict[str, str], no_llm: bool) -> RecommendRequest:
+    loc = row.get("location") or SMOKE_DEFAULT_LOCATION
+    data: dict[str, Any] = {
+        "query": row["query"],
+        "location": {"h3_cell": loc} if _H3_CELL.match(loc) else {"landmark_id": loc},
+        "at": row.get("at") or SMOKE_DEFAULT_AT,
+    }
+    if row.get("lang"):
+        data["lang"] = row["lang"]
+    if no_llm:
+        data["use_llm"] = False
+    return RecommendRequest.model_validate(data)
+
+
+def run_smoke(
+    rows: list[dict[str, str]], runner: Runner | None, no_llm: bool, setup_error: str
+) -> list[SmokeItem]:
+    items = []
+    for row in rows:
+        try:
+            req = smoke_request(row, no_llm)
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            where = ".".join(str(p) for p in first.get("loc", ()))
+            out = Outcome(error=f"запрос не по схеме: {where}: {first.get('msg', '')}")
+        else:
+            out = runner(req) if runner is not None else Outcome(error=setup_error)
+        items.append(
+            SmokeItem(
+                id=row["id"],
+                query=row["query"],
+                location=row.get("location") or SMOKE_DEFAULT_LOCATION,
+                at=row.get("at") or SMOKE_DEFAULT_AT,
+                outcome=out,
+                remarks=check_invariants(out.answer) if out.answer else [],
+            )
+        )
+    return items
+
+
+def _cell(text: str, limit: int = 60) -> str:
+    text = " ".join(str(text).split()).replace("|", "/")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _intent_line(ans: Answer) -> str:
+    it = ans.intent
+    flags = [
+        name
+        for name, on in (
+            ("с ребёнком", it.with_kids),
+            ("коляска", it.wheelchair),
+            ("ночь", it.night),
+            ("турист", it.tourist),
+        )
+        if on
+    ]
+    parts = [
+        f"parser={it.parser}",
+        f"lang={it.lang}",
+        f"бюджет={it.time_budget_min or '—'} мин",
+        f"пешком ≤ {it.max_walk_min or '—'} мин",
+        f"категории={', '.join(it.categories) or '—'}",
+        f"теги={', '.join(it.must_tags) or '—'}",
+    ]
+    if it.indoor != "any":
+        parts.append(f"indoor={it.indoor}")
+    if it.group_size:
+        parts.append(f"группа={it.group_size}")
+    if flags:
+        parts.append("флаги: " + ", ".join(flags))
+    return "; ".join(parts)
+
+
+def _render_answer(item: SmokeItem) -> list[str]:
+    out = item.outcome
+    if out.error:
+        return [f"- **Ошибка:** {out.error}"]
+    if out.rejected:
+        return ["- **Отклонён (422):** неверный ввод, ответа нет"]
+    ans = out.answer
+    assert ans is not None
+    lines = [
+        f"- Разбор: {_intent_line(ans)}",
+        f"- Ответ ({ans.data_used.generation}, {out.latency_ms} мс): {ans.summary or '—'}",
+    ]
+    if not ans.cards:
+        lines.append("- Карточек нет")
+    for c in ans.cards:
+        lines += [
+            f"{c.rank}. **{c.title}**: {c.category}, {c.distance_m} м, ≈{c.walk_min} мин пешком, "
+            f"на месте {c.visit_min_low}–{c.visit_min_high} мин",
+            f"   - Почему: {c.why}",
+            f"   - Что делать: {c.what_to_do}",
+            f"   - Часы: {c.open_status}/{c.open_confidence}, {c.open_note} · идея: {c.idea_source}"
+            f" · факты: {', '.join(c.facts_sources)}",
+        ]
+    if ans.route is not None:
+        titles = {c.poi_id: c.title for c in ans.cards}
+        stops = " → ".join(titles.get(s, s) for s in ans.route.stop_ids)
+        fits = "да" if ans.route.fits_budget else "нет"
+        lines.append(
+            f"- Маршрут: {stops} · {ans.route.total_min} мин · в бюджете: {fits} · "
+            f"{ans.route.note}"
+        )
+    if ans.warnings:
+        lines.append("- Предупреждения: " + "; ".join(ans.warnings))
+    if item.remarks:
+        lines.append("- Замечания (инварианты eval): " + "; ".join(item.remarks))
+    return lines
+
+
+def render_smoke_md(mode: str, items: list[SmokeItem], notes: list[str], queries: Path) -> str:
+    answered = [i for i in items if i.outcome.answer is not None]
+    rejected = sum(i.outcome.rejected for i in items)
+    errors = sum(i.outcome.error is not None for i in items)
+    with_cards = sum(bool(i.outcome.answer.cards) for i in answered if i.outcome.answer)
+    gens: dict[str, int] = {}
+    for i in answered:
+        assert i.outcome.answer is not None
+        gen = i.outcome.answer.data_used.generation
+        gens[gen] = gens.get(gen, 0) + 1
+    latencies = [i.outcome.latency_ms for i in answered]
+    lines = [
+        "# Smoke-прогон запросов команды",
+        "",
+        "Строгих проверок нет: отчёт для просмотра глазами. «Замечания» — общие инварианты eval,",
+        "они подсказывают, куда смотреть, но не означают провал.",
+        "",
+        f"- Режим: `{mode}`",
+        f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
+        f"- Запросы: `{queries.name}`",
+        f"- **Ответили: {len(answered)}/{len(items)}**; отклонено (422): {rejected}; "
+        f"ошибок: {errors}; с карточками: {with_cards}",
+        "- Генерация: " + (", ".join(f"{k} {v}" for k, v in sorted(gens.items())) or "—"),
+    ]
+    if latencies:
+        lines.append(
+            f"- Время ответа: медиана {int(statistics.median(latencies))} мс, "
+            f"макс {max(latencies)} мс"
+        )
+    lines += [f"- {n}" for n in notes]
+    lines += [
+        "",
+        "## Сводка",
+        "",
+        "| id | запрос | место | карточек | первая карточка | генерация | мс | замечания |",
+        "|---|---|---|---:|---|---|---:|---:|",
+    ]
+    for i in items:
+        ans = i.outcome.answer
+        if ans is not None:
+            first = ans.cards[0].title if ans.cards else "—"
+            row = (len(ans.cards), _cell(first, 40), ans.data_used.generation)
+        else:
+            row = (0, "422" if i.outcome.rejected else _cell(f"ошибка: {i.outcome.error}", 40), "—")
+        lines.append(
+            f"| {i.id} | {_cell(i.query)} | {_cell(i.location, 20)} | {row[0]} | {row[1]} "
+            f"| {row[2]} | {i.outcome.latency_ms} | {len(i.remarks)} |"
+        )
+    lines += ["", "## Ответы"]
+    for i in items:
+        lines += ["", f"### {i.id} · {i.query}", "", f"- Место: `{i.location}` · время: {i.at}"]
+        lines += _render_answer(i)
+    return "\n".join(lines) + "\n"
+
+
+def write_smoke_report(
+    out_dir: Path, mode: str, items: list[SmokeItem], notes: list[str], queries: Path
+) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "smoke_report.md"
+    path.write_text(render_smoke_md(mode, items, notes, queries), encoding="utf-8")
+    return path
+
+
+# ------------------------------------------------------------------------- main
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -414,12 +706,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", help="comma-separated scenario ids, e.g. S1,E3")
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent)
     ap.add_argument("--scenarios", type=Path, default=SCENARIOS_PATH)
+    ap.add_argument("--smoke", action="store_true", help="run team queries, no grading")
+    ap.add_argument("--queries", type=Path, default=QUERIES_PATH, help="CSV for --smoke")
+    ap.add_argument("--note", action="append", default=[], help="extra line for the report header")
     args = ap.parse_args(argv)
-
-    scenarios = load_scenarios(args.scenarios)
-    if args.only:
-        wanted = {s.strip() for s in args.only.split(",")}
-        scenarios = [s for s in scenarios if s["id"] in wanted]
 
     notes: list[str] = []
     runner: Runner | None
@@ -433,6 +723,27 @@ def main(argv: list[str] | None = None) -> int:
     else:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
         runner, notes = inprocess_runner(args.no_llm)
+    notes = notes + args.note
+
+    if args.smoke:
+        if not args.queries.is_file():
+            print(f"SMOKE: нет файла запросов {args.queries}. Формат: заголовок "
+                  "id,query,location,at,lang; пример — eval/queries_team.csv")
+            return 0
+        rows = load_queries(args.queries)
+        setup_error = notes[0] if runner is None and notes else "раннер недоступен"
+        items = run_smoke(rows, runner, args.no_llm, setup_error)
+        path = write_smoke_report(args.out, mode, items, notes, args.queries)
+        answered = sum(i.outcome.answer is not None for i in items)
+        for n in notes:
+            print(f"note: {n}")
+        print(f"SMOKE {mode}: ответили {answered}/{len(items)} -> {path}")
+        return 0
+
+    scenarios = load_scenarios(args.scenarios)
+    if args.only:
+        wanted = {s.strip() for s in args.only.split(",")}
+        scenarios = [s for s in scenarios if s["id"] in wanted]
 
     if runner is None:
         results = [grade(s, Outcome(error=notes[0])) for s in scenarios]

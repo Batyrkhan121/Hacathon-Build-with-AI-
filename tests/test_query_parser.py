@@ -9,7 +9,14 @@ import pytest
 
 from app import geo
 from app.llm import LLMUnavailable
-from app.query_parser import apply_overrides, detect_lang, parse_query, parse_rules
+from app.query_parser import (
+    apply_overrides,
+    departure_phrase,
+    detect_lang,
+    mentions_flight,
+    parse_query,
+    parse_rules,
+)
 from app.schemas import TAG_VOCAB, Landmark, QueryIntent, UserOverrides
 
 
@@ -155,6 +162,22 @@ def test_time_budget(text: str, minutes: int | None, landmarks: dict[str, Landma
     assert rules(text, landmarks).time_budget_min == minutes
 
 
+@pytest.mark.parametrize(
+    ("text", "minutes"),
+    [("I'm near EXPO with one free hour. What's worth seeing nearby?", 60),
+     ("we have two spare hours", 120), ("three hours before the show", 180),
+     ("есть пару свободных часов", 120), ("бір сағатқа серуендегім келеді", 60)],
+)
+def test_time_budget_words(text: str, minutes: int, landmarks: dict[str, Landmark]) -> None:
+    assert rules(text, landmarks).time_budget_min == minutes
+
+
+def test_free_hour_is_not_free_entry(landmarks: dict[str, Landmark]) -> None:
+    assert "free" not in rules("one free hour near EXPO", landmarks).must_tags
+    assert "free" in rules("free museums nearby", landmarks).must_tags
+    assert "free" in rules("бесплатно и рядом", landmarks).must_tags
+
+
 def test_explicit_walk_limit_is_not_a_budget(landmarks: dict[str, Landmark]) -> None:
     i = rules("кафе не дальше 10 минут пешком, есть час", landmarks)
     assert i.max_walk_min == 10
@@ -177,7 +200,10 @@ def test_wheelchair(landmarks: dict[str, Landmark]) -> None:
 @pytest.mark.parametrize(
     ("text", "size"),
     [("нас 5 человек", 5), ("мы с друзьями", 4), ("for 3 people", 3), ("вдвоём", 2),
-     ("нас 50", 20), ("одна", None)],
+     ("нас 50", 20), ("одна", None), ("нас пятеро", 5), ("нас четверо, где поесть", 4),
+     ("мы втроём", 3), ("пойдём вчетвером", 4), ("нас трое и ребёнок", 3),
+     ("бесеуміз, қайда барамыз?", 5), ("үшеуміз", 3), ("екеуіміз", 2),
+     ("five of us looking for dinner", 5), ("the two of us", 2), ("a group of six", 6)],
 )
 def test_group_size(text: str, size: int | None, landmarks: dict[str, Landmark]) -> None:
     assert rules(text, landmarks).group_size == size
@@ -278,6 +304,58 @@ def test_merge_llm_wins_and_rules_fill_gaps(landmarks: dict[str, Landmark]) -> N
     assert i.with_kids  # rules flag survives
     assert i.landmark_mention == "expo"  # unknown LLM id rejected, rules id kept
     assert i.indoor == "indoor"
+
+
+def test_merge_budget_ignores_llm_walk_guess(landmarks: dict[str, Landmark]) -> None:
+    """S4: "2 часа ... поблизости" — the LLM says max_walk 15, the radius must come from 120."""
+    llm_out = QueryIntent(raw_query="", time_budget_min=120, max_walk_min=15, tourist=True)
+    i = parse_query("Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
+                    None, FakeLLM(llm_out), landmarks)
+    assert i.time_budget_min == 120 and i.max_walk_min is None
+
+
+def test_merge_budget_keeps_explicit_walk_limit(landmarks: dict[str, Landmark]) -> None:
+    llm_out = QueryIntent(raw_query="", time_budget_min=60, max_walk_min=12)
+    i = parse_query("кафе не дальше 10 минут пешком, есть час", None, FakeLLM(llm_out), landmarks)
+    assert i.max_walk_min == 10
+
+
+def test_merge_without_budget_keeps_llm_walk(landmarks: dict[str, Landmark]) -> None:
+    llm_out = QueryIntent(raw_query="", max_walk_min=15)
+    assert parse_query("кофе рядом", None, FakeLLM(llm_out), landmarks).max_walk_min == 15
+
+
+@pytest.mark.parametrize(
+    ("text", "flight"),
+    [("2 часа перед вылетом", True), ("у меня рейс в 18:00", True), ("я в аэропорту", True),
+     ("before my flight", True), ("near the airport", True), ("әуежайдамын, ұшаққа 2 сағат", True),
+     ("я турист, есть 2 часа", False), ("tourist with an hour", False)],
+)
+def test_mentions_flight(text: str, flight: bool) -> None:
+    assert mentions_flight(text) is flight
+
+
+@pytest.mark.parametrize(
+    ("text", "departure"),
+    [("у меня 2 часа перед вылетом", True), ("до вылета 2 часа", True),
+     ("рейс через 3 часа, что посмотреть?", True), ("2 hours before my flight", True),
+     ("my flight is in 3 hours", True), ("ұшуға 2 сағат қалды", True),
+     ("прогулка на 30 минут, вечером рейс", False), ("у меня рейс в 21:00, погуляю час", False),
+     ("flight tonight, an hour to walk", False), ("я в аэропорту", False)],
+)
+def test_departure_phrase(text: str, departure: bool) -> None:
+    """The time budget means "time to departure" only when it is said relative to the flight."""
+    assert departure_phrase(text) is departure
+
+
+def test_overrides_mode_switches() -> None:
+    base = QueryIntent(raw_query="x", time_budget_min=60)
+    out = apply_overrides(base, UserOverrides(tourist=True, night=True))
+    assert out.tourist and out.night and out.time_budget_min == 60
+    out = apply_overrides(base, UserOverrides(departure_in_min=150))
+    assert out.tourist and out.time_budget_min == 150
+    off = apply_overrides(QueryIntent(raw_query="x", night=True), UserOverrides(night=False))
+    assert off.night is False
 
 
 def test_merge_avoid_tags_win_over_must(landmarks: dict[str, Landmark]) -> None:

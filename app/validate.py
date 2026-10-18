@@ -9,8 +9,10 @@ import re
 from collections import Counter
 from typing import Literal
 
+from app.hours import unknown_note
 from app.retrieval import explain, generic_key
 from app.schemas import (
+    POI,
     Candidate,
     Card,
     Category,
@@ -51,7 +53,7 @@ MAX_WHY_CHARS = 280
 MAX_TODO_CHARS = 360
 MAX_WHY_SENTENCES = 2
 MAX_CARDS = 3
-UNKNOWN_HOURS_NOTE = "нет данных о часах, проверьте перед визитом"
+UNKNOWN_HOURS_NOTE = unknown_note("ru")  # texts in ru/kk/en live in app.hours
 
 _CLAIM_RE = re.compile(
     "|".join(r"\s+".join(map(re.escape, claim.split())) for claim in FORBIDDEN_OPEN_CLAIMS),
@@ -129,6 +131,11 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
         "kk": "Айналасын аралап, бірнеше сурет түсіріңіз; ауа райына қарай киініңіз.",
         "en": "Walk around and take a few photos; dress for the weather.",
     },
+    "indoor_fun": {
+        "ru": "Загляните внутрь и выберите, что попробовать; заложите время с запасом.",
+        "kk": "Ішке кіріп, нені көретініңізді таңдаңыз; уақытты қормен жоспарлаңыз.",
+        "en": "Step inside and pick what to try; allow some extra time.",
+    },
     "kids": {
         "ru": "Дайте ребёнку поиграть, а сами сделайте паузу рядом.",
         "kk": "Бала ойнап жүргенде, қасында демалып алыңыз.",
@@ -196,8 +203,11 @@ def _template_why(cand: Candidate, intent: QueryIntent, ctx: SearchContext) -> s
     return _trim(_sentence(reasons[:3]), MAX_WHY_CHARS)
 
 
-def _template_todo(category: Category, lang: Lang) -> str:
-    texts = TODO_TEMPLATES[_TODO_GROUP.get(category, "other")]
+def _template_todo(poi: POI, lang: Lang) -> str:
+    group = _TODO_GROUP.get(poi.category, "other")
+    if group == "outdoor" and poi.indoor is True:  # rides inside Khan Shatyr, indoor attractions
+        group = "indoor_fun"
+    texts = TODO_TEMPLATES[group]
     return texts.get(lang, texts["ru"])
 
 
@@ -226,13 +236,14 @@ def _card(
     idea_source: Literal["poi_data", "generated"],
 ) -> Card:
     poi, hours = cand.poi, cand.hours
-    note = hours.note
-    if hours.status == "unknown" and "проверьте" not in note:
-        note = UNKNOWN_HOURS_NOTE
+    note = hours.note  # already in the user's language (retrieval asks app.hours with lang)
+    if hours.status == "unknown" and not (poi.opening_hours or "").strip():
+        # same rule as pipeline._localize_hours, so its re-wording gives the same text
+        note = unknown_note(intent.lang)
     return Card(
         rank=rank,
         poi_id=poi.id,
-        title=poi.name_i18n.get(intent.lang) or poi.name,
+        title=_title(poi, intent.lang),
         category=poi.category,
         geo=poi.geo,
         distance_m=cand.distance_m,
@@ -262,6 +273,47 @@ def _distance_label(metres: int, lang: Lang) -> str:
     return f"{km} km" if lang == "en" else f"{km} км"
 
 
+# Unnamed OSM places carry a Russian generic name; kk / en cards show it translated.
+GENERIC_TITLES: dict[str, dict[str, str]] = {
+    "детская площадка": {"kk": "Балалар алаңы", "en": "Playground"},
+    "детская игровая площадка": {"kk": "Балалар алаңы", "en": "Playground"},
+    "игровая площадка": {"kk": "Ойын алаңы", "en": "Playground"},
+    "площадка": {"kk": "Алаң", "en": "Playground"},
+    "спортивная площадка": {"kk": "Спорт алаңы", "en": "Sports ground"},
+    "сквер": {"kk": "Гүлзар", "en": "Public garden"},
+    "парк": {"kk": "Саябақ", "en": "Park"},
+    "кафе": {"kk": "Кафе", "en": "Cafe"},
+    "кофейня": {"kk": "Кофехана", "en": "Coffee shop"},
+    "ресторан": {"kk": "Мейрамхана", "en": "Restaurant"},
+    "памятник": {"kk": "Ескерткіш", "en": "Monument"},
+    "смотровая площадка": {"kk": "Көру алаңы", "en": "Viewpoint"},
+    "фонтан": {"kk": "Субұрқақ", "en": "Fountain"},
+}
+_NEAR_NAME = re.compile(r"^(?P<generic>.+?)\s+у\s+(?P<near>.+)$")  # «Детская площадка у Хатико»
+
+
+def _generic_name(name: str) -> str:
+    return name.lower().replace("ё", "е").strip(" «»\"'")
+
+
+def _title(poi: POI, lang: Lang) -> str:
+    """Own translation first; unnamed places get a translated generic name for kk / en."""
+    own = poi.name_i18n.get(lang)
+    if own or lang == "ru":
+        return own or poi.name
+    generic = GENERIC_TITLES.get(_generic_name(poi.name))
+    if generic:
+        return generic[lang]
+    near = _NEAR_NAME.match(poi.name)
+    generic = GENERIC_TITLES.get(_generic_name(near["generic"])) if near else None
+    if near and generic:
+        if lang == "en":
+            return f"{generic['en']} near {near['near']}"
+        kk = generic["kk"]
+        return f"{near['near']} маңындағы {kk[0].lower()}{kk[1:]}"
+    return poi.name
+
+
 def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> list[Card]:
     """Unnamed places and same-named branches get the distance: «Детская площадка · 350 м».
 
@@ -273,7 +325,8 @@ def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> l
     out: list[Card] = []
     for card, cand in zip(cards, cands, strict=True):
         title = card.title
-        if generic_key(cand.poi) is not None or counts[title.casefold()] > 1:
+        unnamed = generic_key(cand.poi) is not None and not cand.poi.name_i18n.get(lang)
+        if unnamed or counts[title.casefold()] > 1:
             title = f"{title} · {_distance_label(card.distance_m, lang)}"
         if title.casefold() in used:
             title = f"{title} · {cand.poi.address or f'№{card.rank}'}"
@@ -347,7 +400,7 @@ def finalize(
                 cand=cand,
                 intent=intent,
                 why=why or _template_why(cand, intent, ctx),
-                todo=todo or _template_todo(cand.poi.category, intent.lang),
+                todo=todo or _template_todo(cand.poi, intent.lang),
                 visit=(low, high),
                 idea_source=item.idea_source,
             )
@@ -399,7 +452,7 @@ def template_cards(
             cand=cand,
             intent=intent,
             why=_template_why(cand, intent, ctx),
-            todo=_template_todo(cand.poi.category, intent.lang),
+            todo=_template_todo(cand.poi, intent.lang),
             visit=_visit_minutes(cand.poi.category, intent),
             idea_source="poi_data",
         )

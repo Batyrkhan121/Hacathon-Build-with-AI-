@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, etalon, fetch_osm, normalize, report
+from pipeline import build_index, etalon, fetch_osm, normalize, overrides, report
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -54,17 +54,43 @@ def run(
                  len(res.done), len(res.cached), len(res.failed))
         if res.failed:
             notes.append(f"Выгрузка: не скачано {len(res.failed)} кусков, взяты данные с диска.")
+        if area != "fixture" and fetch_osm.fetch_mall_outlines(force=force) is None:
+            notes.append("Контуры ТРЦ не скачаны: проверка «внутри ТРЦ» (indoor) пропущена.")
 
     paths = normalize.raw_files(area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw OSM data for area {area!r}; Overpass unavailable?")
+    stats: dict = {}
     pois = normalize.finalize(
-        normalize.normalize_payloads(normalize.load_payloads(paths)),
+        normalize.normalize_payloads(normalize.load_payloads(paths), stats),
         normalize.load_landmarks(settings.landmarks_path),
+    )
+    if stats.get("stale"):
+        former = stats.get("stale_pois") or []
+        notes.append(
+            f"Устаревшие объекты не взяты: {stats['stale']} (есть только в старом снимке "
+            "зеркала, а в более свежем полном куске на той же территории их уже нет: закрыты, "
+            f"удалены или переразмечены в OSM). Из них подходили под наши категории "
+            f"(до склейки дублей) {len(former)}: "
+            + "; ".join(former) + "."
+        )
+    # places inside a mall footprint (rides in Khan Shatyr...) are indoor, by OSM geometry
+    pois, inside_malls = normalize.mark_inside_malls(
+        pois, normalize.load_outlines(settings.data_dir / "raw")
     )
     # hand-checked reference places: compared with OSM first, the missing ones added
     pois, etalon_notes = etalon.run_on(pois)
     notes.extend(etalon_notes)
+    # hand corrections (data/manual/overrides.json), e.g. the EXPO sphere is a museum
+    pois, override_notes = overrides.apply_overrides(pois, overrides.load_overrides())
+    notes.extend(override_notes)
+    unknown = sum(1 for p in pois if p.indoor is None)
+    notes.append(
+        "indoor только по данным: категория, явный тег OSM indoor=* (так размечены аттракционы "
+        "внутри Хан Шатыра) и точка внутри контура shop=mall (добавлено этой проверкой: "
+        f"{inside_malls}; остальные места внутри ТРЦ уже имели indoor). Неизвестен у {unknown} "
+        "мест — не угадываем; площадки внутри контуров ТРЦ остаются outdoor по категории."
+    )
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 
