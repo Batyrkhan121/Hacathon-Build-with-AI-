@@ -89,7 +89,7 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         f"{meta.get('lit_edges', 0)}; рёбер-переходов: {meta.get('crossing_edges', 0)}.",
         f"- POI привязано к узлу (≤{meta.get('snap_max_m', 150)} м): "
         f"{meta.get('poi_snapped', 0)} из {meta.get('poi_total', 0)} "
-        f"({100 * (meta.get('poi_snapped_share') or 0):.0f}%)"
+        f"({100 * (meta.get('poi_snapped_share') or 0):.1f}%)"
         + (f", медиана {meta['poi_snap_median_m']:.0f} м"
            if meta.get("poi_snap_median_m") is not None else "")
         + f"; ориентиров: {meta.get('landmarks_snapped', 0)} из {meta.get('landmarks_total', 0)}.",
