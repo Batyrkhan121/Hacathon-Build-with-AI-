@@ -237,3 +237,40 @@ def test_meta_has_format_version_and_steps(built, tmp_path: Path) -> None:
     meta = save_graph(graph, {}, {}, stats, tmp_path / "g.npz", tmp_path / "m.json",
                       poi_total=0, landmark_total=0, osm_snapshot="2026-10-19")
     assert meta["format_version"] == 1 and meta["steps"] == 1
+
+
+MORE_CROSSINGS = {
+    "osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"},
+    "elements": [
+        n(80, 0, 0), n(81, 0, 1), n(82, 2, 0), n(83, 2, 1),
+        n(90, 3, 1, highway="crossing", crossing="marked"), n(91, 4, 1), n(92, 5, 1),
+        n(93, 4, 2), n(94, 6, 1, highway="crossing", crossing="uncontrolled"), n(95, 7, 1),
+        n(96, 8, 1), n(97, 7, 0), n(98, 7, 2),
+        w(300, [80, 81], highway="footway"), w(301, [82, 83], highway="footway"),
+        # two nodes, no road, no crossing node: a new node in the middle carries the type
+        w(302, [81, 83], highway="footway", footway="crossing", crossing="traffic_signals"),
+        # 91-92 is the approach of a crossing whose node is 90: no crossing bit there
+        w(303, [83, 90, 91, 92], highway="footway", footway="crossing", crossing="marked"),
+        w(304, [91, 93], highway="footway"),
+        # a second carriageway (road through 95) of a crossing whose mapped node is 94
+        w(305, [92, 94, 95, 96], highway="footway", footway="crossing", crossing="uncontrolled"),
+        w(306, [97, 95, 98], highway="residential"),
+    ],
+}
+
+
+def test_new_middle_node_approach_segments_and_second_carriageway() -> None:
+    graph, stats = build_graph([MORE_CROSSINGS])
+    ids = graph.node_osm_id.tolist()
+    flags = dict(zip(ids, graph.node_flags.tolist(), strict=True))
+    new = [i for i in ids if i < 0]
+    assert len(new) == 1 and flags[new[0]] == NODE_CROSSING | NODE_SIGNALS
+    k = ids.index(new[0])
+    assert graph.node_lat[k] == pytest.approx(LAT0 + DLAT, abs=1e-6)  # between 81 and 83
+    assert stats["crossing_nodes_added"] == 1
+    assert flags[95] == NODE_CROSSING and flags[94] == NODE_CROSSING and flags[91] == 0
+    assert graph.edge_flags[edge_index(graph, 91, 92)] == EDGE_FOOTWAY
+    assert graph.edge_flags[edge_index(graph, 90, 91)] == EDGE_FOOTWAY | EDGE_CROSSING
+    assert stats["crossing_approach_segments"] == 1
+    for e in np.flatnonzero(graph.edge_flags & EDGE_CROSSING):
+        assert (graph.node_flags[graph.edge_u[e]] | graph.node_flags[graph.edge_v[e]]) & 1, e

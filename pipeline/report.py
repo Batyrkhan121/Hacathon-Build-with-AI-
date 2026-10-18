@@ -82,7 +82,9 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         f"{100 * (meta.get('largest_component_share') or 0):.1f}% узлов (остальные отброшены).",
         f"- Переходов: {meta.get('crossings', 0)} (из них нерегулируемых без разметки "
         f"{meta.get('unmarked_crossings', 0)}); светофоров: {meta.get('signals', 0)}; "
-        f"понижённых бордюров: {meta.get('kerbs_lowered', 0)}.",
+        f"понижённых бордюров: {meta.get('kerbs_lowered', 0)}. Тип перехода взят с линии "
+        f"footway=crossing у {meta.get('crossings_from_way_tags', 0)} узлов (из них "
+        f"{meta.get('crossing_nodes_added', 0)} новых, в середине перехода без узла в OSM).",
         f"- Рёбер с лестницами: {meta.get('steps_edges', 0)}; освещённых: "
         f"{meta.get('lit_edges', 0)}; рёбер-переходов: {meta.get('crossing_edges', 0)}.",
         f"- POI привязано к узлу (≤{meta.get('snap_max_m', 150)} м): "

@@ -18,8 +18,10 @@ walk_graph.npz (np.savez_compressed), node number = row in the node arrays:
   edge_u, edge_v int32[E]: undirected, every edge once, u != v; edge_len_m float32[E] along
   the OSM line, never shorter than the straight line between the stored (float32) ends;
   edge_flags uint8[E] (1 steps, 2 lit, 4 footway, 8 major road, 16 crossing)
-A footway=crossing way whose nodes carry no crossing tag gives its own crossing tags to the
-node where it meets a road (or to its middle node), so every crossing has a crossing node.
+A footway=crossing way gives its own crossing tags to an untyped crossing node, to the node
+where it meets a road with cars, or (no such node) to its middle node, a new one for a
+two-node way; bit 16 stays only on segments ending at a crossing node, so a crossing
+segment always has its crossing node at one end.
 walk_graph_meta.json: osm_snapshot, bbox [south, west, north, east], nodes, edges,
   crossings, signals, largest_component_share, poi_nodes {poi_id: node},
   landmark_nodes {landmark_id: node}, created_at (+ reference counters and flag legend).
@@ -242,7 +244,7 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         for ref in refs:
             uses[ref] += 1
     node_flags = {r: node_flags_of(node_tags.get(r, {})) for r in uses}
-    from_ways = _crossings_from_ways(kept_ways, node_tags, node_flags)
+    from_ways = _crossings_from_ways(kept_ways, node_tags, node_flags, coords)
     keep: set[int] = {r for r, c in uses.items() if c > 1}
     keep |= {r for r, f in node_flags.items() if f}
     for refs, _ in kept_ways:
@@ -250,7 +252,7 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
 
     # split ways into edges between kept nodes; plain nodes in between only add length
     raw_edges: list[tuple[int, int, float, int]] = []
-    missing = 0
+    missing = approaches = 0
     for refs, tags in kept_ways:
         flags = edge_flags_of(tags)
         start, length, prev = None, 0.0, None
@@ -263,7 +265,15 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
                 length += haversine_m(*coords[prev], *coords[ref])
             if ref in keep:
                 if start is not None and start != ref and length > 0:
-                    raw_edges.append((start, ref, length, flags))
+                    seg = flags
+                    # bit 16 only on the segments at the crossing itself: the rest of a long
+                    # footway=crossing way is the approach, not one more crossing
+                    if seg & EDGE_CROSSING and not (
+                        (node_flags.get(start, 0) | node_flags.get(ref, 0)) & NODE_CROSSING
+                    ):
+                        seg &= ~EDGE_CROSSING
+                        approaches += 1
+                    raw_edges.append((start, ref, length, seg))
                 start, length = ref, 0.0
             prev = ref
 
@@ -312,6 +322,8 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "signals": int(np.count_nonzero(node_flag_arr & NODE_SIGNALS)),
         "unmarked_crossings": int(np.count_nonzero(node_flag_arr & NODE_UNMARKED)),
         "crossings_from_way_tags": sum(1 for r in from_ways if r in index),
+        "crossing_nodes_added": sum(1 for r in from_ways if r < 0 and r in index),
+        "crossing_approach_segments": approaches,
         "kerbs_lowered": int(np.count_nonzero(node_flag_arr & NODE_KERB)),
         "crossing_edges": int(np.count_nonzero(edge_flag_arr & EDGE_CROSSING)),
         "steps_edges": int(np.count_nonzero(edge_flag_arr & EDGE_STEPS)),
@@ -325,31 +337,42 @@ def _crossings_from_ways(
     kept_ways: Sequence[tuple[list[int], Mapping[str, str]]],
     node_tags: Mapping[int, Mapping[str, str]],
     node_flags: dict[int, int],
+    coords: dict[int, tuple[float, float]],
 ) -> set[int]:
     """Crossing tags of footway=crossing ways onto nodes (updates node_flags in place).
 
     OSM puts crossing=* both on the crossing node and on the crossing way; when the node is
     missing or untyped, the way's type is used, so a crossing segment always ends at a
-    crossing node and a signalised crossing is not taken for an unmarked one.
+    crossing node and a signalised crossing is not taken for an unmarked one:
+    - an untyped crossing node (highway=crossing alone) takes the way's type;
+    - an inner node where the way meets a road with cars becomes a crossing of that type;
+    - no such node: the middle node of the way, or a new node (negative id) in the middle
+      of a two-node way, inserted into its refs.
     Returns the nodes that got flags this way."""
     road_nodes = {r for refs, tags in kept_ways if tags.get("highway") in CAR_ROADS for r in refs}
     changed: set[int] = set()
+    synthetic = 0
     for refs, tags in kept_ways:
         if tags.get("footway") != "crossing" or not (flags := crossing_flags_of(tags)):
             continue
-        typed = [r for r in refs if node_flags.get(r, 0) & NODE_CROSSING]
-        if typed:  # an untyped crossing node (highway=crossing alone) takes the way's type
-            for r in typed:
-                untyped = "crossing" not in node_tags.get(r, {})
-                if untyped and node_flags[r] | flags != node_flags[r]:
-                    node_flags[r] |= flags
-                    changed.add(r)
-            continue
-        inner = refs[1:-1]
-        at = [r for r in refs if r in road_nodes] or ([inner[len(inner) // 2]] if inner else [])
+        at = [r for r in refs if node_flags.get(r, 0) & NODE_CROSSING
+              and "crossing" not in node_tags.get(r, {})]
+        # inner nodes only: a crossing way that ends on a road does not cross it there
+        at += [r for r in refs[1:-1]
+               if r in road_nodes and not node_flags.get(r, 0) & NODE_CROSSING]
+        if not at and not any(node_flags.get(r, 0) & NODE_CROSSING for r in refs):
+            if len(refs) > 2:
+                at = [refs[len(refs) // 2]]
+            elif refs[0] in coords and refs[1] in coords:
+                synthetic -= 1
+                (lat1, lon1), (lat2, lon2) = coords[refs[0]], coords[refs[1]]
+                coords[synthetic] = ((lat1 + lat2) / 2, (lon1 + lon2) / 2)
+                refs.insert(1, synthetic)
+                at = [synthetic]
         for r in at:
-            node_flags[r] = node_flags.get(r, 0) | flags
-            changed.add(r)
+            if node_flags.get(r, 0) | flags != node_flags.get(r, 0):
+                node_flags[r] = node_flags.get(r, 0) | flags
+                changed.add(r)
     return changed
 
 
