@@ -94,3 +94,14 @@
   expect:
     min_cards: 1
     unknown_note_lang: en
+
+- id: P9
+  title: "Компания из 5 человек вечером: первым занятие для компании, а не кафе"
+  request:
+    query: "Мы компанией из 5 человек, чем заняться вечером?"
+    location: {landmark_id: baiterek}
+    at: "2026-10-19T18:00:00+05:00"
+    lang: ru
+  expect:
+    intent: {group_size: 5}
+    top1_categories_any: [restaurant, mall, cinema, entertainment, sport, bar, nightlife, theatre, park, attraction, monument, viewpoint]

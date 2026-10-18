@@ -188,11 +188,13 @@ def test_lexical_query_without_tags(synthetic_pois: list[POI]) -> None:
         None,
         k=8,
     )
-    # keyword match is the strongest for the playground; final order also weighs popularity
-    # and confirmed hours (starting WEIGHTS, tuned by eval in T70)
-    best = max(out, key=lambda c: c.score_parts["relevance"])
-    assert best.poi.id == "test:poi/5"
-    assert "test:poi/5" in ids(out[:3])
+    # T70: a full keyword match must beat a popular place with confirmed hours
+    assert out[0].poi.id == "test:poi/5"
+
+
+def test_weights_sum_to_one() -> None:
+    assert sum(WEIGHTS.values()) == pytest.approx(1.0)
+    assert WEIGHTS["relevance"] > 0.5  # relevance dominates the score
 
 
 def test_semantic_relevance(synthetic_pois: list[POI]) -> None:
@@ -568,3 +570,23 @@ def test_full_airport_zone_is_sparse_but_safe(
     assert 1 <= len(out) <= 8
     cards = template_cards(out, q, ctx)
     assert 1 <= len(cards) <= 3
+
+
+def test_landmark_words_are_not_relevance() -> None:
+    """«Я возле Mega Silk Way, хочу прогуляться»: the mall is where the user stands,
+    its name in the query must not make it the best match."""
+    from app.schemas import Landmark as LandmarkModel
+
+    mall = make_poi("1", "mall", 0.0, name="Mega Silk Way", opening_hours="Mo-Su 10:00-22:00",
+                    popularity=0.3)
+    park = make_poi("2", "park", 0.004, name="NU Park", tags=["walk", "outdoor"])
+    mega = LandmarkModel(id="mega_silk_way", names={"ru": "ТРЦ Mega Silk Way"},
+                         aliases=["mega silk way", "mega"], geo=mall.geo)
+    store = Store(pois=[mall, park], by_id={p.id: p for p in (mall, park)},
+                  landmarks={"mega_silk_way": mega})
+    q = intent("Я сейчас возле Mega Silk Way, хочу прогуляться", must_tags=["walk"],
+               landmark_mention="mega_silk_way")
+    ctx = make_ctx().model_copy(update={"origin": mall.geo, "landmark_id": "mega_silk_way"})
+    out = retrieve(store, q, ctx, None, k=2)
+    assert out[0].poi.id == "test:poi/2"
+    assert next(c for c in out if c.poi.id == "test:poi/1").score_parts["relevance"] == 0.0

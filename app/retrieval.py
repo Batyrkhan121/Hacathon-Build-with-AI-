@@ -2,8 +2,8 @@
 
 Owner: CORE lane (task T22). Deterministic, no network. See docs/ARCHITECTURE.md §RAG.
 
-Starting weights (tune in Wave 3 by eval, keep them in WEIGHTS):
-  score = 0.45*relevance + 0.20*proximity + 0.15*open_score + 0.10*popularity
+Weights (tuned by eval in Wave 3, see eval/TUNING.md; keep them in WEIGHTS):
+  score = 0.55*relevance + 0.20*proximity + 0.10*open_score + 0.05*popularity
         + 0.05*data_confidence + 0.05*weather_fit
 relevance = cosine(query_vec, poi_vec) if embeddings else lexical overlap.
 With embeddings the cosine is blended with lexical overlap (SEMANTIC_SHARE) because exact
@@ -26,11 +26,13 @@ from app.store import Store
 
 log = logging.getLogger(__name__)
 
+# T70 step 1 (eval/TUNING.md): relevance 0.45 -> 0.55; open 0.15 -> 0.10 (72% of POI have no
+# hours, parks never do); popularity 0.10 -> 0.05 (a proxy for record completeness, not quality)
 WEIGHTS: dict[str, float] = {
-    "relevance": 0.45,
+    "relevance": 0.55,
     "proximity": 0.20,
-    "open": 0.15,
-    "popularity": 0.10,
+    "open": 0.10,
+    "popularity": 0.05,
     "confidence": 0.05,
     "weather": 0.05,
 }
@@ -261,6 +263,17 @@ def _doc_index(text: str) -> tuple[frozenset[str], frozenset[str], frozenset[str
 
 def _query_stems(intent: QueryIntent) -> frozenset[str]:
     return frozenset(t[:_STEM] for t in _tokens(intent.raw_query))
+
+
+def _landmark_stems(store: Store, intent: QueryIntent, ctx: SearchContext) -> frozenset[str]:
+    """Alias words of the landmark the user stands at: «я возле Mega Silk Way» says where the
+    user is, not what they look for, so these words must not make the mall a match."""
+    words: list[str] = []
+    for lm_id in {ctx.landmark_id, intent.landmark_mention} - {None}:
+        lm = store.landmarks.get(lm_id) if lm_id else None
+        if lm is not None:
+            words.extend(lm.aliases)
+    return frozenset(t[:_STEM] for t in _tokens(" ".join(words)))
 
 
 def _indexed_hit(stem: str, stems: frozenset[str], prefixes: frozenset[str]) -> bool:
@@ -588,7 +601,7 @@ def retrieve(
     if k <= 0 or not store.pois:
         return []
     semantic = _semantic_scores(store, query_vec)
-    query_stems = _query_stems(intent)
+    query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
     pool: list[Candidate] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
