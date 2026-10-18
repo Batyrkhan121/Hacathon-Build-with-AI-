@@ -58,6 +58,7 @@ class Outcome:
     rejected: bool = False  # 422 / KeyError / ValueError: invalid input handled correctly
     error: str | None = None  # crash, 5xx, invalid JSON — always a failure
     latency_ms: int = 0
+    search: str | None = None  # "vector" | "words"; None = unknown (see search_mode)
 
 
 @dataclass
@@ -70,6 +71,7 @@ class Result:
     latency_ms: int = 0
     cards: int = 0
     generation: str | None = None
+    search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -258,6 +260,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
         expected_type=scn.get("expected_type", ""),
         passed=False,
         latency_ms=out.latency_ms,
+        search=search_mode(out),
     )
     if out.error:
         res.failures.append(f"ошибка: {out.error}")
@@ -322,12 +325,24 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
     notes.append(f"POI в Store: {len(store.pois)}; эмбеддинги: {emb}")
     notes += [f"Store: {w}" for w in store.warnings]
     deps = Deps(store=store, llm=llm, settings=settings)
+    got_vector: list[bool] = []  # set by the embed_query wrapper during one request
+    if llm is not None:
+        real_embed = llm.embed_query
+
+        def counting_embed(text: str) -> Any:
+            vec = real_embed(text)
+            got_vector.append(vec is not None)
+            return vec
+
+        llm.embed_query = counting_embed  # type: ignore[method-assign]
 
     def run(req: RecommendRequest) -> Outcome:
+        got_vector.clear()
         t0 = time.perf_counter()
         try:
             ans = recommend(req, deps)
-            return Outcome(answer=ans, latency_ms=_ms(t0))
+            return Outcome(answer=ans, latency_ms=_ms(t0),
+                           search="vector" if any(got_vector) else "words")
         except (KeyError, ValueError, ValidationError):
             return Outcome(rejected=True, latency_ms=_ms(t0))
         except Exception as exc:  # noqa: BLE001 — a crash is a failed scenario
@@ -400,6 +415,33 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
     return results
 
 
+SEARCH_LABEL = {"vector": "по смыслу", "words": "по словам"}
+_SEMANTIC_MARKERS = ("смысл", "мағына", "meaning", "semantic")
+_SEARCH_PREFIXES = ("поиск", "іздеу", "search")
+
+
+def search_mode(out: Outcome) -> str | None:
+    """Did the query get an embedding? In-process mode knows it from the embed_query wrapper;
+    over --url it is read from the data_used.filters line «поиск: по смыслу и по словам / по
+    словам» (FEATURES). No such line -> None (unknown)."""
+    if out.search is not None:
+        return out.search
+    if out.answer is None:
+        return None
+    for line in out.answer.data_used.filters:
+        low = line.lower()
+        if low.startswith(_SEARCH_PREFIXES):
+            return "vector" if any(m in low for m in _SEMANTIC_MARKERS) else "words"
+    return None
+
+
+def search_summary(results: list[Result]) -> str:
+    vec = sum(r.search == "vector" for r in results)
+    words = sum(r.search == "words" for r in results)
+    unknown = sum(r.search is None for r in results)
+    return f"вектор запроса (embed_query) у {vec}, только по словам {words}, неизвестно {unknown}"
+
+
 def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
     passed = sum(r.passed for r in results)
     lines = [
@@ -408,18 +450,19 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
         f"- Режим: `{mode}`",
         f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
         f"- **Итог: {passed}/{len(results)}**",
+        f"- Поиск: {search_summary(results)}",
     ]
     lines += [f"- {n}" for n in notes]
     lines += [
         "",
-        "| id | сценарий | итог | что не прошло | карточек | генерация | latency, мс |",
-        "|---|---|---|---|---:|---|---:|",
+        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | latency, мс |",
+        "|---|---|---|---|---:|---|---|---:|",
     ]
     for r in results:
         why = "; ".join(r.failures).replace("|", "/") or "—"
         lines.append(
             f"| {r.id} | {r.title} | {'pass' if r.passed else 'FAIL'} | {why} | {r.cards} "
-            f"| {r.generation or '—'} | {r.latency_ms} |"
+            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} | {r.latency_ms} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -432,6 +475,7 @@ def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[st
         "passed": sum(r.passed for r in results),
         "total": len(results),
         "notes": notes,
+        "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
