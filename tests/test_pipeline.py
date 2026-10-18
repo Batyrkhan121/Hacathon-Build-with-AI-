@@ -479,6 +479,54 @@ class TestRecommend:
         deps.store.embeddings = None  # no index at all
         assert lexical in recommend(req("кофе", lang=lang), deps).data_used.filters
 
+    @pytest.mark.parametrize(
+        "vec",
+        [np.zeros(4, dtype=np.float32), np.ones(3, dtype=np.float32),
+         np.array([np.nan, 1, 0, 0], dtype=np.float32)],
+        ids=["zero", "wrong-dim", "nan"],
+    )
+    def test_unusable_vector_is_reported_as_lexical(
+        self, deps: Deps, vec: np.ndarray, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """retrieval drops such a vector and goes lexical: the panel must say so too."""
+        seen: list[Any] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            seen.append(qv)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=vec)
+        filters = recommend(req("кофе"), deps).data_used.filters
+        assert "поиск: по словам" in filters
+        assert seen and all(qv is None for qv in seen)
+
+    def test_no_exact_match_hook(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QUALITY's retrieval.no_exact_match(intent, candidates) -> warning in ru/kk/en."""
+        monkeypatch.setattr(retrieval, "no_exact_match", lambda intent, cands: True,
+                            raising=False)
+        texts = {"ru": "Точного совпадения по запросу нет — показано, что есть рядом.",
+                 "kk": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
+                 "en": "No exact match for your request — showing what is nearby."}
+        for lang, text in texts.items():
+            assert text in recommend(req("кофе", lang=lang, use_llm=False), deps).warnings
+        monkeypatch.setattr(retrieval, "no_exact_match", lambda intent, cands: False)
+        assert not any("совпадения" in w
+                       for w in recommend(req("кофе", use_llm=False), deps).warnings)
+
+    def test_no_exact_match_hook_absent_or_broken(self, deps: Deps,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delattr(retrieval, "no_exact_match", raising=False)
+        assert recommend(req("кофе", use_llm=False), deps).cards
+
+        def boom(*_a: Any) -> bool:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(retrieval, "no_exact_match", boom, raising=False)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
+
     def test_logs_never_carry_query_or_cell(self, deps: Deps,
                                             caplog: pytest.LogCaptureFixture) -> None:
         cell = h3.latlng_to_cell(51.0894, 71.4161, 9)

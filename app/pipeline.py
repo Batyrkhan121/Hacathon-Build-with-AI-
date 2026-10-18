@@ -120,6 +120,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Под запрошенный тип мест рядом ничего нет в данных — показано, что есть "
                    "поблизости.",
         "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
+        "no_match": "Точного совпадения по запросу нет — показано, что есть рядом.",
         "airport_plan": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
                         "{res} мин — на прогулку {w} мин. Выезжайте в аэропорт не позже {hhmm}.",
         "airport_now": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
@@ -173,6 +174,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Сұралған түрдегі орын жақын жерде деректерде жоқ — маңайдағы бар орындар "
                    "көрсетілді.",
         "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
+        "no_match": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
         "airport_plan": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
                         "қор — серуенге {w} мин. Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
         "airport_now": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
@@ -220,6 +222,7 @@ TEXTS: dict[str, dict[str, str]] = {
                        "make your departure.",
         "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
         "sparse": "Few places nearby in the open data ({n}) — a short list.",
+        "no_match": "No exact match for your request — showing what is nearby.",
         "airport_plan": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
                         "{res}-min reserve leaves {w} min for a walk. Leave for the airport no "
                         "later than {hhmm}.",
@@ -401,7 +404,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 4. query vector (Gemini, optional; never in the no-AI mode)
     query_vec = None
     if req.use_llm and deps.llm is not None and store.embeddings is not None:
-        query_vec = deps.llm.embed_query(intent.raw_query)
+        query_vec = _usable_vector(deps.llm.embed_query(intent.raw_query), store.embeddings)
 
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
@@ -443,6 +446,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
+    if candidates and _no_exact_match(search_intent, candidates):
+        warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
 
@@ -554,6 +559,35 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarray | None:
+    """The query vector only if retrieval will really use it (same checks as
+    retrieval._semantic_scores); otherwise None, so the panel honestly says «по словам»."""
+    if vec is None or index is None or index.ndim != 2:
+        return None
+    q = np.asarray(vec, dtype=np.float32).ravel()
+    if q.shape[0] != index.shape[1]:
+        log.warning("query vector dim %d does not match the index: lexical search", q.shape[0])
+        return None
+    norm = float(np.linalg.norm(q))
+    if not np.isfinite(norm) or norm == 0.0:
+        log.warning("query vector is zero or not finite: lexical search")
+        return None
+    return q
+
+
+def _no_exact_match(intent: QueryIntent, candidates: list[Candidate]) -> bool:
+    """QUALITY decides (retrieval.no_exact_match): nothing matches the meaningful words of the
+    query, so the cards are just what is nearby. Absent or broken -> no warning."""
+    check = getattr(retrieval, "no_exact_match", None)
+    if check is None:
+        return False
+    try:
+        return bool(check(intent, candidates))
+    except Exception as exc:  # noqa: BLE001 - a missing hint never kills the answer
+        log.error("no_exact_match failed (%s)", type(exc).__name__)
+        return False
 
 
 def _sights(candidates: list[Candidate]) -> int:
