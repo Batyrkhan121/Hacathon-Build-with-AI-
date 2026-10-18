@@ -45,7 +45,7 @@ function stopIcon(rank, ideaSource) {
   });
 }
 
-// Ответ сервера: старт (context.origin), номерные места и мини-маршрут пунктиром (он приблизительный).
+// Ответ сервера: старт (context.origin), номерные места и мини-маршрут следами (он приблизительный).
 // Подписи кнопок зума Leaflet на языке интерфейса (по умолчанию они английские).
 export function setZoomTitles(zoomIn, zoomOut) {
   if (!map) return;
@@ -72,14 +72,11 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   }
   if (answer.route?.path?.length >= 2) {
     const latlngs = answer.route.path.map((p) => [p.lat, p.lon]);
-    L.polyline(latlngs, { color: '#ffffff', weight: 8, opacity: 0.9, interactive: false }).addTo(answerLayer);
     routeLine = L.polyline(latlngs, {
-      color: '#245fc5',
-      weight: 4,
-      dashArray: '2 9',
-      lineCap: 'round',
+      // Retain geometry for fitBounds; only footsteps are visible.
+      opacity: 0,
+      interactive: false,
     }).addTo(answerLayer);
-    routeLine.bindTooltip(routeLabel, { sticky: true });
     stepPath = latlngs;
     pts.push(...latlngs);
   }
@@ -137,12 +134,9 @@ export function showRoute(rank, directLabel) {
   const marker = stopMarkers.get(rank);
   if (!marker || !originPoint) return;
   const line = L.polyline([originPoint, marker.getLatLng()], {
-    color: '#245fc5',
-    weight: 4,
-    dashArray: '2 9',
-    lineCap: 'round',
+    opacity: 0,
+    interactive: false,
   }).addTo(directLayer);
-  line.bindTooltip(directLabel, { sticky: true });
   stepPath = [originPoint, marker.getLatLng()];
   drawRouteSteps();
   map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: !reducedMotion() });
