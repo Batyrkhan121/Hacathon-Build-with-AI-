@@ -39,7 +39,7 @@ from app import geo, hours, retrieval, route, validate, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
-from app.query_parser import apply_overrides, mentions_flight, parse_query
+from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
     Answer,
     Candidate,
@@ -351,9 +351,12 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     departure = getattr(req.overrides, "departure_in_min", None) if req.overrides else None
     flight = intent.tourist and not at_airport and (
         departure is not None or mentions_flight(req.query))
+    # The budget is "time to departure" only when said so («2 часа перед вылетом») or sent by
+    # the UI; «прогулка на 30 минут, вечером рейс» is a 30-minute walk plus the general tip.
+    to_departure = flight and (departure is not None or departure_phrase(req.query))
     walk_budget: int | None = None  # minutes left for the walk before leaving for the airport
     plan_update: dict[str, object] = {}
-    if flight and intent.time_budget_min:
+    if to_departure and intent.time_budget_min:
         walk_budget = intent.time_budget_min - AIRPORT_TRANSFER_MIN - AIRPORT_RESERVE_MIN
         plan_update["time_budget_min"] = max(MIN_WALK_BUDGET_MIN, walk_budget)
     short_walks = at_hub or intent.tourist
@@ -446,6 +449,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                  wanted_categories=set(plan_intent.categories))
         if len(picked) >= 2:
             gen_candidates = picked
+        elif picked:  # one stop fits: it goes first, the rest stay as alternatives
+            gen_candidates = picked + [c for c in candidates if c not in picked
+                                       and c.distance_m >= route.AT_ORIGIN_M]
 
     # 6. cards
     cards: list[Card] = []

@@ -171,6 +171,37 @@ def test_plan_walk_picks_three_that_fit() -> None:
     assert route is not None and route.fits_budget and len(route.stop_ids) == 3
 
 
+def test_plan_walk_prefers_a_walk_stop_over_more_stops() -> None:
+    """P1 (Mega Silk Way, 60 min): «mall at 0 m + coffee 87 m» must not beat the park."""
+    mall = placed("mall", 0.0, category="mall", score=0.38)
+    coffee = placed("coffee", 0.00125, category="cafe", score=0.37)
+    park = placed("park", 0.0085, score=0.75)
+    garden = placed("garden", 0.0093, score=0.74)
+    picked = plan_walk(ORIGIN, [park, garden, mall, coffee], 60)
+    ids = [c.poi.id for c in picked]
+    assert ids and ids[0] in {"test:poi/park", "test:poi/garden"}
+    assert "test:poi/mall" not in ids
+
+
+def test_plan_walk_never_stops_where_you_already_stand() -> None:
+    here = placed("here", 0.0, category="monument", score=0.99)
+    assert here.distance_m < 50
+    picked = plan_walk(ORIGIN, [here, placed("near", 0.003, score=0.4)], 60)
+    assert [c.poi.id for c in picked] == ["test:poi/near"]
+
+
+def test_plan_walk_score_beats_stop_count_among_walk_stops() -> None:
+    best = placed("best", 0.006, score=0.9)
+    weak = [placed(f"w{i}", 0.001 * (i + 2), category="monument", score=0.2) for i in range(3)]
+    picked = plan_walk(ORIGIN, [best, *weak], 40)
+    assert "test:poi/best" in {c.poi.id for c in picked}
+
+
+def test_plan_walk_without_walk_stops_still_works() -> None:
+    cafes = [placed(f"c{i}", 0.002 * (i + 1), category="cafe", score=0.5) for i in range(2)]
+    assert len(plan_walk(ORIGIN, cafes, 90)) == 2
+
+
 def test_plan_walk_skips_fast_food_and_bars_unless_asked() -> None:
     cands = [placed("burger", 0.001, category="fast_food", score=0.99),
              placed("pub", 0.0015, category="bar", score=0.98),

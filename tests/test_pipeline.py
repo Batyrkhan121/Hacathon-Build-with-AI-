@@ -376,6 +376,15 @@ class TestRecommend:
         text = " | ".join(a.warnings)
         assert "Ночь:" in text and "коляски" in text and "аэропорт" in text
 
+    def test_flight_later_is_not_a_deadline(self, deps: Deps) -> None:
+        """«прогулка на 30 минут, вечером рейс»: 30 min is the walk, not the time to departure."""
+        a = recommend(req("я турист, прогулка на 30 минут, вечером рейс", use_llm=False), deps)
+        assert a.intent.tourist and a.intent.time_budget_min == 30 and a.cards
+        assert not any("Выезжайте" in w for w in a.warnings)
+        assert "Заложите время на дорогу в аэропорт и регистрацию." in a.warnings
+        due = recommend(req("я турист, рейс через 3 часа, что посмотреть?", use_llm=False), deps)
+        assert due.warnings[0].startswith("До вылета 180 мин")
+
     def test_tourist_without_flight_gets_no_airport_advice(self, deps: Deps) -> None:
         a = recommend(req("я турист, есть 2 часа", at="2026-10-19T14:00:00+05:00",
                           use_llm=False), deps)
@@ -592,10 +601,6 @@ class TestRealData:
         assert enough.cards and any("не позже 14:15" in w for w in enough.warnings)
 
     def test_departure_override_is_a_flight(self, real_deps: Deps) -> None:
-        from app.schemas import UserOverrides
-
-        if "departure_in_min" not in UserOverrides.model_fields:
-            pytest.skip("UserOverrides.departure_in_min not merged yet")
         a = recommend(req("что посмотреть рядом?", at="2026-10-19T14:00:00+05:00",
                           use_llm=False, overrides={"departure_in_min": 150}), real_deps)
         assert a.intent.tourist and a.intent.time_budget_min == 150
@@ -660,6 +665,14 @@ class TestRealCore:
         assert set(r.stop_ids) <= {c.poi_id for c in a.cards}
         assert "с возвращением к старту" in r.note
 
+    def test_p1_walk_starts_with_a_place_to_walk(self, real_deps: Deps) -> None:
+        """Probe P1: at Mega Silk Way «прогуляться 30–60 минут» -> a park first, not the mall."""
+        a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
+                               "что посоветуете?", "mega_silk_way"), real_deps)
+        assert a.cards[0].category in {"park", "viewpoint", "monument", "attraction"}
+        assert all(c.distance_m >= 50 for c in a.cards)  # not the mall you stand at
+        assert a.route is not None and a.route.fits_budget and a.route.total_min <= 60
+
     def test_walk_with_kids_note_asks_for_extra_time(self, real_deps: Deps) -> None:
         a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
         if a.route is not None:
@@ -690,10 +703,6 @@ class TestRealCore:
                    for w in a.warnings)
 
     def test_night_switched_off_in_ui(self, real_deps: Deps) -> None:
-        from app.schemas import UserOverrides
-
-        if "night" not in UserOverrides.model_fields:
-            pytest.skip("UserOverrides.night not merged yet")
         a = recommend(real_req("кофе", "khan_shatyr", at="2026-10-19T23:30:00+05:00",
                                overrides={"night": False}), real_deps)
         assert not any("ночь" in f for f in a.data_used.filters)
