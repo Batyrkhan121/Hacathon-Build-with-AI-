@@ -225,3 +225,16 @@ def test_playgrounds_named_after_nearest_poi_within_150_m() -> None:
     assert out["osm:node/42"].name == "Детская площадка"  # ~330 m: nobody near
     assert out["osm:node/43"].name == "Мечта"
     assert out["osm:node/41"].data_confidence <= 0.4
+
+
+def test_freshest_snapshot_wins_and_dates_the_record() -> None:
+    stale = {"osm3s": {"timestamp_osm_base": "2026-06-01T08:52:28Z"},
+             "qadam": {"fetched_at_unix": 1792316715},
+             "elements": [node(50, {"amenity": "cafe", "name": "Старое имя"})]}
+    fresh = {"osm3s": {"timestamp_osm_base": "2026-10-18T10:28:05Z"},
+             "qadam": {"fetched_at_unix": 1792316000},
+             "elements": [node(50, {"amenity": "cafe", "name": "Новое имя"})]}
+    (poi,) = normalize_payloads([stale, fresh])
+    assert poi.name == "Новое имя" and poi.fetched_at == "2026-10-18"
+    (old,) = normalize_payloads([stale])
+    assert old.fetched_at == "2026-06-01"  # snapshot date, not the day we downloaded it

@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
 from pipeline.fetch_osm import area_chunks
-from pipeline.normalize import haversine_m, load_payloads, raw_files
+from pipeline.normalize import fetched_date, haversine_m, load_payloads, osm_base, raw_files
 
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
@@ -78,7 +78,8 @@ def build_report(
         "выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.",
         "",
         "## Выгрузка",
-        f"- Кусков выгрузки: {len(payloads)} ({', '.join(m.get('chunk', '?') for m in metas)}).",
+        f"- Кусков выгрузки: {len(payloads)} "
+        f"({', '.join(m.get('chunk') or m.get('area') or '?' for m in metas)}).",
         f"- Сырых элементов: {raw_elements}; после нормализации и дедупликации: {n} POI.",
         f"- Добавлено вручную: {sum(1 for p in pois if p.id.startswith('manual:'))} "
         "(места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).",
@@ -92,6 +93,20 @@ def build_report(
     lines.append(
         "- Зеркала Overpass: " + ", ".join(f"{u} ({c})" for u, c in endpoints.most_common()) + "."
     )
+    snapshots: dict[str, list[str]] = defaultdict(list)
+    for payload in payloads:
+        if osm_base(payload):
+            host = payload.get("qadam", {}).get("endpoint", "?").split("/")[2:3] or ["?"]
+            snapshots[host[0]].append(fetched_date(payload))
+    if snapshots:
+        parts = [
+            f"{host}: {min(d)}" + (f" … {max(d)}" if min(d) != max(d) else "")
+            for host, d in sorted(snapshots.items())
+        ]
+        lines.append(
+            "- Дата снимка OSM по зеркалам: " + "; ".join(parts) + ". Пересекающиеся куски "
+            "берутся из самого свежего снимка; `fetched_at` у записи — дата её снимка."
+        )
     if missing_chunks is None:
         lines.append(
             "- Покрытие: только перечисленные куски (демо-зоны), без плиток всего города."
@@ -165,8 +180,11 @@ def build_report(
         )
     if ranked:
         top_cell, top_items = ranked[0]
-        top_label = nearest_landmark(*h3.cell_to_latlng(top_cell), landmarks)
-        where = f"рядом с «{top_label}»" if top_label else "в самой плотной ячейке"
+        top_lat, top_lon = h3.cell_to_latlng(top_cell)
+        top_label = nearest_landmark(top_lat, top_lon, landmarks)
+        where = (
+            f"рядом с «{top_label}»" if top_label else f"в ячейке {top_lat:.3f}, {top_lon:.3f}"
+        )
         with_hours = pct(sum(1 for p in pois if p.opening_hours), n)
         lines += [
             "",

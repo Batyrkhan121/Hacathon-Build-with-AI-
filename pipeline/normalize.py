@@ -349,24 +349,31 @@ def dedupe(pois: Iterable[POI], radius_m: float = DEDUP_RADIUS_M) -> list[POI]:
     return sorted((p for p, _ in kept), key=lambda p: p.id)
 
 
+def osm_base(payload: Mapping) -> str:
+    """ISO timestamp of the OSM database the mirror answered from ("" if unknown)."""
+    return (payload.get("osm3s") or {}).get("timestamp_osm_base") or ""
+
+
 def fetched_date(payload: Mapping) -> str:
-    """Date of the extraction in Astana time (from our fetch stamp, else the OSM base)."""
-    stamp = (payload.get("qadam") or {}).get("fetched_at_unix")
-    if stamp:
-        return datetime.fromtimestamp(stamp, tz=ASTANA_TZ).date().isoformat()
-    base = (payload.get("osm3s") or {}).get("timestamp_osm_base")
+    """Date of the data in Astana time: the OSM snapshot the mirror served (a lagging
+    mirror must not look fresh), else our fetch stamp."""
+    base = osm_base(payload)
     if base:
         osm_time = datetime.fromisoformat(base.replace("Z", "+00:00"))
         return osm_time.astimezone(ASTANA_TZ).date().isoformat()
+    stamp = (payload.get("qadam") or {}).get("fetched_at_unix")
+    if stamp:
+        return datetime.fromtimestamp(stamp, tz=ASTANA_TZ).date().isoformat()
     return datetime.now(ASTANA_TZ).date().isoformat()
 
 
 def normalize_payloads(payloads: Iterable[Mapping]) -> list[POI]:
     """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
-    taken once (the first chunk wins), then near-duplicates are merged by `dedupe`."""
+    taken once, from the freshest OSM snapshot (mirrors lag: kumi served a June database
+    in October), then near-duplicates are merged by `dedupe`."""
     seen: set[str] = set()
     pois: list[POI] = []
-    for payload in payloads:
+    for payload in sorted(payloads, key=osm_base, reverse=True):  # stable for equal stamps
         date = fetched_date(payload)
         for el in payload.get("elements", []):
             key = f"{el.get('type')}/{el.get('id')}"
@@ -525,9 +532,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     paths = raw_files(args.area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw files for area {args.area!r}: run pipeline.fetch_osm first")
-    pois = finalize(
-        normalize_payloads(load_payloads(paths)), load_landmarks(settings.landmarks_path)
-    )
+    pois = normalize_payloads(load_payloads(paths))
+    if args.area != "fixture":  # the T10 test fixture stays plain OSM around EXPO/Mega
+        pois = finalize(pois, load_landmarks(settings.landmarks_path))
     write_jsonl(pois, out)
     print(f"{len(pois)} POI from {len(paths)} raw files -> {out}")
 
