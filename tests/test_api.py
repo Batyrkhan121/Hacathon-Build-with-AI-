@@ -149,6 +149,47 @@ def test_index_of_another_model_makes_health_degraded(deps: Deps, tmp_path: Path
                for w in h["warnings"])
 
 
+def _stale_index(deps: Deps, tmp_path: Path, model: str) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": model, "dim": 768, "status": "stale",
+                                                 "stale_reason": "квота"}), encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+
+
+def test_stale_index_of_another_model_is_not_called_stale(deps: Deps, tmp_path: Path) -> None:
+    # the vectors are not used at all: «устарел» would only confuse, the mismatch is the news
+    _stale_index(deps, tmp_path, model="gemini-embedding-001")
+    deps.store.embeddings = None
+    deps.store.warnings = ["индекс построен для gemini-embedding-001/768, а в настройках "
+                           "google/gemini-embedding-001/768, релевантность считается лексически"]
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+        m = c.get("/api/meta").json()
+    for data in (h, m):
+        assert data["status"] == "degraded" and data["index"] == "lexical (index mismatch)"
+        assert any("индекс построен" in w for w in data["warnings"])
+        assert not any("устарел" in w for w in data["warnings"]), data["warnings"]
+
+
+def test_stale_index_of_the_query_model_is_called_stale(deps: Deps, tmp_path: Path) -> None:
+    import numpy as np
+
+    _stale_index(deps, tmp_path, model="google/gemini-embedding-001")
+    deps.store.embeddings = np.zeros((len(deps.store.pois), 768), dtype=np.float32)
+    deps.store.warnings = []  # api reads the flag from meta.json, not from Store's text
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded" and h["index"] == "ready"
+    assert [w for w in h["warnings"] if "устарел" in w] == [
+        "индекс эмбеддингов устарел (meta.json: status=stale)"]
+
+
 def test_landmarks(client: TestClient, landmarks: dict[str, Landmark]) -> None:
     r = client.get("/api/landmarks")
     assert r.status_code == 200
