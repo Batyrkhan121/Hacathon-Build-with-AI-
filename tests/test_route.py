@@ -171,6 +171,17 @@ def test_plan_walk_picks_three_that_fit() -> None:
     assert route is not None and route.fits_budget and len(route.stop_ids) == 3
 
 
+def test_plan_walk_skips_fast_food_and_bars_unless_asked() -> None:
+    cands = [placed("burger", 0.001, category="fast_food", score=0.99),
+             placed("pub", 0.0015, category="bar", score=0.98),
+             placed("park", 0.002, score=0.5), placed("monument", 0.003, category="monument")]
+    picked = {c.poi.category for c in plan_walk(ORIGIN, cands, 90)}
+    assert picked and not picked & {"fast_food", "bar"}
+    asked = {c.poi.category for c in plan_walk(ORIGIN, cands, 90,
+                                               wanted_categories={"fast_food"})}
+    assert "fast_food" in asked and "bar" not in asked
+
+
 def test_plan_walk_respects_budget_and_diversity() -> None:
     same = [placed(f"p{i}", 0.001 * (i + 1), name="Детская площадка", category="playground")
             for i in range(3)]

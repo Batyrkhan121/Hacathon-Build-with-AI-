@@ -758,6 +758,38 @@ class TestRealCore:
             "use_llm": False}), real_deps)
         assert a.context.area_label.startswith("сіздің ауданыңыз (≈0,1 км²)")
 
+    def test_ui_tourist_switch_at_the_airport_is_honest(self, real_deps: Deps) -> None:
+        """POLISH: tourist + departure 120 from the UI, text without categories -> 2 cafes are
+        found, and the summary still says there is nothing to see near NQZ."""
+        a = recommend(real_req("Что рядом?", "airport_nqz", lang="ru",
+                               overrides={"tourist": True, "departure_in_min": 120}), real_deps)
+        assert a.intent.tourist and a.cards
+        assert a.summary.startswith("Рядом с аэропортом почти ничего нет; ехать в город за "
+                                    "2 часа до вылета не советуем.")
+        coffee = recommend(real_req("где кофе?", "airport_nqz", lang="ru",
+                                    overrides={"tourist": True}), real_deps)
+        assert "почти ничего нет" not in coffee.summary  # food was asked: no lecture
+
+    def test_airport_deadline_is_the_first_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я — турист, у меня 2 часа перед вылетом: что посмотреть?",
+                               "baiterek", lang="ru"), real_deps)
+        assert a.warnings[0].startswith("До вылета 120 мин")
+
+    def test_ui_night_and_tourist_switches(self, real_deps: Deps) -> None:
+        s5 = recommend(real_req("куда сходить?", "khan_shatyr", overrides={"night": True}),
+                       real_deps)
+        assert s5.intent.night and any(w.startswith("Ночь:") for w in s5.warnings)
+        s4 = recommend(real_req("что посмотреть?", "baiterek", lang="ru",
+                                overrides={"tourist": True, "departure_in_min": 120}),
+                       real_deps)
+        assert s4.intent.tourist and s4.intent.time_budget_min == 120
+        assert s4.warnings[0].startswith("До вылета 120 мин") and len(s4.cards) <= 2
+
+    def test_group_collective_numerals_reach_the_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("нас пятеро, хотим поесть", "khan_shatyr"), real_deps)
+        assert a.intent.group_size == 5
+        assert "Для компании из 5 человек: столик в кафе лучше уточнить заранее." in a.warnings
+
     def test_no_route_at_a_transport_hub(self, real_deps: Deps) -> None:
         a = recommend(real_req("Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть "
                                "рядом?", "airport_nqz", lang="ru"), real_deps)

@@ -199,7 +199,10 @@ def test_wheelchair(landmarks: dict[str, Landmark]) -> None:
 @pytest.mark.parametrize(
     ("text", "size"),
     [("нас 5 человек", 5), ("мы с друзьями", 4), ("for 3 people", 3), ("вдвоём", 2),
-     ("нас 50", 20), ("одна", None)],
+     ("нас 50", 20), ("одна", None), ("нас пятеро", 5), ("нас четверо, где поесть", 4),
+     ("мы втроём", 3), ("пойдём вчетвером", 4), ("нас трое и ребёнок", 3),
+     ("бесеуміз, қайда барамыз?", 5), ("үшеуміз", 3), ("екеуіміз", 2),
+     ("five of us looking for dinner", 5), ("the two of us", 2), ("a group of six", 6)],
 )
 def test_group_size(text: str, size: int | None, landmarks: dict[str, Landmark]) -> None:
     assert rules(text, landmarks).group_size == size

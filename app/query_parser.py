@@ -145,9 +145,24 @@ _GROUP_NUM_RES = (
     re.compile(r"\bнас\s+(\d+)"),
     re.compile(r"(\d+)\s*(?:человек\w*|чел\b|people|persons|adults|адам)"),
 )
+# Collective numerals: «нас пятеро», «вчетвером», «бесеуміз», "five of us", "a group of six".
+_COLLECTIVE: dict[str, int] = {
+    "двое": 2, "трое": 3, "четверо": 4, "пятеро": 5, "шестеро": 6, "семеро": 7,
+    "восьмеро": 8, "девятеро": 9, "десятеро": 10,
+    "вдвоем": 2, "втроем": 3, "вчетвером": 4, "впятером": 5, "вшестером": 6, "всемером": 7,
+    "екеу": 2, "үшеу": 3, "төртеу": 4, "бесеу": 5, "алтау": 6, "жетеу": 7,
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+    "nine": 9, "ten": 10,
+}
+_COLLECTIVE_RES = (
+    re.compile(r"\b(двое|трое|четверо|пятеро|шестеро|семеро|восьмеро|девятеро|десятеро"
+               r"|вдвоем|втроем|вчетвером|впятером|вшестером|всемером)\b"),
+    re.compile(r"\b(екеу|үшеу|төртеу|бесеу|алтау|жетеу)\w*(?:міз|мыз)"),
+    re.compile(r"\b(?:the )?(two|three|four|five|six|seven|eight|nine|ten) of us\b"),
+    re.compile(r"\b(?:group|party) of (two|three|four|five|six|seven|eight|nine|ten)\b"),
+)
 _GROUP_WORDS: tuple[tuple[re.Pattern[str], int], ...] = (
-    (re.compile(r"вдво[её]м|\bдвоем|the two of us|екеуміз|екеуіміз"), 2),
-    (re.compile(r"втро[её]м|the three of us|үшеуміз"), 3),
+    (re.compile(r"\bдвоем|\bвдвоем"), 2),
     (re.compile(r"компани|с друзьями|друзь|friends|\bgroup\b|группой|достар"), GROUP_DEFAULT),
 )
 
@@ -315,6 +330,10 @@ def _group_size(t: str) -> int | None:
         m = rx.search(t)
         if m:
             return _clamp(int(m.group(1)), 1, 20)
+    for rx in _COLLECTIVE_RES:
+        m = rx.search(t)
+        if m:
+            return _COLLECTIVE[m.group(1)]
     for rx, size in _GROUP_WORDS:
         if rx.search(t):
             return size

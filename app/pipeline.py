@@ -88,6 +88,8 @@ CAREFUL_MAX_WALK_MIN = 15  # kids / wheelchair / night, unless the user set a li
 NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
 GROUP_MIN = 3
 FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
+SIGHT_CATEGORIES = frozenset({"attraction", "monument", "museum", "viewpoint", "gallery",
+                              "religious", "park", "theatre"})
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
 MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
@@ -423,7 +425,6 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 warn.append(t["night_far"])
         if sure:
             candidates = sure
-    requested_found = len(candidates)  # places of the requested type, before relaxing
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
@@ -441,7 +442,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                  and not intent.tourist and not plan_intent.night)
     gen_candidates = candidates
     if walk_loop and req.want_route and len(candidates) >= 2:
-        picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0)
+        picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0,
+                                 wanted_categories=set(plan_intent.categories))
         if len(picked) >= 2:
             gen_candidates = picked
 
@@ -488,14 +490,17 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     elif not cards and not no_time:
         warn.append(t["nothing"])
     if walk_budget is not None:
-        warn.append(_airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
+        # first: the deadline matters more than any other warning (POLISH request)
+        warn.insert(0, _airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
     warn.extend(_context_warnings(t, plan_intent, cards, candidates, mini_route, at_hub=at_hub,
                                   flight=flight, deadline_given=walk_budget is not None))
     if summary is None:
         summary = _template_summary(t, len(cards))
     if no_time:
         summary = t["summary_leave_now"]
-    elif at_airport and intent.tourist and requested_found < 2:
+    elif at_airport and intent.tourist and _sights(candidates) < 2 and not _food_only(intent):
+        # E11 / UI "tourist + departure": NQZ has a few cafes and nothing to see — say so,
+        # whatever categories were asked (the UI sends no text categories at all)
         summary = _airport_summary(t, intent, has_cards=bool(cards))
     summary = validate.sanitize_summary(summary, cards)  # "open now" never leaks via summary
 
@@ -535,6 +540,15 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _sights(candidates: list[Candidate]) -> int:
+    return sum(1 for c in candidates if c.poi.category in SIGHT_CATEGORIES)
+
+
+def _food_only(intent: QueryIntent) -> bool:
+    """The person asked for food / coffee only: «nothing to see here» would be off-topic."""
+    return bool(intent.categories) and set(intent.categories) <= FOOD_CATEGORIES
 
 
 def _night_sure(c: Candidate) -> bool:

@@ -26,6 +26,8 @@ DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
 MAX_ROUTE_STOPS = 3  # MiniRoute.stop_ids allows at most 3
 WALK_POOL = 8  # plan_walk looks at the best N candidates
 MAX_SAME_CATEGORY = 2
+# Not a stop for a walk unless asked for explicitly (S1: a walk is not a fast-food crawl).
+NOT_WALK_STOPS = frozenset({"fast_food", "bar", "nightlife"})
 # Short stops on a walk (the walk itself is the activity); cards may later say more.
 WALK_VISIT_MIN: dict[str, int] = {
     "park": 20, "viewpoint": 10, "monument": 10, "attraction": 15, "religious": 15,
@@ -162,14 +164,17 @@ def plan_walk(
     *,
     loop: bool = True,
     max_stops: int = MAX_ROUTE_STOPS,
+    wanted_categories: frozenset[str] | set[str] = frozenset(),
 ) -> list[Candidate]:
     """Up to `max_stops` candidates that fit `budget_min` together, in visiting order.
 
     More stops win, then the higher total score, then the shorter walk. At most
     MAX_SAME_CATEGORY of one category and no two places with the same name (two
-    «Детская площадка» or two branches of one chain). [] when not even one stop fits.
+    «Детская площадка» or two branches of one chain). Fast food / bars / nightlife are not
+    walk stops unless they are in `wanted_categories`. [] when not even one stop fits.
     """
-    pool = candidates[:WALK_POOL]
+    skip = NOT_WALK_STOPS - set(wanted_categories)
+    pool = [c for c in candidates if c.poi.category not in skip][:WALK_POOL]
     visits = {c.poi.id: walk_visit_minutes(c) for c in pool}
     for size in range(min(max_stops, MAX_ROUTE_STOPS, len(pool)), 0, -1):
         best: tuple[float, int, list[Candidate]] | None = None
