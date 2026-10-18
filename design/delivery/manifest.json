@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18T13:41:27.830Z",
+  "generatedAt": "2026-10-18T16:27:11.176Z",
   "frames": [
     {
       "file": "screens/01-home.png",
@@ -8,12 +8,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=home&lang=kk&capture=1",
+      "url": "demo/?view=home&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1182,
+        "bodyHeight": 931,
         "firstCard": null
       }
     },
@@ -24,15 +24,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer&lang=kk&capture=1",
+      "url": "demo/?view=answer&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2947,
+        "bodyHeight": 2329,
         "firstCard": {
-          "top": 190.84375,
-          "bottom": 737.625
+          "top": 348.28125,
+          "bottom": 770.234375
         }
       }
     },
@@ -43,7 +43,7 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=card-open&lang=kk&capture=1",
+      "url": "demo/?view=card-open&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
@@ -51,7 +51,7 @@
         "bodyHeight": 800,
         "firstCard": {
           "top": 20,
-          "bottom": 608.34375
+          "bottom": 480.140625
         }
       }
     },
@@ -62,7 +62,7 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=card-maybe&lang=kk&capture=1",
+      "url": "demo/?view=card-maybe&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
@@ -70,7 +70,7 @@
         "bodyHeight": 800,
         "firstCard": {
           "top": 20,
-          "bottom": 580.65625
+          "bottom": 463.265625
         }
       }
     },
@@ -81,7 +81,7 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=card-unnamed&lang=kk&capture=1",
+      "url": "demo/?view=card-unnamed&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
@@ -89,7 +89,7 @@
         "bodyHeight": 800,
         "firstCard": {
           "top": 20,
-          "bottom": 615.59375
+          "bottom": 474.953125
         }
       }
     },
@@ -100,7 +100,7 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=closing-soon&lang=kk&capture=1",
+      "url": "demo/?view=closing-soon&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
@@ -108,7 +108,7 @@
         "bodyHeight": 800,
         "firstCard": {
           "top": 20,
-          "bottom": 667.34375
+          "bottom": 490.953125
         }
       }
     },
@@ -119,15 +119,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=card-no-ai&lang=kk&capture=1",
+      "url": "demo/?view=card-no-ai&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 78,
-          "bottom": 685.84375
+          "top": 88,
+          "bottom": 567.640625
         }
       }
     },
@@ -138,7 +138,7 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=selected&lang=kk&capture=1",
+      "url": "demo/?view=selected&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
@@ -146,7 +146,7 @@
         "bodyHeight": 800,
         "firstCard": {
           "top": 20,
-          "bottom": 608.34375
+          "bottom": 480.140625
         }
       }
     },
@@ -157,15 +157,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=loading&lang=kk&capture=1",
+      "url": "demo/?view=loading&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1304,
+        "bodyHeight": 1355,
         "firstCard": {
-          "top": 227.84375,
-          "bottom": 417.84375
+          "top": 311,
+          "bottom": 501
         }
       }
     },
@@ -176,12 +176,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=error&lang=kk&capture=1",
+      "url": "demo/?view=error&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 833,
+        "bodyHeight": 1180,
         "firstCard": null
       }
     },
@@ -192,12 +192,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=empty&lang=kk&capture=1",
+      "url": "demo/?view=empty&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 953,
+        "bodyHeight": 1087,
         "firstCard": null
       }
     },
@@ -208,15 +208,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=stale&lang=kk&capture=1",
+      "url": "demo/?view=stale&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 4101,
+        "bodyHeight": 2499,
         "firstCard": {
-          "top": 1345.171875,
-          "bottom": 1891.953125
+          "top": 518.1875,
+          "bottom": 940.140625
         }
       }
     },
@@ -227,15 +227,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=no-ai&lang=kk&capture=1",
+      "url": "demo/?view=no-ai&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1427,
+        "bodyHeight": 1402,
         "firstCard": {
-          "top": 250.84375,
-          "bottom": 854.96875
+          "top": 408.28125,
+          "bottom": 849.734375
         }
       }
     },
@@ -246,15 +246,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=departure&lang=kk&capture=1",
+      "url": "demo/?view=departure&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1449,
+        "bodyHeight": 1402,
         "firstCard": {
-          "top": 272.84375,
-          "bottom": 876.96875
+          "top": 408.421875,
+          "bottom": 849.875
         }
       }
     },
@@ -265,12 +265,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=night&lang=kk&capture=1",
+      "url": "demo/?view=night&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1035,
+        "bodyHeight": 1168,
         "firstCard": null
       }
     },
@@ -281,15 +281,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=coffee&lang=kk&capture=1",
+      "url": "demo/?view=coffee&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1382,
+        "bodyHeight": 1400,
         "firstCard": {
-          "top": 251.84375,
-          "bottom": 810.140625
+          "top": 408.421875,
+          "bottom": 847.6875
         }
       }
     },
@@ -300,15 +300,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=kids&lang=kk&capture=1",
+      "url": "demo/?view=kids&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1381,
+        "bodyHeight": 1352,
         "firstCard": {
-          "top": 216.34375,
-          "bottom": 809.578125
+          "top": 348.28125,
+          "bottom": 799.234375
         }
       }
     },
@@ -319,12 +319,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=route&lang=kk&capture=1",
+      "url": "demo/?view=route&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 800,
+        "bodyHeight": 820,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -338,15 +338,15 @@
       "height": 800,
       "lang": "kk",
       "section": "map",
-      "url": "demo/?view=privacy&lang=kk&capture=1",
+      "url": "demo/?view=privacy&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2947,
+        "bodyHeight": 2329,
         "firstCard": {
-          "top": -1956.15625,
-          "bottom": -1409.375
+          "top": -1180.71875,
+          "bottom": -758.765625
         }
       }
     },
@@ -357,12 +357,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=data&lang=kk&capture=1",
+      "url": "demo/?view=data&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1143,
+        "bodyHeight": 1153,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -376,15 +376,15 @@
       "height": 800,
       "lang": "kk",
       "section": "map",
-      "url": "demo/?view=pick&lang=kk&capture=1",
+      "url": "demo/?view=pick&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2947,
+        "bodyHeight": 1949,
         "firstCard": {
-          "top": -1956.15625,
-          "bottom": -1409.375
+          "top": 348.28125,
+          "bottom": 770.234375
         }
       }
     },
@@ -395,15 +395,15 @@
       "height": 800,
       "lang": "kk",
       "section": "map",
-      "url": "demo/?view=map-error&lang=kk&capture=1",
+      "url": "demo/?view=map-error&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2947,
+        "bodyHeight": 2329,
         "firstCard": {
-          "top": -1956.15625,
-          "bottom": -1409.375
+          "top": -1180.71875,
+          "bottom": -758.765625
         }
       }
     },
@@ -414,12 +414,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=geo-denied&lang=kk&capture=1",
+      "url": "demo/?view=geo-denied&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1875,
+        "bodyHeight": 1756,
         "firstCard": null
       }
     },
@@ -430,12 +430,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=geo-far&lang=kk&capture=1",
+      "url": "demo/?view=geo-far&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1875,
+        "bodyHeight": 1756,
         "firstCard": null
       }
     },
@@ -446,12 +446,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=too-large&lang=kk&capture=1",
+      "url": "demo/?view=too-large&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 800,
+        "bodyHeight": 1180,
         "firstCard": null
       }
     },
@@ -462,12 +462,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=unavailable&lang=kk&capture=1",
+      "url": "demo/?view=unavailable&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 800,
+        "bodyHeight": 1180,
         "firstCard": null
       }
     },
@@ -478,12 +478,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=timeout&lang=kk&capture=1",
+      "url": "demo/?view=timeout&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 857,
+        "bodyHeight": 1180,
         "firstCard": null
       }
     },
@@ -494,12 +494,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=query-empty&lang=kk&capture=1",
+      "url": "demo/?view=query-empty&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1221,
+        "bodyHeight": 970,
         "firstCard": null
       }
     },
@@ -510,15 +510,15 @@
       "height": 800,
       "lang": "kk",
       "section": "route",
-      "url": "demo/?view=over-budget&lang=kk&capture=1",
+      "url": "demo/?view=over-budget&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 3077,
+        "bodyHeight": 2867,
         "firstCard": {
-          "top": -1602.15625,
-          "bottom": -1035.875
+          "top": -1304.578125,
+          "bottom": -863.125
         }
       }
     },
@@ -529,12 +529,12 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=styles&lang=kk&capture=1",
+      "url": "demo/?view=styles&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 800,
+        "bodyHeight": 827,
         "firstCard": null
       }
     },
@@ -545,15 +545,15 @@
       "height": 900,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer&lang=kk&capture=1",
+      "url": "demo/?view=answer&lang=kk",
       "layout": {
         "width": 1440,
         "scrollWidth": 1440,
         "lang": "kk",
         "bodyHeight": 900,
         "firstCard": {
-          "top": 252.84375,
-          "bottom": 781.296875
+          "top": 340,
+          "bottom": 725.484375
         }
       }
     },
@@ -564,15 +564,15 @@
       "height": 720,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer&lang=kk&capture=1",
+      "url": "demo/?view=answer&lang=kk",
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
         "lang": "kk",
         "bodyHeight": 720,
         "firstCard": {
-          "top": 191.84375,
-          "bottom": 712.296875
+          "top": 324,
+          "bottom": 709.484375
         }
       }
     },
@@ -583,15 +583,15 @@
       "height": 1080,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=privacy&lang=kk&capture=1",
+      "url": "demo/?view=privacy&lang=kk",
       "layout": {
         "width": 1920,
         "scrollWidth": 1920,
         "lang": "kk",
         "bodyHeight": 1080,
         "firstCard": {
-          "top": 252.84375,
-          "bottom": 781.296875
+          "top": 340,
+          "bottom": 725.484375
         }
       }
     },
@@ -602,15 +602,15 @@
       "height": 844,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer&lang=kk&capture=1",
+      "url": "demo/?view=answer&lang=kk",
       "layout": {
         "width": 390,
         "scrollWidth": 390,
         "lang": "kk",
-        "bodyHeight": 2921,
+        "bodyHeight": 2234,
         "firstCard": {
-          "top": 190.84375,
-          "bottom": 711.984375
+          "top": 348.28125,
+          "bottom": 722.046875
         }
       }
     },
@@ -621,15 +621,15 @@
       "height": 1000,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer&lang=kk&capture=1",
+      "url": "demo/?view=answer&lang=kk",
       "layout": {
         "width": 768,
         "scrollWidth": 768,
         "lang": "kk",
-        "bodyHeight": 2646,
+        "bodyHeight": 2054,
         "firstCard": {
-          "top": 165.34375,
-          "bottom": 664.734375
+          "top": 328.140625,
+          "bottom": 679.40625
         }
       }
     },
@@ -640,15 +640,15 @@
       "height": 800,
       "lang": "ru",
       "section": "top",
-      "url": "demo/?view=answer&lang=ru&capture=1",
+      "url": "demo/?view=answer&lang=ru",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "ru",
-        "bodyHeight": 2927,
+        "bodyHeight": 2267,
         "firstCard": {
-          "top": 190.84375,
-          "bottom": 759.375
+          "top": 328.140625,
+          "bottom": 750.09375
         }
       }
     },
@@ -659,15 +659,15 @@
       "height": 800,
       "lang": "en",
       "section": "top",
-      "url": "demo/?view=answer&lang=en&capture=1",
+      "url": "demo/?view=answer&lang=en",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "en",
-        "bodyHeight": 2870,
+        "bodyHeight": 2143,
         "firstCard": {
-          "top": 190.84375,
-          "bottom": 759.375
+          "top": 328.140625,
+          "bottom": 726.59375
         }
       }
     },
@@ -678,15 +678,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=closed-medium&lang=kk&capture=1",
+      "url": "demo/?view=closed-medium&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1367,
+        "bodyHeight": 1376,
         "firstCard": {
-          "top": 190.84375,
-          "bottom": 794.96875
+          "top": 348.28125,
+          "bottom": 823.921875
         }
       }
     },
@@ -697,7 +697,7 @@
       "height": 900,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=home&lang=kk&capture=1",
+      "url": "demo/?view=home&lang=kk",
       "layout": {
         "width": 1440,
         "scrollWidth": 1440,
@@ -713,12 +713,12 @@
       "height": 800,
       "lang": "kk",
       "section": "payload",
-      "url": "demo/?view=data&lang=kk&capture=1",
+      "url": "demo/?view=data&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1143,
+        "bodyHeight": 1153,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -732,15 +732,15 @@
       "height": 800,
       "lang": "kk",
       "section": "top",
-      "url": "demo/?view=answer-short&lang=kk&capture=1",
+      "url": "demo/?view=answer-short&lang=kk",
       "layout": {
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2335,
+        "bodyHeight": 1895,
         "firstCard": {
-          "top": 216.34375,
-          "bottom": 774.640625
+          "top": 348.28125,
+          "bottom": 787.546875
         }
       }
     }

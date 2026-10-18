@@ -1,0 +1,247 @@
+{
+  "checks": 33,
+  "passed": 33,
+  "failed": 0,
+  "records": [
+    {
+      "label": "360px home visible controls / overflow",
+      "pass": true,
+      "detail": {
+        "viewport": 360,
+        "document": 360
+      }
+    },
+    {
+      "label": "360px submit → answer → keyboard details",
+      "pass": true,
+      "detail": {
+        "viewport": 360,
+        "document": 360
+      }
+    },
+    {
+      "label": "360px map / return",
+      "pass": true,
+      "detail": {
+        "viewport": 360,
+        "document": 360
+      }
+    },
+    {
+      "label": "360px edit → resubmit",
+      "pass": true,
+      "detail": {
+        "viewport": 360,
+        "document": 360
+      }
+    },
+    {
+      "label": "360px edit cancellation restores submitted request",
+      "pass": true
+    },
+    {
+      "label": "360px loading cancellation",
+      "pass": true,
+      "detail": {
+        "viewport": 360,
+        "document": 360
+      }
+    },
+    {
+      "label": "360px pick-map Back cancels and restores focus",
+      "pass": true
+    },
+    {
+      "label": "360px preset S1",
+      "pass": true,
+      "detail": {
+        "cards": 2,
+        "location": {
+          "landmark_id": "mega_silk_way"
+        }
+      }
+    },
+    {
+      "label": "360px preset S2",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "expo"
+        }
+      }
+    },
+    {
+      "label": "360px preset S3",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "khan_shatyr"
+        }
+      }
+    },
+    {
+      "label": "360px preset S4",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "baiterek"
+        }
+      }
+    },
+    {
+      "label": "360px preset S5",
+      "pass": true,
+      "detail": {
+        "cards": 0,
+        "location": {
+          "landmark_id": "baiterek"
+        }
+      }
+    },
+    {
+      "label": "360px language kk / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Сингулярлық музейі"
+    },
+    {
+      "label": "360px language ru / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Музей Сингулярности"
+    },
+    {
+      "label": "360px language en / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Museum of Singularity"
+    },
+    {
+      "label": "360px unknown and closed-medium hours stay uncertain",
+      "pass": true,
+      "detail": "Жабық болуы мүмкін"
+    },
+    {
+      "label": "360px JavaScript errors",
+      "pass": true
+    },
+    {
+      "label": "1280px home visible controls / overflow",
+      "pass": true,
+      "detail": {
+        "viewport": 1280,
+        "document": 1280
+      }
+    },
+    {
+      "label": "1280px submit → answer → keyboard details",
+      "pass": true,
+      "detail": {
+        "viewport": 1280,
+        "document": 1280
+      }
+    },
+    {
+      "label": "1280px map / return",
+      "pass": true,
+      "detail": {
+        "viewport": 1280,
+        "document": 1280
+      }
+    },
+    {
+      "label": "1280px edit → resubmit",
+      "pass": true,
+      "detail": {
+        "viewport": 1280,
+        "document": 1280
+      }
+    },
+    {
+      "label": "1280px edit cancellation restores submitted request",
+      "pass": true
+    },
+    {
+      "label": "1280px loading cancellation",
+      "pass": true,
+      "detail": {
+        "viewport": 1280,
+        "document": 1280
+      }
+    },
+    {
+      "label": "1280px preset S1",
+      "pass": true,
+      "detail": {
+        "cards": 2,
+        "location": {
+          "landmark_id": "mega_silk_way"
+        }
+      }
+    },
+    {
+      "label": "1280px preset S2",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "expo"
+        }
+      }
+    },
+    {
+      "label": "1280px preset S3",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "khan_shatyr"
+        }
+      }
+    },
+    {
+      "label": "1280px preset S4",
+      "pass": true,
+      "detail": {
+        "cards": 1,
+        "location": {
+          "landmark_id": "baiterek"
+        }
+      }
+    },
+    {
+      "label": "1280px preset S5",
+      "pass": true,
+      "detail": {
+        "cards": 0,
+        "location": {
+          "landmark_id": "baiterek"
+        }
+      }
+    },
+    {
+      "label": "1280px language kk / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Сингулярлық музейі"
+    },
+    {
+      "label": "1280px language ru / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Музей Сингулярности"
+    },
+    {
+      "label": "1280px language en / trusted hours",
+      "pass": true,
+      "detail": "1.\nAlem.ai — Museum of Singularity"
+    },
+    {
+      "label": "1280px unknown and closed-medium hours stay uncertain",
+      "pass": true,
+      "detail": "Жабық болуы мүмкін"
+    },
+    {
+      "label": "1280px JavaScript errors",
+      "pass": true
+    }
+  ]
+}
