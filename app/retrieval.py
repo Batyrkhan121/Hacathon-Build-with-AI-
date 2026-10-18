@@ -37,6 +37,11 @@ WEIGHTS: dict[str, float] = {
     "weather": 0.05,
 }
 MMR_LAMBDA = 0.7
+# score_parts that explain the score but are not added to it
+#   semantic  — the cosine actually used for this POI (absent = lexical only / vector dropped)
+#   no_vector — this POI has no vector while others do: its semantic part is the pool median
+#   mmr       — the MMR value that decided the order
+INFO_PARTS = frozenset({"mmr", "semantic", "no_vector"})
 
 SEMANTIC_SHARE = 0.7  # relevance = 0.7*cosine + 0.3*lexical when embeddings are available
 MIN_VISIT_MIN = 30  # drop places that close sooner than this
@@ -687,17 +692,34 @@ def retrieve(
         return []
     semantic = _semantic_scores(store, query_vec)
     query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
-    pool: list[Candidate] = []
+    passed: list[tuple[int, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
         if distance > ctx.radius_m or not _passes_profile(poi, intent):
             continue
         # the note is written in the user's language by app.hours (FEATURES, T73)
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
-        if not _passes_hours(poi, verdict, intent):
-            continue
-        sem = None if semantic is None or np.isnan(semantic[i]) else float(semantic[i])
+        if _passes_hours(poi, verdict, intent):
+            passed.append((i, poi, distance, verdict))
+
+    # a POI without a vector gets the pool median instead of a lexical-only score: otherwise
+    # it sits on another scale than 0.7*cos + 0.3*lex of its neighbours
+    median: float | None = None
+    if semantic is not None:
+        finite = [float(semantic[i]) for i, *_ in passed if not np.isnan(semantic[i])]
+        median = float(np.median(finite)) if finite else None
+    pool: list[Candidate] = []
+    for i, poi, distance, verdict in passed:
+        sem: float | None = None
+        info: dict[str, float] = {}
+        if semantic is not None and not np.isnan(semantic[i]):
+            sem = float(semantic[i])
+            info["semantic"] = round(sem, 4)
+        elif semantic is not None and median is not None:
+            sem = median
+            info["no_vector"] = 1.0
         score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems)
+        parts.update(info)
         pool.append(
             Candidate(
                 poi=poi,
