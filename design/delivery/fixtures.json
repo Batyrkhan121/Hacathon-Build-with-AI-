@@ -1,0 +1,1221 @@
+{
+  "meta": {
+    "purpose": "Visual documentation only; this file is not read by web/app.js or the production API.",
+    "fixtureOnly": true,
+    "source": "web/mock/answer_sample.json, preserving all fields of app/schemas.py Card and Answer",
+    "schemaVersion": "1.0.0",
+    "frozenAt": "2026-10-20T17:30:00+05:00",
+    "dateExplanation": "Tuesday 20 October 2026 is a fixed demo date. Tomorrow relative to 18 October is Monday 19 October; do not claim the museum is open on that Monday.",
+    "assertions": "Hours, confidence, route timing, weather, descriptions, model names and coordinates are synthetic fixtures; no real-time validation or real-world opening claim is implied.",
+    "sourcesRule": "All card.facts_sources are [mock]. Do not replace with osm/manual unless those facts are actually verified upstream.",
+    "scope": "No photos, ratings, favorites, booking, QR, reviews, login or other extra product features."
+  },
+  "originalBaseCard": {
+    "rank": 1,
+    "poi_id": "mock:poi/alem_ai",
+    "title": "Alem.ai — Музей Сингулярности",
+    "category": "museum",
+    "geo": {
+      "lat": 51.08925,
+      "lon": 71.41619
+    },
+    "distance_m": 267,
+    "walk_min": 5,
+    "visit_min_low": 45,
+    "visit_min_high": 60,
+    "why": "Иммерсивный музей об искусственном интеллекте в сфере EXPO — подходит под «что-то необычное на 1–2 часа».",
+    "what_to_do": "Начните с верхнего уровня сферы и спускайтесь по залам; до закрытия около часа, поэтому заходите сразу.",
+    "open_status": "open",
+    "open_confidence": "medium",
+    "open_note": "МОК: вт–вс 10:00–18:30, в понедельник закрыто (часы не подтверждены источником)",
+    "idea_source": "poi_data",
+    "facts_sources": [
+      "mock"
+    ],
+    "data_confidence": 0.6,
+    "tags": [
+      "interactive",
+      "indoor",
+      "view",
+      "architecture"
+    ],
+    "address": "МОК-адрес",
+    "website": null
+  },
+  "cardVariants": {
+    "open_poi": {
+      "label": "Ашық + POI деректері",
+      "fixtureOnly": true,
+      "assertions": [
+        "open+high is synthetic, for the solid green badge only; it is not a verification of Alem.ai hours.",
+        "website uses the reserved .invalid domain solely to demonstrate the optional button; do not publish as a destination URL."
+      ],
+      "card": {
+        "rank": 1,
+        "poi_id": "mock:poi/alem_ai",
+        "title": "Alem.ai — Сингулярлық музейі",
+        "category": "museum",
+        "geo": {
+          "lat": 51.08925,
+          "lon": 71.41619
+        },
+        "distance_m": 267,
+        "walk_min": 5,
+        "visit_min_low": 45,
+        "visit_min_high": 60,
+        "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+        "what_to_do": "Музей экспозициясын қараңыз.",
+        "open_status": "open",
+        "open_confidence": "high",
+        "open_note": "Мок-кесте: сейсенбі 10:00–18:30.",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.6,
+        "tags": [
+          "interactive",
+          "indoor",
+          "architecture"
+        ],
+        "address": "Мок-мекенжай · EXPO",
+        "website": "https://fixture.invalid/alem-ai"
+      }
+    },
+    "likely_open_ai": {
+      "label": "Ашық болуы мүмкін + ЖИ идеясы",
+      "fixtureOnly": true,
+      "assertions": [
+        "open+medium must use an outline uncertain badge; generated describes the idea, not independently verified facts."
+      ],
+      "card": {
+        "rank": 2,
+        "poi_id": "mock:poi/mega_silk_way",
+        "title": "Mega Silk Way",
+        "category": "mall",
+        "geo": {
+          "lat": 51.0889,
+          "lon": 71.4103
+        },
+        "distance_m": 157,
+        "walk_min": 3,
+        "visit_min_low": 25,
+        "visit_min_high": 45,
+        "why": "Жақын жердегі жылы аялдама. Ауа райы салқын болса, ғимарат ішінде демалуға болады.",
+        "what_to_do": "Галереяны аралап, тамақтанатын орынды таңдаңыз.",
+        "open_status": "open",
+        "open_confidence": "medium",
+        "open_note": "Мок: күн сайын 10:00–22:00; жұмыс уақыты расталмаған.",
+        "idea_source": "generated",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.7,
+        "tags": [
+          "shopping",
+          "food",
+          "indoor"
+        ],
+        "address": null,
+        "website": null
+      }
+    },
+    "unnamed_playground": {
+      "label": "Атауы жоқ балалар алаңы · сағаттар белгісіз",
+      "fixtureOnly": true,
+      "assertions": [
+        "This playground is synthetic, not a located verified POI.",
+        "No kids-safety or access guarantee; unknown opening hours stay unknown."
+      ],
+      "card": {
+        "rank": 3,
+        "poi_id": "mock:poi/unnamed_playground",
+        "title": "Балалар алаңы · 120 м",
+        "category": "playground",
+        "geo": {
+          "lat": 51.0901,
+          "lon": 71.4129
+        },
+        "distance_m": 120,
+        "walk_min": 2,
+        "visit_min_low": 15,
+        "visit_min_high": 30,
+        "why": "Баламен қысқа үзіліске арналған жақын алаң.",
+        "what_to_do": "Алаңның қолжетімділігін сол жерде тексеріп, аздап демалыңыз.",
+        "open_status": "unknown",
+        "open_confidence": "low",
+        "open_note": "Жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз.",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.25,
+        "tags": [
+          "kids",
+          "outdoor"
+        ],
+        "address": null,
+        "website": null
+      }
+    },
+    "closing_soon": {
+      "label": "40 минуттан кейін жабылады",
+      "fixtureOnly": true,
+      "assertions": [
+        "18:10 closing time is invented for the 17:30 fixture to display 40 minutes remaining.",
+        "Card has no closes_in_min field; the exact warning is server-provided open_note text."
+      ],
+      "card": {
+        "rank": 1,
+        "poi_id": "mock:poi/closing_soon",
+        "title": "Музей · демо орын",
+        "category": "museum",
+        "geo": {
+          "lat": 51.08925,
+          "lon": 71.41619
+        },
+        "distance_m": 267,
+        "walk_min": 5,
+        "visit_min_low": 20,
+        "visit_min_high": 30,
+        "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+        "what_to_do": "Музей экспозициясын қараңыз.",
+        "open_status": "open",
+        "open_confidence": "high",
+        "open_note": "Мок: 40 минуттан кейін жабылады (18:10).",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.6,
+        "tags": [
+          "indoor",
+          "art"
+        ],
+        "address": "Мок-мекенжай",
+        "website": null
+      }
+    },
+    "no_ai": {
+      "label": "ЖИ-сіз жауап · ережелер мен үлгілер",
+      "fixtureOnly": true,
+      "assertions": [
+        "The no-AI label belongs to answer.data_used.generation=template, never to a new Card field.",
+        "Template generation can still use idea_source=poi_data."
+      ],
+      "card": {
+        "rank": 1,
+        "poi_id": "mock:poi/alem_ai",
+        "title": "Alem.ai — Сингулярлық музейі",
+        "category": "museum",
+        "geo": {
+          "lat": 51.08925,
+          "lon": 71.41619
+        },
+        "distance_m": 267,
+        "walk_min": 5,
+        "visit_min_low": 45,
+        "visit_min_high": 60,
+        "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+        "what_to_do": "Музей экспозициясын қараңыз.",
+        "open_status": "open",
+        "open_confidence": "medium",
+        "open_note": "Мок: сейсенбі 10:00–18:30; жұмыс уақыты расталмаған.",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.6,
+        "tags": [
+          "interactive",
+          "indoor"
+        ],
+        "address": "Мок-мекенжай · EXPO",
+        "website": null
+      }
+    }
+  },
+  "selectedVariant": {
+    "variantId": "open_poi",
+    "fixtureOnly": true,
+    "uiState": {
+      "selectedRank": 1,
+      "reason": "Map marker selection; transient UI state, not an Answer field."
+    }
+  },
+  "localmockAnswer": {
+    "request_id": "fixture-default-kk",
+    "lang": "kk",
+    "summary": "EXPO маңында музей, жылы үзіліс және балалар алаңы.",
+    "cards": [
+      {
+        "rank": 1,
+        "poi_id": "mock:poi/alem_ai",
+        "title": "Alem.ai — Сингулярлық музейі",
+        "category": "museum",
+        "geo": {
+          "lat": 51.08925,
+          "lon": 71.41619
+        },
+        "distance_m": 267,
+        "walk_min": 5,
+        "visit_min_low": 45,
+        "visit_min_high": 60,
+        "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+        "what_to_do": "Музей экспозициясын қараңыз.",
+        "open_status": "open",
+        "open_confidence": "high",
+        "open_note": "Мок-кесте: сейсенбі 10:00–18:30.",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.6,
+        "tags": [
+          "interactive",
+          "indoor",
+          "architecture"
+        ],
+        "address": "Мок-мекенжай · EXPO",
+        "website": "https://fixture.invalid/alem-ai"
+      },
+      {
+        "rank": 2,
+        "poi_id": "mock:poi/mega_silk_way",
+        "title": "Mega Silk Way",
+        "category": "mall",
+        "geo": {
+          "lat": 51.0889,
+          "lon": 71.4103
+        },
+        "distance_m": 157,
+        "walk_min": 3,
+        "visit_min_low": 25,
+        "visit_min_high": 45,
+        "why": "Жақын жердегі жылы аялдама. Ауа райы салқын болса, ғимарат ішінде демалуға болады.",
+        "what_to_do": "Галереяны аралап, тамақтанатын орынды таңдаңыз.",
+        "open_status": "open",
+        "open_confidence": "medium",
+        "open_note": "Мок: күн сайын 10:00–22:00; жұмыс уақыты расталмаған.",
+        "idea_source": "generated",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.7,
+        "tags": [
+          "shopping",
+          "food",
+          "indoor"
+        ],
+        "address": null,
+        "website": null
+      },
+      {
+        "rank": 3,
+        "poi_id": "mock:poi/unnamed_playground",
+        "title": "Балалар алаңы · 120 м",
+        "category": "playground",
+        "geo": {
+          "lat": 51.0901,
+          "lon": 71.4129
+        },
+        "distance_m": 120,
+        "walk_min": 2,
+        "visit_min_low": 15,
+        "visit_min_high": 30,
+        "why": "Баламен қысқа үзіліске арналған жақын алаң.",
+        "what_to_do": "Алаңның қолжетімділігін сол жерде тексеріп, аздап демалыңыз.",
+        "open_status": "unknown",
+        "open_confidence": "low",
+        "open_note": "Жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз.",
+        "idea_source": "poi_data",
+        "facts_sources": [
+          "mock"
+        ],
+        "data_confidence": 0.25,
+        "tags": [
+          "kids",
+          "outdoor"
+        ],
+        "address": null,
+        "website": null
+      }
+    ],
+    "route": {
+      "stop_ids": [
+        "mock:poi/alem_ai",
+        "mock:poi/mega_silk_way",
+        "mock:poi/unnamed_playground"
+      ],
+      "legs": [
+        {
+          "from_id": "origin",
+          "to_id": "mock:poi/alem_ai",
+          "distance_m": 267,
+          "walk_min": 5
+        },
+        {
+          "from_id": "mock:poi/alem_ai",
+          "to_id": "mock:poi/mega_silk_way",
+          "distance_m": 500,
+          "walk_min": 9
+        },
+        {
+          "from_id": "mock:poi/mega_silk_way",
+          "to_id": "mock:poi/unnamed_playground",
+          "distance_m": 300,
+          "walk_min": 6
+        }
+      ],
+      "total_walk_m": 1067,
+      "total_min": 105,
+      "fits_budget": true,
+      "path": [
+        {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        {
+          "lat": 51.08925,
+          "lon": 71.41619
+        },
+        {
+          "lat": 51.0889,
+          "lon": 71.4103
+        },
+        {
+          "lat": 51.0901,
+          "lon": 71.4129
+        }
+      ],
+      "note": "Мок: бағыт шамамен есептелген, түзу кесінділер × 1,3. Жол бойымен навигация емес."
+    },
+    "intent": {
+      "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+      "lang": "kk",
+      "time_budget_min": 120,
+      "max_walk_min": 15,
+      "categories": [],
+      "must_tags": [],
+      "avoid_tags": [],
+      "with_kids": false,
+      "wheelchair": false,
+      "group_size": null,
+      "indoor": "any",
+      "night": false,
+      "tourist": false,
+      "landmark_mention": "expo",
+      "parser": "rules"
+    },
+    "context": {
+      "origin": {
+        "lat": 51.089433,
+        "lon": 71.412381
+      },
+      "h3_cell": "892153833a7ffff",
+      "h3_res": 9,
+      "area_label": "EXPO маңы",
+      "landmark_id": "expo",
+      "local_time": "2026-10-20T17:30:00+05:00",
+      "weather": null,
+      "radius_m": 865
+    },
+    "data_used": {
+      "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+      "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+      "weather": null,
+      "filters": [
+        "Уақыт: 2 сағат",
+        "Жаяу: 15 минутқа дейін"
+      ],
+      "sources": [
+        "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+      ],
+      "candidates_considered": 8,
+      "parser": "rules",
+      "generation": "llm",
+      "model": "fixture-model"
+    },
+    "warnings": [
+      "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін."
+    ],
+    "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+    "latency_ms": 700,
+    "schema_version": "1.0.0"
+  },
+  "answers": {
+    "no_ai": {
+      "request_id": "fixture-no-ai",
+      "lang": "kk",
+      "summary": "EXPO маңында музей, жылы үзіліс және балалар алаңы.",
+      "cards": [
+        {
+          "rank": 1,
+          "poi_id": "mock:poi/alem_ai",
+          "title": "Alem.ai — Сингулярлық музейі",
+          "category": "museum",
+          "geo": {
+            "lat": 51.08925,
+            "lon": 71.41619
+          },
+          "distance_m": 267,
+          "walk_min": 5,
+          "visit_min_low": 45,
+          "visit_min_high": 60,
+          "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+          "what_to_do": "Музей экспозициясын қараңыз.",
+          "open_status": "open",
+          "open_confidence": "medium",
+          "open_note": "Мок: сейсенбі 10:00–18:30; жұмыс уақыты расталмаған.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.6,
+          "tags": [
+            "interactive",
+            "indoor"
+          ],
+          "address": "Мок-мекенжай · EXPO",
+          "website": null
+        }
+      ],
+      "route": null,
+      "intent": {
+        "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 120,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": false,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "expo",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 2 сағат",
+          "Жаяу: 15 минутқа дейін"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "template",
+        "model": null
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    },
+    "empty": {
+      "request_id": "fixture-empty",
+      "lang": "kk",
+      "summary": "Жақын жерде ештеңе сәйкес келмеді.",
+      "cards": [],
+      "route": null,
+      "intent": {
+        "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 120,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": false,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "expo",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 2 сағат",
+          "Жаяу: 15 минутқа дейін"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "llm",
+        "model": "fixture-model"
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    },
+    "departure_warning": {
+      "request_id": "fixture-departure",
+      "lang": "kk",
+      "summary": "Ұшуға дейін бір қысқа аялдамаға уақыт бар.",
+      "cards": [
+        {
+          "rank": 1,
+          "poi_id": "mock:poi/alem_ai",
+          "title": "Alem.ai — Сингулярлық музейі",
+          "category": "museum",
+          "geo": {
+            "lat": 51.08925,
+            "lon": 71.41619
+          },
+          "distance_m": 267,
+          "walk_min": 5,
+          "visit_min_low": 45,
+          "visit_min_high": 60,
+          "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+          "what_to_do": "Музей экспозициясын қараңыз.",
+          "open_status": "open",
+          "open_confidence": "medium",
+          "open_note": "Мок: сейсенбі 10:00–18:30; жұмыс уақыты расталмаған.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.6,
+          "tags": [
+            "interactive",
+            "indoor"
+          ],
+          "address": "Мок-мекенжай · EXPO",
+          "website": null
+        }
+      ],
+      "route": null,
+      "intent": {
+        "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 120,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": true,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "expo",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 2 сағат",
+          "Жаяу: 15 минутқа дейін"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "llm",
+        "model": "fixture-model"
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін.",
+        "Мок: әуежайға 18:05-тен кешікпей шығыңыз. Бұл нақты рейс есебі емес."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    },
+    "over_budget": {
+      "request_id": "fixture-over-budget",
+      "lang": "kk",
+      "summary": "EXPO маңында музей, жылы үзіліс және балалар алаңы.",
+      "cards": [
+        {
+          "rank": 1,
+          "poi_id": "mock:poi/alem_ai",
+          "title": "Alem.ai — Сингулярлық музейі",
+          "category": "museum",
+          "geo": {
+            "lat": 51.08925,
+            "lon": 71.41619
+          },
+          "distance_m": 267,
+          "walk_min": 5,
+          "visit_min_low": 45,
+          "visit_min_high": 60,
+          "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+          "what_to_do": "Музей экспозициясын қараңыз.",
+          "open_status": "open",
+          "open_confidence": "high",
+          "open_note": "Мок: сейсенбі 10:00–18:30; бұл расталған кесте емес.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.6,
+          "tags": [
+            "interactive",
+            "indoor",
+            "architecture"
+          ],
+          "address": "Мок-мекенжай · EXPO",
+          "website": "https://fixture.invalid/alem-ai"
+        },
+        {
+          "rank": 2,
+          "poi_id": "mock:poi/mega_silk_way",
+          "title": "Mega Silk Way",
+          "category": "mall",
+          "geo": {
+            "lat": 51.0889,
+            "lon": 71.4103
+          },
+          "distance_m": 157,
+          "walk_min": 3,
+          "visit_min_low": 25,
+          "visit_min_high": 45,
+          "why": "Жақын жердегі жылы аялдама. Ауа райы салқын болса, ғимарат ішінде демалуға болады.",
+          "what_to_do": "Галереяны аралап, тамақтанатын орынды таңдаңыз.",
+          "open_status": "open",
+          "open_confidence": "medium",
+          "open_note": "Мок: күн сайын 10:00–22:00; жұмыс уақыты расталмаған.",
+          "idea_source": "generated",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.7,
+          "tags": [
+            "shopping",
+            "food",
+            "indoor"
+          ],
+          "address": null,
+          "website": null
+        },
+        {
+          "rank": 3,
+          "poi_id": "mock:poi/unnamed_playground",
+          "title": "Балалар алаңы · 120 м",
+          "category": "playground",
+          "geo": {
+            "lat": 51.0901,
+            "lon": 71.4129
+          },
+          "distance_m": 120,
+          "walk_min": 2,
+          "visit_min_low": 15,
+          "visit_min_high": 30,
+          "why": "Баламен қысқа үзіліске арналған жақын алаң.",
+          "what_to_do": "Алаңның қолжетімділігін сол жерде тексеріп, аздап демалыңыз.",
+          "open_status": "unknown",
+          "open_confidence": "low",
+          "open_note": "Жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.25,
+          "tags": [
+            "kids",
+            "outdoor"
+          ],
+          "address": null,
+          "website": null
+        }
+      ],
+      "route": {
+        "stop_ids": [
+          "mock:poi/alem_ai",
+          "mock:poi/mega_silk_way",
+          "mock:poi/unnamed_playground"
+        ],
+        "legs": [
+          {
+            "from_id": "origin",
+            "to_id": "mock:poi/alem_ai",
+            "distance_m": 267,
+            "walk_min": 5
+          },
+          {
+            "from_id": "mock:poi/alem_ai",
+            "to_id": "mock:poi/mega_silk_way",
+            "distance_m": 500,
+            "walk_min": 9
+          },
+          {
+            "from_id": "mock:poi/mega_silk_way",
+            "to_id": "mock:poi/unnamed_playground",
+            "distance_m": 300,
+            "walk_min": 6
+          }
+        ],
+        "total_walk_m": 1067,
+        "total_min": 105,
+        "fits_budget": false,
+        "path": [
+          {
+            "lat": 51.089433,
+            "lon": 71.412381
+          },
+          {
+            "lat": 51.08925,
+            "lon": 71.41619
+          },
+          {
+            "lat": 51.0889,
+            "lon": 71.4103
+          },
+          {
+            "lat": 51.0901,
+            "lon": 71.4129
+          }
+        ],
+        "note": "Мок: бағыт шамамен есептелген, түзу кесінділер × 1,3. Жол бойымен навигация емес."
+      },
+      "intent": {
+        "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 60,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": false,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "expo",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 1 сағат"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "llm",
+        "model": "fixture-model"
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін.",
+        "Бағыт сіздің уақытыңызға сыймайды."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    },
+    "closed_medium": {
+      "request_id": "fixture-closed-medium",
+      "lang": "kk",
+      "summary": "Жұмыс уақыты белгісіздеу орын: барар алдында тексеріңіз.",
+      "cards": [
+        {
+          "rank": 1,
+          "poi_id": "mock:poi/alem_ai",
+          "title": "Alem.ai — Сингулярлық музейі",
+          "category": "museum",
+          "geo": {
+            "lat": 51.08925,
+            "lon": 71.41619
+          },
+          "distance_m": 267,
+          "walk_min": 5,
+          "visit_min_low": 45,
+          "visit_min_high": 60,
+          "why": "EXPO маңындағы интерактивті музей — танымдық серуенге сай.",
+          "what_to_do": "Музей экспозициясын қараңыз.",
+          "open_status": "closed",
+          "open_confidence": "medium",
+          "open_note": "Мок: жұмыс кестесі толық расталмаған, жабық болуы мүмкін.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.6,
+          "tags": [
+            "interactive",
+            "indoor",
+            "architecture"
+          ],
+          "address": "Мок-мекенжай · EXPO",
+          "website": null
+        }
+      ],
+      "route": null,
+      "intent": {
+        "raw_query": "EXPO маңында 2 сағат серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 120,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": false,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.089433,
+          "lon": 71.412381
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "expo",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 2 сағат",
+          "Жаяу: 15 минутқа дейін"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "llm",
+        "model": "fixture-model"
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    },
+    "walk_short": {
+      "request_id": "fixture-default-kk",
+      "lang": "kk",
+      "summary": "Mega маңында жылы үзіліс және балалар алаңы: бір сағатқа сай екі орын.",
+      "cards": [
+        {
+          "rank": 1,
+          "poi_id": "mock:poi/mega_silk_way",
+          "title": "Mega Silk Way",
+          "category": "mall",
+          "geo": {
+            "lat": 51.0889,
+            "lon": 71.4103
+          },
+          "distance_m": 157,
+          "walk_min": 3,
+          "visit_min_low": 25,
+          "visit_min_high": 45,
+          "why": "Жақын жердегі жылы аялдама. Ауа райы салқын болса, ғимарат ішінде демалуға болады.",
+          "what_to_do": "Галереяны аралап, тамақтанатын орынды таңдаңыз.",
+          "open_status": "open",
+          "open_confidence": "medium",
+          "open_note": "Мок: күн сайын 10:00–22:00; жұмыс уақыты расталмаған.",
+          "idea_source": "generated",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.7,
+          "tags": [
+            "shopping",
+            "food",
+            "indoor"
+          ],
+          "address": null,
+          "website": null
+        },
+        {
+          "rank": 2,
+          "poi_id": "mock:poi/unnamed_playground",
+          "title": "Балалар алаңы · 120 м",
+          "category": "playground",
+          "geo": {
+            "lat": 51.0901,
+            "lon": 71.4129
+          },
+          "distance_m": 120,
+          "walk_min": 2,
+          "visit_min_low": 15,
+          "visit_min_high": 30,
+          "why": "Баламен қысқа үзіліске арналған жақын алаң.",
+          "what_to_do": "Алаңның қолжетімділігін сол жерде тексеріп, аздап демалыңыз.",
+          "open_status": "unknown",
+          "open_confidence": "low",
+          "open_note": "Жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз.",
+          "idea_source": "poi_data",
+          "facts_sources": [
+            "mock"
+          ],
+          "data_confidence": 0.25,
+          "tags": [
+            "kids",
+            "outdoor"
+          ],
+          "address": null,
+          "website": null
+        }
+      ],
+      "route": {
+        "stop_ids": [
+          "mock:poi/mega_silk_way",
+          "mock:poi/unnamed_playground"
+        ],
+        "legs": [
+          {
+            "from_id": "origin",
+            "to_id": "mock:poi/mega_silk_way",
+            "distance_m": 157,
+            "walk_min": 3
+          },
+          {
+            "from_id": "mock:poi/mega_silk_way",
+            "to_id": "mock:poi/unnamed_playground",
+            "distance_m": 300,
+            "walk_min": 6
+          }
+        ],
+        "total_walk_m": 457,
+        "total_min": 49,
+        "fits_budget": true,
+        "path": [
+          {
+            "lat": 51.08909,
+            "lon": 71.40733
+          },
+          {
+            "lat": 51.0889,
+            "lon": 71.4103
+          },
+          {
+            "lat": 51.0901,
+            "lon": 71.4129
+          }
+        ],
+        "note": "Мок: жуық бағыт; жаяу жол есептелмеген."
+      },
+      "intent": {
+        "raw_query": "Mega Silk Way маңындамын, 30–60 минут серуендегім келеді",
+        "lang": "kk",
+        "time_budget_min": 60,
+        "max_walk_min": 15,
+        "categories": [],
+        "must_tags": [],
+        "avoid_tags": [],
+        "with_kids": false,
+        "wheelchair": false,
+        "group_size": null,
+        "indoor": "any",
+        "night": false,
+        "tourist": false,
+        "landmark_mention": "expo",
+        "parser": "rules"
+      },
+      "context": {
+        "origin": {
+          "lat": 51.08909,
+          "lon": 71.40733
+        },
+        "h3_cell": "892153833a7ffff",
+        "h3_res": 9,
+        "area_label": "EXPO маңы",
+        "landmark_id": "mega_silk_way",
+        "local_time": "2026-10-20T17:30:00+05:00",
+        "weather": null,
+        "radius_m": 865
+      },
+      "data_used": {
+        "location": "EXPO бағдары: серверге тек landmark_id=expo жіберілді",
+        "time": "Сейсенбі, 20.10.2026, 17:30 (UTC+5)",
+        "weather": null,
+        "filters": [
+          "Уақыт: 1 сағат"
+        ],
+        "sources": [
+          "МОК-ДЕРЕКТЕР · визуалды үлгі ғана"
+        ],
+        "candidates_considered": 8,
+        "parser": "rules",
+        "generation": "llm",
+        "model": "fixture-model"
+      },
+      "warnings": [
+        "Мок-деректер: жұмыс уақыты, бағыт және мәтіндер тек макет үшін."
+      ],
+      "disclaimer": "Ұсыныстар ашық деректерге негізделеді және ескіруі мүмкін. Жұмыс уақытын барар алдында тексеріңіз. Бұл экранда мок-деректер көрсетілген.",
+      "latency_ms": 700,
+      "schema_version": "1.0.0"
+    }
+  },
+  "requests": {
+    "landmark": {
+      "query": "EXPO маңында 2 сағат серуендегім келеді",
+      "location": {
+        "landmark_id": "expo"
+      },
+      "at": "2026-10-20T17:30:00+05:00",
+      "lang": "kk",
+      "overrides": {
+        "time_budget_min": 120,
+        "max_walk_min": 15
+      },
+      "want_route": true,
+      "use_llm": true
+    },
+    "h3_cell": {
+      "query": "Жақын жерде серуендегім келеді",
+      "location": {
+        "h3_cell": "892153833a7ffff"
+      },
+      "at": "2026-10-20T17:30:00+05:00",
+      "lang": "kk",
+      "overrides": null,
+      "want_route": true,
+      "use_llm": true
+    },
+    "no_ai": {
+      "query": "EXPO маңында музей іздеймін",
+      "location": {
+        "landmark_id": "expo"
+      },
+      "at": "2026-10-20T17:30:00+05:00",
+      "lang": "kk",
+      "overrides": {
+        "time_budget_min": 120
+      },
+      "want_route": true,
+      "use_llm": false
+    }
+  },
+  "uiStates": {
+    "intro": {
+      "kind": "intro"
+    },
+    "loading": {
+      "kind": "loading",
+      "where": "EXPO",
+      "skeletonCount": 3,
+      "cancelReturnsPreviousScreen": true
+    },
+    "network_error": {
+      "kind": "network"
+    },
+    "timeout": {
+      "kind": "timeout"
+    },
+    "too_large": {
+      "kind": "too_large",
+      "status": 413
+    },
+    "server_loading": {
+      "kind": "unavailable",
+      "status": 503
+    },
+    "empty_query": {
+      "kind": "form_validation",
+      "key": "query.empty"
+    },
+    "stale": {
+      "kind": "stale",
+      "answerKey": "localmockAnswer"
+    },
+    "geolocation_denied": {
+      "kind": "geolocation_denied"
+    },
+    "outside_astana": {
+      "kind": "outside_astana"
+    },
+    "map_unavailable": {
+      "kind": "map_unavailable"
+    },
+    "pick_on_map": {
+      "kind": "pick_on_map"
+    }
+  }
+}

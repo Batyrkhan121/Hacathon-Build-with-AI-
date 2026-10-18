@@ -1,0 +1,190 @@
+[
+  {
+    "id": "expo",
+    "names": {
+      "ru": "EXPO (Нур Алем)",
+      "kk": "EXPO (Нұр Әлем)",
+      "en": "EXPO (Nur Alem)"
+    },
+    "aliases": [
+      "expo",
+      "экспо",
+      "нур алем",
+      "нұр әлем",
+      "nur alem",
+      "сфера экспо",
+      "alem.ai",
+      "alem ai"
+    ],
+    "geo": {
+      "lat": 51.08925,
+      "lon": 71.41619
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "mega_silk_way",
+    "names": {
+      "ru": "ТРЦ Mega Silk Way",
+      "kk": "Mega Silk Way СОО",
+      "en": "Mega Silk Way mall"
+    },
+    "aliases": [
+      "mega silk way",
+      "мега силк вей",
+      "мега силквей",
+      "mega",
+      "мега",
+      "силк вей",
+      "silk way"
+    ],
+    "geo": {
+      "lat": 51.08909,
+      "lon": 71.40733
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "baiterek",
+    "names": {
+      "ru": "Монумент «Байтерек»",
+      "kk": "«Бәйтерек» монументі",
+      "en": "Baiterek Tower"
+    },
+    "aliases": [
+      "байтерек",
+      "бәйтерек",
+      "baiterek",
+      "bayterek"
+    ],
+    "geo": {
+      "lat": 51.12829,
+      "lon": 71.43045
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "khan_shatyr",
+    "names": {
+      "ru": "ТРЦ «Хан Шатыр»",
+      "kk": "«Хан Шатыр» СОО",
+      "en": "Khan Shatyr"
+    },
+    "aliases": [
+      "хан шатыр",
+      "хан-шатыр",
+      "khan shatyr"
+    ],
+    "geo": {
+      "lat": 51.13251,
+      "lon": 71.40387
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "palace_peace",
+    "names": {
+      "ru": "Дворец мира и согласия (Пирамида)",
+      "kk": "Бейбітшілік және келісім сарайы",
+      "en": "Palace of Peace and Reconciliation"
+    },
+    "aliases": [
+      "пирамида",
+      "дворец мира",
+      "palace of peace",
+      "pyramid"
+    ],
+    "geo": {
+      "lat": 51.12312,
+      "lon": 71.46346
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "hazrat_sultan",
+    "names": {
+      "ru": "Мечеть «Хазрет Султан»",
+      "kk": "«Әзірет Сұлтан» мешіті",
+      "en": "Hazrat Sultan Mosque"
+    },
+    "aliases": [
+      "хазрет султан",
+      "хазрет-султан",
+      "әзірет сұлтан",
+      "hazrat sultan"
+    ],
+    "geo": {
+      "lat": 51.12543,
+      "lon": 71.47219
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "airport_nqz",
+    "names": {
+      "ru": "Аэропорт Нурсултан Назарбаев (NQZ)",
+      "kk": "Нұрсұлтан Назарбаев әуежайы (NQZ)",
+      "en": "Nursultan Nazarbayev Airport (NQZ)"
+    },
+    "aliases": [
+      "аэропорт",
+      "airport",
+      "nqz",
+      "әуежай"
+    ],
+    "geo": {
+      "lat": 51.02797,
+      "lon": 71.46348
+    },
+    "kind": "transport",
+    "verified": true
+  },
+  {
+    "id": "astana_opera",
+    "names": {
+      "ru": "Театр «Астана Опера»",
+      "kk": "«Астана Опера» театры",
+      "en": "Astana Opera"
+    },
+    "aliases": [
+      "астана опера",
+      "опера",
+      "оперный театр",
+      "astana opera",
+      "opera"
+    ],
+    "geo": {
+      "lat": 51.13545,
+      "lon": 71.41075
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "nurly_zhol",
+    "names": {
+      "ru": "Вокзал «Нурлы Жол»",
+      "kk": "«Нұрлы Жол» вокзалы",
+      "en": "Nurly Zhol railway station"
+    },
+    "aliases": [
+      "нурлы жол",
+      "нұрлы жол",
+      "nurly zhol",
+      "новый вокзал",
+      "вокзал нурлы жол"
+    ],
+    "geo": {
+      "lat": 51.11201,
+      "lon": 71.52887
+    },
+    "kind": "transport",
+    "verified": true
+  }
+]

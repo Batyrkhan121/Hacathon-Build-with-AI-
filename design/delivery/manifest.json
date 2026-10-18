@@ -1,0 +1,749 @@
+{
+  "generatedAt": "2026-10-18T13:41:27.830Z",
+  "frames": [
+    {
+      "file": "screens/01-home.png",
+      "view": "home",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=home&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1182,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/02-answer.png",
+      "view": "answer",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 2947,
+        "firstCard": {
+          "top": 190.84375,
+          "bottom": 737.625
+        }
+      }
+    },
+    {
+      "file": "screens/03-card-open-poi.png",
+      "view": "card-open",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=card-open&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 20,
+          "bottom": 608.34375
+        }
+      }
+    },
+    {
+      "file": "screens/04-card-likely-ai.png",
+      "view": "card-maybe",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=card-maybe&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 20,
+          "bottom": 580.65625
+        }
+      }
+    },
+    {
+      "file": "screens/05-card-unnamed.png",
+      "view": "card-unnamed",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=card-unnamed&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 20,
+          "bottom": 615.59375
+        }
+      }
+    },
+    {
+      "file": "screens/06-card-closing.png",
+      "view": "closing-soon",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=closing-soon&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 20,
+          "bottom": 667.34375
+        }
+      }
+    },
+    {
+      "file": "screens/07-card-no-ai.png",
+      "view": "card-no-ai",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=card-no-ai&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 78,
+          "bottom": 685.84375
+        }
+      }
+    },
+    {
+      "file": "screens/08-card-selected.png",
+      "view": "selected",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=selected&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 20,
+          "bottom": 608.34375
+        }
+      }
+    },
+    {
+      "file": "screens/09-loading.png",
+      "view": "loading",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=loading&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1304,
+        "firstCard": {
+          "top": 227.84375,
+          "bottom": 417.84375
+        }
+      }
+    },
+    {
+      "file": "screens/10-error.png",
+      "view": "error",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=error&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 833,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/11-empty.png",
+      "view": "empty",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=empty&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 953,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/12-conditions-changed.png",
+      "view": "stale",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=stale&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 4101,
+        "firstCard": {
+          "top": 1345.171875,
+          "bottom": 1891.953125
+        }
+      }
+    },
+    {
+      "file": "screens/13-answer-no-ai.png",
+      "view": "no-ai",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=no-ai&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1427,
+        "firstCard": {
+          "top": 250.84375,
+          "bottom": 854.96875
+        }
+      }
+    },
+    {
+      "file": "screens/14-departure.png",
+      "view": "departure",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=departure&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1449,
+        "firstCard": {
+          "top": 272.84375,
+          "bottom": 876.96875
+        }
+      }
+    },
+    {
+      "file": "screens/15-night.png",
+      "view": "night",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=night&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1035,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/16-coffee.png",
+      "view": "coffee",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=coffee&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1382,
+        "firstCard": {
+          "top": 251.84375,
+          "bottom": 810.140625
+        }
+      }
+    },
+    {
+      "file": "screens/17-with-child.png",
+      "view": "kids",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=kids&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1381,
+        "firstCard": {
+          "top": 216.34375,
+          "bottom": 809.578125
+        }
+      }
+    },
+    {
+      "file": "screens/18-route.png",
+      "view": "route",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=route&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": {
+          "top": 0,
+          "bottom": 0
+        }
+      }
+    },
+    {
+      "file": "screens/19-privacy-cell.png",
+      "view": "privacy",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "map",
+      "url": "demo/?view=privacy&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 2947,
+        "firstCard": {
+          "top": -1956.15625,
+          "bottom": -1409.375
+        }
+      }
+    },
+    {
+      "file": "screens/20-data-used.png",
+      "view": "data",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=data&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1143,
+        "firstCard": {
+          "top": 0,
+          "bottom": 0
+        }
+      }
+    },
+    {
+      "file": "screens/21-pick-map.png",
+      "view": "pick",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "map",
+      "url": "demo/?view=pick&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 2947,
+        "firstCard": {
+          "top": -1956.15625,
+          "bottom": -1409.375
+        }
+      }
+    },
+    {
+      "file": "screens/22-map-unavailable.png",
+      "view": "map-error",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "map",
+      "url": "demo/?view=map-error&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 2947,
+        "firstCard": {
+          "top": -1956.15625,
+          "bottom": -1409.375
+        }
+      }
+    },
+    {
+      "file": "screens/23-geolocation-denied.png",
+      "view": "geo-denied",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=geo-denied&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1875,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/24-outside-astana.png",
+      "view": "geo-far",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=geo-far&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1875,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/25-query-too-large.png",
+      "view": "too-large",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=too-large&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/26-server-loading.png",
+      "view": "unavailable",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=unavailable&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/27-timeout.png",
+      "view": "timeout",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=timeout&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 857,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/28-query-empty.png",
+      "view": "query-empty",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=query-empty&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1221,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/29-route-over-budget.png",
+      "view": "over-budget",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "route",
+      "url": "demo/?view=over-budget&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 3077,
+        "firstCard": {
+          "top": -1602.15625,
+          "bottom": -1035.875
+        }
+      }
+    },
+    {
+      "file": "screens/30-styles.png",
+      "view": "styles",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=styles&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 800,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/31-desktop-1440.png",
+      "view": "answer",
+      "width": 1440,
+      "height": 900,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer&lang=kk&capture=1",
+      "layout": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "lang": "kk",
+        "bodyHeight": 900,
+        "firstCard": {
+          "top": 252.84375,
+          "bottom": 781.296875
+        }
+      }
+    },
+    {
+      "file": "screens/32-desktop-1280.png",
+      "view": "answer",
+      "width": 1280,
+      "height": 720,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer&lang=kk&capture=1",
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "lang": "kk",
+        "bodyHeight": 720,
+        "firstCard": {
+          "top": 191.84375,
+          "bottom": 712.296875
+        }
+      }
+    },
+    {
+      "file": "screens/33-video-1920.png",
+      "view": "privacy",
+      "width": 1920,
+      "height": 1080,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=privacy&lang=kk&capture=1",
+      "layout": {
+        "width": 1920,
+        "scrollWidth": 1920,
+        "lang": "kk",
+        "bodyHeight": 1080,
+        "firstCard": {
+          "top": 252.84375,
+          "bottom": 781.296875
+        }
+      }
+    },
+    {
+      "file": "screens/34-phone-390.png",
+      "view": "answer",
+      "width": 390,
+      "height": 844,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer&lang=kk&capture=1",
+      "layout": {
+        "width": 390,
+        "scrollWidth": 390,
+        "lang": "kk",
+        "bodyHeight": 2921,
+        "firstCard": {
+          "top": 190.84375,
+          "bottom": 711.984375
+        }
+      }
+    },
+    {
+      "file": "screens/35-tablet-768.png",
+      "view": "answer",
+      "width": 768,
+      "height": 1000,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer&lang=kk&capture=1",
+      "layout": {
+        "width": 768,
+        "scrollWidth": 768,
+        "lang": "kk",
+        "bodyHeight": 2646,
+        "firstCard": {
+          "top": 165.34375,
+          "bottom": 664.734375
+        }
+      }
+    },
+    {
+      "file": "screens/36-response-ru.png",
+      "view": "answer",
+      "width": 360,
+      "height": 800,
+      "lang": "ru",
+      "section": "top",
+      "url": "demo/?view=answer&lang=ru&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "ru",
+        "bodyHeight": 2927,
+        "firstCard": {
+          "top": 190.84375,
+          "bottom": 759.375
+        }
+      }
+    },
+    {
+      "file": "screens/37-response-en.png",
+      "view": "answer",
+      "width": 360,
+      "height": 800,
+      "lang": "en",
+      "section": "top",
+      "url": "demo/?view=answer&lang=en&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "en",
+        "bodyHeight": 2870,
+        "firstCard": {
+          "top": 190.84375,
+          "bottom": 759.375
+        }
+      }
+    },
+    {
+      "file": "screens/38-closed-medium.png",
+      "view": "closed-medium",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=closed-medium&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1367,
+        "firstCard": {
+          "top": 190.84375,
+          "bottom": 794.96875
+        }
+      }
+    },
+    {
+      "file": "screens/39-desktop-form.png",
+      "view": "home",
+      "width": 1440,
+      "height": 900,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=home&lang=kk&capture=1",
+      "layout": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "lang": "kk",
+        "bodyHeight": 900,
+        "firstCard": null
+      }
+    },
+    {
+      "file": "screens/40-sent-payload.png",
+      "view": "data",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "payload",
+      "url": "demo/?view=data&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 1143,
+        "firstCard": {
+          "top": 0,
+          "bottom": 0
+        }
+      }
+    },
+    {
+      "file": "screens/41-mega-scenario.png",
+      "view": "answer-short",
+      "width": 360,
+      "height": 800,
+      "lang": "kk",
+      "section": "top",
+      "url": "demo/?view=answer-short&lang=kk&capture=1",
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "lang": "kk",
+        "bodyHeight": 2335,
+        "firstCard": {
+          "top": 216.34375,
+          "bottom": 774.640625
+        }
+      }
+    }
+  ],
+  "errors": []
+}
