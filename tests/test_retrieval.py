@@ -220,7 +220,11 @@ def test_score_is_weighted_sum(synthetic_pois: list[POI]) -> None:
     out = retrieve(make_store(synthetic_pois), intent("кофе"), make_ctx(), None, k=8)
     for c in out:
         parts = c.score_parts
-        expected = sum(WEIGHTS[k] * parts[k] for k in WEIGHTS) + parts.get("penalty", 0.0)
+        expected = (
+            sum(WEIGHTS[k] * parts[k] for k in WEIGHTS)
+            + parts.get("penalty", 0.0)
+            + parts.get("group", 0.0)
+        )
         assert c.score == pytest.approx(expected, abs=1e-3)
         assert 0.0 <= parts["proximity"] <= 1.0
         assert 0.0 <= parts["relevance"] <= 1.0
@@ -602,3 +606,22 @@ def test_night_prefers_places_open_longer() -> None:
     closing = next(c for c in out if c.poi.id == "test:poi/1")
     assert closing.hours.closes_in_min == 45
     assert closing.score_parts["open"] < out[0].score_parts["open"]
+
+
+def test_group_prefers_places_for_a_company() -> None:
+    cafe = make_poi("1", "cafe", 0.0010, tags=["coffee"])
+    rest = make_poi("2", "restaurant", 0.0011, tags=["food"])
+    lib = make_poi("3", "library", 0.0009)
+    q = intent("Мы компанией из 5 человек, чем заняться вечером?", group_size=5)
+    out = retrieve(make_store([cafe, rest, lib]), q, make_ctx(), None, k=3)
+    assert out[0].poi.id == "test:poi/2"
+    parts = {c.poi.id: c.score_parts.get("group", 0.0) for c in out}
+    assert parts["test:poi/2"] > 0 > parts["test:poi/3"]
+    assert parts["test:poi/1"] == 0.0
+
+
+def test_no_group_part_for_small_or_unknown_groups() -> None:
+    rest = make_poi("2", "restaurant", 0.0011, tags=["food"])
+    for size in (None, 2):
+        out = retrieve(make_store([rest]), intent("поесть", group_size=size), make_ctx(), None)
+        assert "group" not in out[0].score_parts

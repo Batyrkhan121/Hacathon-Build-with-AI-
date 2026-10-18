@@ -52,6 +52,15 @@ UNKNOWN_OPEN_SCORE = 0.5
 # T70 step 4: at night a place that closes within the hour is a poor first pick (S5)
 NIGHT_MIN_OPEN_MIN = 60
 NIGHT_CLOSING_SOON_SCORE = 0.3
+# T70 step 5: a group of 3+ wants room and something to do together (no capacity data in OSM,
+# so it is a category / tag heuristic; it only re-orders, it never filters)
+GROUP_MIN = 3
+GROUP_BONUS = 0.05
+GROUP_FRIENDLY = frozenset(
+    {"restaurant", "bar", "nightlife", "mall", "cinema", "entertainment", "sport", "theatre"}
+    | {"park", "attraction"}
+)
+GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -426,6 +435,15 @@ def _weather_fit(poi: POI, ctx: SearchContext) -> float:
     return 0.7 if indoor else 1.0
 
 
+def _group_fit(poi: POI, intent: QueryIntent) -> float:
+    if poi.category in GROUP_FRIENDLY:
+        return GROUP_BONUS
+    unfriendly = poi.category == "library" or bool(GROUP_UNFRIENDLY_TAGS & set(poi.tags))
+    if unfriendly or (poi.category == "playground" and not intent.with_kids):
+        return -GROUP_BONUS
+    return 0.0
+
+
 def _open_score(verdict: HoursVerdict, intent: QueryIntent) -> float:
     if (
         intent.night
@@ -459,6 +477,9 @@ def _score(
         "weather": _weather_fit(poi, ctx),
     }
     score = sum(WEIGHTS[k] * v for k, v in parts.items())
+    if intent.group_size is not None and intent.group_size >= GROUP_MIN:
+        parts["group"] = _group_fit(poi, intent)
+        score += parts["group"]
     if intent.wheelchair and _access(poi) == "unknown":
         parts["penalty"] = WHEELCHAIR_UNKNOWN_PENALTY
         score += WHEELCHAIR_UNKNOWN_PENALTY
