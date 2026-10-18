@@ -60,6 +60,7 @@ _NOTE: dict[str, dict[str, str]] = {
         "graph_wheelchair": "На коляске закладывайте больше времени; лестницы маршрут обходит, "
                             "бордюры не проверены.",
         "loop": "с возвращением к старту", "oneway": "без обратной дороги",
+        "partly_straight": "Часть отрезков посчитана по прямой × 1,3.",
         "kids": "С ребёнком закладывайте больше времени.",
         "wheelchair": "На коляске закладывайте больше времени; маршрут не проверен на ступени "
                       "и бордюры.",
@@ -71,6 +72,7 @@ _NOTE: dict[str, dict[str, str]] = {
         "graph_wheelchair": "Арбамен көбірек уақыт қалдырыңыз; маршрут баспалдақтарды айналып "
                             "өтеді, жиектастар тексерілмеген.",
         "loop": "бастапқы нүктеге оралумен", "oneway": "кері жолсыз",
+        "partly_straight": "Кейбір кесінділер түзу сызықпен × 1,3 есептелген.",
         "kids": "Баламен көбірек уақыт қалдырыңыз.",
         "wheelchair": "Арбамен көбірек уақыт қалдырыңыз; маршрут баспалдақ пен жиектасқа "
                       "тексерілмеген.",
@@ -82,6 +84,7 @@ _NOTE: dict[str, dict[str, str]] = {
         "graph_wheelchair": "In a wheelchair, allow extra time; the route avoids stairs, kerbs "
                             "are not checked.",
         "loop": "back to the start", "oneway": "one way",
+        "partly_straight": "Some segments are straight lines × 1.3.",
         "kids": "With kids, allow extra time.",
         "wheelchair": "In a wheelchair, allow extra time; the route is not checked for steps "
                       "or kerbs.",
@@ -179,6 +182,7 @@ def _graph_route(
     total: int,
     budget_min: int | None,
     note: str,
+    partly_note: str,
 ) -> MiniRoute:
     ids = [c.poi.id for c in ordered] + (["origin"] if loop else [])
     route_legs: list[RouteLeg] = []
@@ -207,7 +211,7 @@ def _graph_route(
         total_min=total,
         fits_budget=budget_min is None or total <= budget_min,
         path=path,
-        note=note,
+        note=f"{note} {partly_note}" if any(leg.straight for leg in legs) else note,
         path_source="graph",
         crossings=crossings,
         steps_count=sum(leg.steps for leg in legs),
@@ -227,18 +231,22 @@ def plan_route(
     mode: walkgraph.Mode = walkgraph.WALK,
     origin_landmark: str | None = None,
     graph_note: str | None = None,
+    lang: Lang = "ru",
 ) -> MiniRoute | None:
     """Order stops, compute legs and totals; drop trailing stops that break the budget.
 
     visit_min maps poi_id -> planned minutes on site (use Card.visit_min_low).
     Return None when fewer than 1 stop remains. `loop` adds the walk back to the start.
-    With `graph`: legs, path and minutes along the walk graph (path_source="graph"); any
-    failure -> exactly the straight route.
+    With `graph`: legs, path and minutes along the walk graph (path_source="graph"); legs
+    that fell back to straight segments add a sentence in `lang` to the note; any failure or
+    no leg on the graph -> exactly the straight route.
     """
     if graph is not None:
+        texts = _NOTE.get(lang, _NOTE["ru"])
         routed = _plan_on_graph(origin, stops, budget_min, visit_min, max_stops, loop=loop,
                                 graph=graph, mode=mode, origin_landmark=origin_landmark,
-                                note=graph_note or route_note("ru", loop=loop, graph=True))
+                                note=graph_note or route_note(lang, loop=loop, graph=True),
+                                partly_note=texts["partly_straight"])
         if routed is not None:
             return routed
     unique: list[Candidate] = []
@@ -283,12 +291,13 @@ def _plan_on_graph(
     mode: walkgraph.Mode,
     origin_landmark: str | None,
     note: str,
+    partly_note: str,
 ) -> MiniRoute | None:
     """plan_route on the graph; None (-> straight route) on any failure, a bug included."""
     try:
         return _plan_on_graph_unsafe(origin, stops, budget_min, visit_min, max_stops, loop=loop,
                                      graph=graph, mode=mode, origin_landmark=origin_landmark,
-                                     note=note)
+                                     note=note, partly_note=partly_note)
     except Exception as exc:  # noqa: BLE001 - the straight route is always there
         log.error("walk graph route failed (%s): straight segments", type(exc).__name__)
         return None
@@ -306,6 +315,7 @@ def _plan_on_graph_unsafe(
     mode: walkgraph.Mode,
     origin_landmark: str | None,
     note: str,
+    partly_note: str,
 ) -> MiniRoute | None:
     unique: list[Candidate] = []
     for cand in stops:
@@ -322,7 +332,8 @@ def _plan_on_graph_unsafe(
             return None  # no leg follows the graph: the plain straight route, with its note
         total = _graph_total(legs, ordered, visit_min)
         if budget_min is None or total <= budget_min or len(kept) == 1:
-            return _graph_route(origin, ordered, legs, loop, total, budget_min, note)
+            return _graph_route(origin, ordered, legs, loop, total, budget_min, note,
+                                partly_note)
         kept = kept[:-1]  # over budget by the graph: drop the lowest-ranked card
 
 

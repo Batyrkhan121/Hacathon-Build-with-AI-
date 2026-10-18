@@ -383,3 +383,23 @@ def test_route_with_every_leg_straight_is_the_straight_route(tmp_path) -> None: 
     plain = plan_route(at(0, 0), [park], None, {"test:poi/park": 30}, loop=True)
     assert on_graph == plain and on_graph is not None
     assert on_graph.path_source == "straight" and on_graph.note != "graph note"
+
+
+def test_graph_route_with_some_straight_legs_says_so(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A stop 3 m from the start hangs on the same node: that leg is straight, the next one
+    follows the graph -> path_source=graph and the note says some segments are straight."""
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    near, north = cand_at("near", at(2, -3)), cand_at("north", at(0, 35))
+    visits = {"test:poi/near": 10, "test:poi/north": 10}
+    for lang, sentence in (("ru", "Часть отрезков посчитана по прямой × 1,3."),
+                           ("kk", "Кейбір кесінділер түзу сызықпен × 1,3 есептелген."),
+                           ("en", "Some segments are straight lines × 1.3.")):
+        r = plan_route(at(0, -5), [near, north], None, visits, graph=g, lang=lang,
+                       graph_note=route_note(lang, graph=True))
+        assert r is not None and r.path_source == "graph"
+        assert r.stop_ids == ["test:poi/near", "test:poi/north"]
+        assert r.legs[0].distance_m <= 4 and r.legs[1].distance_m > 200  # straight, graph
+        assert r.note == f"{route_note(lang, graph=True)} {sentence}"
+    whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g)
+    assert whole is not None and whole.path_source == "graph"
+    assert "по прямой" not in whole.note  # every leg on the graph: the note stays as it was
