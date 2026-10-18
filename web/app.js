@@ -41,6 +41,7 @@ const state = {
   picking: false,
   inflight: null,
   lastRequest: null,
+  lastFormSnapshot: null,
   lastAnswer: null,
   lastError: null,
   meta: null,
@@ -144,6 +145,20 @@ function buildRequest(query, useLlm = true) {
   };
 }
 
+// Сравниваем условия формы, а не текущее значение часов и способ генерации.
+// «Завтра в это время» не должно устаревать только из-за смены минуты во время запроса.
+function formSnapshot() {
+  const body = buildRequest(els.query.value.trim());
+  return JSON.stringify({
+    query: body.query,
+    location: body.location,
+    lang: body.lang,
+    overrides: body.overrides,
+    time: state.time,
+    day: state.day,
+  });
+}
+
 async function submit({ useLlm = true } = {}) {
   const query = els.query.value.trim();
   if (!query) {
@@ -152,13 +167,14 @@ async function submit({ useLlm = true } = {}) {
     return;
   }
   showFormError('');
-  const body = buildRequest(query, useLlm);
+  let body = buildRequest(query, useLlm);
+  const snapshot = formSnapshot();
 
   state.inflight?.abort();
   const ctrl = new AbortController();
   state.inflight = ctrl;
   setBusy(true);
-  setStale(false);
+  syncStale();
   mapView.clearAnswer();
   view.renderLoading(els.answer, { onCancel: cancelRequest });
   setStatus(t('status.loading', { where: whereLabel() }));
@@ -166,9 +182,28 @@ async function submit({ useLlm = true } = {}) {
   const started = performance.now();
 
   try {
-    const answer = await recommend(body, ctrl.signal);
+    let answer;
+    try {
+      answer = await recommend(body, ctrl.signal);
+    } catch (err) {
+      // Один повтор по тем же условиям. Отмена, новый запрос или правка формы
+      // не должны запускать скрытый запрос за уже неактуальными рекомендациями.
+      if (
+        err.kind !== 'timeout' ||
+        !body.use_llm ||
+        ctrl.signal.aborted ||
+        state.inflight !== ctrl ||
+        snapshot !== formSnapshot()
+      ) {
+        throw err;
+      }
+      body = { ...body, use_llm: false };
+      setStatus(t('status.retryNoAi'));
+      answer = await recommend(body, ctrl.signal);
+    }
     if (state.inflight !== ctrl) return;
     state.lastRequest = body;
+    state.lastFormSnapshot = snapshot;
     state.lastAnswer = answer;
     state.lastError = null;
     renderAnswer();
@@ -178,6 +213,7 @@ async function submit({ useLlm = true } = {}) {
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
     state.lastRequest = body;
+    state.lastFormSnapshot = snapshot;
     state.lastAnswer = null;
     state.lastError = err;
     renderError(); // role="alert" сам озвучит ошибку
@@ -186,13 +222,15 @@ async function submit({ useLlm = true } = {}) {
     if (state.inflight === ctrl) {
       state.inflight = null;
       setBusy(false);
+      syncStale();
     }
   }
 }
 
-// Карточки на экране относятся к прошлым условиям (место, фильтры, время) — говорим об этом прямо.
-function setStale(stale) {
-  els.stale.hidden = !(stale && state.lastAnswer);
+// Предупреждение относится только к видимым карточкам, а не к скелетону загрузки.
+function syncStale() {
+  const stale = state.lastAnswer && state.lastFormSnapshot !== formSnapshot();
+  els.stale.hidden = Boolean(state.inflight) || !stale;
 }
 
 // Отмена: возвращаем то, что было на экране до запроса.
@@ -210,6 +248,7 @@ function restoreResults() {
   if (state.lastAnswer) renderAnswer();
   else if (state.lastError) renderError();
   else renderIntro();
+  syncStale();
 }
 
 function renderIntro() {
@@ -399,7 +438,7 @@ function filtersChanged() {
   state.activePreset = null;
   renderChips();
   renderPresets();
-  setStale(true);
+  syncStale();
 }
 
 function clearFilters() {
@@ -471,7 +510,7 @@ function setLocation(loc) {
   renderWhereNote();
   renderLocationOnMap();
   renderPresets();
-  setStale(true);
+  syncStale();
 }
 
 function setCellFromPoint(lat, lng) {
@@ -576,6 +615,7 @@ function bindEvents() {
       renderPresets();
     }
     showFormError('');
+    syncStale();
   });
   els.landmark.addEventListener('change', () => {
     if (els.landmark.value === '__cell') return;
@@ -598,9 +638,12 @@ function bindEvents() {
   onLangChange(() => {
     syncLangButtons();
     renderAll();
-    if (state.lastAnswer) renderAnswer({ redrawMap: false });
-    else if (state.lastError) renderError();
-    else if (!state.inflight) renderIntro();
+    if (!state.inflight) {
+      if (state.lastAnswer) renderAnswer({ redrawMap: false });
+      else if (state.lastError) renderError();
+      else renderIntro();
+    }
+    syncStale();
     if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
     autoGrow();
     if (state.location.type === 'cell') {

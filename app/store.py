@@ -4,7 +4,7 @@ Index format (produced by the DATA lane, pipeline/build_index.py):
   data/index/embeddings.npy  float32 (N, D), L2-normalised, row i <-> ids[i]
   data/index/ids.json        list[str] of POI ids, same order
   data/index/meta.json       {"model": str, "dim": int, "count": int, "created_at": str, ...}
-If the index is missing, meta.model != settings.embed_model or meta.dim != settings.embed_dim
+If the index is missing, incompatible, or its document fingerprint cannot be verified
 -> embeddings=None
 (retrieval falls back to lexical scoring) and a warning is logged.
 """
@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.schemas import POI, Landmark
+from pipeline.build_index import docs_hash
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +125,26 @@ def _load_embeddings(
         ]
     if matrix.ndim != 2 or matrix.shape != (len(ids), dim):
         return None, None, [f"индекс эмбеддингов повреждён (shape {matrix.shape}), {lexical}"]
+
+    # Equal row counts alone do not prove that the vectors describe today's POIs.
+    # The writer hashes each ID and the exact document text used for embedding.
+    # Use saved index order so a harmless reorder of poi.jsonl still aligns by ID.
+    by_id = {poi.id: poi for poi in pois}
+    if (
+        len(ids) != len(set(ids))
+        or meta.get("count") != len(ids)
+        or set(ids) != set(by_id)
+    ):
+        return None, None, [f"индекс эмбеддингов устарел: состав POI изменился, {lexical}"]
+    fingerprint = meta.get("docs_sha256")
+    if not isinstance(fingerprint, str) or not fingerprint:
+        return None, None, [
+            f"свежесть индекса не подтверждена: нет docs_sha256; пересоберите индекс, {lexical}"
+        ]
+    if fingerprint != docs_hash([by_id[poi_id] for poi_id in ids]):
+        return None, None, [
+            f"индекс эмбеддингов устарел: тексты POI изменились; пересоберите индекс, {lexical}"
+        ]
 
     row_of = {poi_id: row for row, poi_id in enumerate(ids)}
     aligned = np.zeros((len(pois), dim), dtype=np.float32)

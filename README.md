@@ -54,7 +54,26 @@ cp .env.example .env
 - [Архитектура](docs/ARCHITECTURE.md)
 - [План](docs/PLAN.md)
 - [Промпты для Claude Code](docs/PROMPTS.md)
-- Ещё появятся: концепция, RAG, сценарии и ограничения, этика и приватность, данные.
+- [Концепция](docs/CONCEPT.md), [RAG](docs/RAG.md), [сценарии](docs/SCENARIOS.md)
+- [Этика и приватность](docs/ETHICS.md), [данные](docs/DATA.md)
+- [Питч](docs/PITCH.md), [сценарий видео](docs/VIDEO.md)
+- [Исправления Meyrban и проверка перед сдачей 18 октября до 23:59](docs/RELEASE.md)
+
+## Проверка перед сдачей
+
+Из корня проекта, без ключей и платных запросов (для UI-тестов нужен Node.js 22+):
+
+```bash
+.venv/Scripts/python -m pytest -ra
+.venv/Scripts/python -m ruff check app pipeline eval scripts tests
+node --test tests/frontend_state.test.mjs tests/frontend_render.test.mjs
+.venv/Scripts/python -m eval.run_eval --no-llm --strict --out work/eval
+.venv/Scripts/python -m eval.run_eval --no-llm --strict --scenarios eval/probes.yaml --out work/probes
+```
+
+`--strict` возвращает ненулевой код при провале сценария. Эти проверки также запускаются
+GitHub Actions для pull request. Реальную генерацию с ключом Claude нужно отдельно проверить
+на машине показа; успешные тесты с подменённым провайдером не подтверждают доступность API.
 
 ## Данные
 © участники OpenStreetMap (ODbL), Wikidata (CC0). Погода: Open-Meteo.

@@ -178,3 +178,20 @@ def test_generic_name_and_unknown_access_are_explicit(synthetic_pois: list[POI])
     assert '"wheelchair": "unknown"' in prompt
     plain = build_prompt(QueryIntent(raw_query="кофе"), context(), [candidate(synthetic_pois[1])])
     assert "name_is_generic" not in plain
+
+
+def test_generated_enrichment_is_not_presented_as_independent_facts(
+    synthetic_pois: list[POI],
+) -> None:
+    poi = synthetic_pois[0].model_copy(update={
+        "description": "There is an imaginary rooftop observatory.",
+        "description_source": "llm_generated", "tags": ["coffee"],
+    })
+    prompt = build_prompt(
+        QueryIntent(raw_query="quiet coffee and sockets", must_tags=["quiet", "power_outlets"]),
+        context(), [candidate(poi)],
+    )
+    assert "imaginary rooftop" not in prompt
+    assert '"description_source": "llm_generated"' in prompt
+    assert '"unconfirmed_requested_tags"' in prompt
+    assert '"power_outlets"' in prompt and '"quiet"' in prompt

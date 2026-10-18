@@ -89,6 +89,13 @@ VISIT_MIN: dict[str, tuple[int, int]] = {
     "entertainment": (60, 120),
     "other": (20, 40),
 }
+# Short but useful visits, not an invented five-minute museum tour or cinema show.
+MIN_USEFUL_VISIT: dict[str, int] = {
+    "cafe": 10, "restaurant": 30, "fast_food": 10, "bar": 20, "nightlife": 30,
+    "museum": 20, "gallery": 15, "theatre": 90, "cinema": 90, "library": 10,
+    "park": 5, "playground": 10, "viewpoint": 5, "attraction": 10, "monument": 5,
+    "religious": 10, "mall": 10, "sport": 20, "entertainment": 20, "other": 10,
+}
 _TODO_GROUP: dict[str, str] = {
     "cafe": "food",
     "restaurant": "food",
@@ -218,6 +225,30 @@ def _visit_minutes(category: Category, intent: QueryIntent) -> tuple[int, int]:
         # a route has up to 3 stops: the minimal visit must leave room for the others
         low = min(low, high, max(10, intent.time_budget_min // 3))
     return low, high
+
+
+def _available_visit(cand: Candidate, intent: QueryIntent) -> int | None:
+    """Time at the place after the walk, bounded by the budget and known closing time."""
+    bounds: list[int] = []
+    if intent.time_budget_min is not None:
+        bounds.append(intent.time_budget_min - cand.walk_min)
+    if cand.hours.status == "open" and cand.hours.closes_in_min is not None:
+        bounds.append(cand.hours.closes_in_min - cand.walk_min)
+    return min(bounds) if bounds else None
+
+
+def _feasible_template_visit(cand: Candidate, intent: QueryIntent) -> tuple[int, int] | None:
+    if cand.hours.status == "closed" and cand.hours.confidence in {"high", "medium"}:
+        return None
+    available = _available_visit(cand, intent)
+    minimum = MIN_USEFUL_VISIT[cand.poi.category]
+    if available is not None and available < minimum:
+        return None
+    low, high = _visit_minutes(cand.poi.category, intent)
+    if available is not None:
+        high = min(high, available)
+    high = max(minimum, high)
+    return max(minimum, min(low, high)), high
 
 
 def _facts_sources(cand: Candidate) -> list[Source]:
@@ -370,12 +401,16 @@ def finalize(
     by_id = {c.poi.id: c for c in candidates}
     cards: list[Card] = []
     seen: set[str] = set()  # poi ids and generic names ("playground:детская площадка")
-    foreign = duplicates = stripped = 0
+    foreign = duplicates = stripped = adjusted = 0
     for item in draft.cards:
         if item.poi_id not in by_id:
             foreign += 1
             continue
         cand = by_id[item.poi_id]
+        fallback_visit = _feasible_template_visit(cand, intent)
+        if fallback_visit is None:
+            adjusted += 1
+            continue
         generic = generic_key(cand.poi)
         if item.poi_id in seen or (generic is not None and generic in seen):
             duplicates += 1
@@ -394,6 +429,17 @@ def finalize(
         why = _trim(_first_sentences(why, MAX_WHY_SENTENCES), MAX_WHY_CHARS)
         todo = _trim(todo, MAX_TODO_CHARS)
         low, high = sorted((item.visit_min_low, item.visit_min_high))
+        available = _available_visit(cand, intent)
+        minimum = MIN_USEFUL_VISIT[cand.poi.category]
+        source = item.idea_source
+        if cand.poi.description and cand.poi.description_source == "llm_generated":
+            source = "generated"
+        if low < minimum or (available is not None and high > available):
+            # Replacing the activity as well avoids keeping prose such as "spend two hours".
+            low, high = fallback_visit
+            why, todo = _template_why(cand, intent, ctx), _template_todo(cand.poi, intent.lang)
+            source = "poi_data"
+            adjusted += 1
         cards.append(
             _card(
                 rank=len(cards) + 1,
@@ -402,7 +448,7 @@ def finalize(
                 why=why or _template_why(cand, intent, ctx),
                 todo=todo or _template_todo(cand.poi, intent.lang),
                 visit=(low, high),
-                idea_source=item.idea_source,
+                idea_source=source,
             )
         )
 
@@ -413,6 +459,12 @@ def finalize(
         warnings.append(f"Отброшено повторных карточек ИИ: {duplicates}")
     if stripped:
         warnings.append("Убрано утверждение «открыто сейчас»: часы работы не подтверждены")
+    if adjusted:
+        warnings.append({
+            "ru": "Планы посещения скорректированы с учётом дороги, времени и часов работы.",
+            "kk": "Бару жоспары жолға, уақытқа және жұмыс кестесіне сай түзетілді.",
+            "en": "Visits were adjusted for walking time, the time budget and opening hours.",
+        }[intent.lang])
     if not cards:
         warnings.append("ИИ не дал подходящих карточек, показаны карточки по данным")
         return template_cards(candidates, intent, ctx), warnings
@@ -432,12 +484,15 @@ def template_cards(
     for unnamed places with the same generic name (e.g. «Детская площадка»).
     """
     n = max(0, min(n, MAX_CARDS))
+    visits = {c.poi.id: _feasible_template_visit(c, intent) for c in candidates}
     chosen: list[Candidate] = []
     for strict in (True, False):  # strict pass: at most 2 cards per category
         for cand in candidates:
             if len(chosen) >= n:
                 break
             if any(c.poi.id == cand.poi.id for c in chosen):
+                continue
+            if visits[cand.poi.id] is None:
                 continue
             # never two cards for unnamed places with the same name: fewer cards is better
             key = generic_key(cand.poi)
@@ -453,7 +508,7 @@ def template_cards(
             intent=intent,
             why=_template_why(cand, intent, ctx),
             todo=_template_todo(cand.poi, intent.lang),
-            visit=_visit_minutes(cand.poi.category, intent),
+            visit=visits[cand.poi.id],  # type: ignore[arg-type] - infeasible entries skipped above
             idea_source="poi_data",
         )
         for rank, cand in enumerate(chosen, start=1)

@@ -388,11 +388,11 @@ def _passes_profile(poi: POI, intent: QueryIntent) -> bool:
     return not (intent.indoor == "outdoor" and indoor is True)
 
 
-def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
+def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent, walk_min: int) -> bool:
     if verdict.status == "closed" and verdict.confidence in ("high", "medium"):
         return False
     if verdict.status == "open" and verdict.closes_in_min is not None:
-        if verdict.closes_in_min < MIN_VISIT_MIN:
+        if verdict.closes_in_min < walk_min + MIN_VISIT_MIN:
             return False
     if intent.night:
         open_now = verdict.status == "open" and verdict.confidence == "high"
@@ -667,9 +667,14 @@ def retrieve(
         distance = haversine_m(ctx.origin, poi.geo)
         if distance > ctx.radius_m or not _passes_profile(poi, intent):
             continue
+        walk_min = walk_minutes(distance)
+        if intent.max_walk_min is not None and walk_min > intent.max_walk_min:
+            continue
+        if intent.time_budget_min is not None and walk_min + 5 > intent.time_budget_min:
+            continue
         # the note is written in the user's language by app.hours (FEATURES, T73)
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
-        if not _passes_hours(poi, verdict, intent):
+        if not _passes_hours(poi, verdict, intent, walk_min):
             continue
         sem = None if semantic is None or np.isnan(semantic[i]) else float(semantic[i])
         score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems)
@@ -677,7 +682,7 @@ def retrieve(
             Candidate(
                 poi=poi,
                 distance_m=round(distance),
-                walk_min=walk_minutes(distance),
+                walk_min=walk_min,
                 hours=verdict,
                 score=score,
                 score_parts=parts,

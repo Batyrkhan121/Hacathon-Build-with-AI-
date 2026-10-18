@@ -81,6 +81,29 @@ def test_radius_filter(synthetic_pois: list[POI]) -> None:
     assert {"test:poi/10", "test:poi/11", "test:poi/14"}.isdisjoint(ids(out))
 
 
+@pytest.mark.parametrize("night", [False, True])
+def test_walk_limit_remains_hard_in_a_widened_radius(night: bool) -> None:
+    near = make_poi("near", "cafe", dlat=0.0001, opening_hours="24/7")
+    far = make_poi("far", "cafe", dlat=0.003, opening_hours="24/7")
+    out = retrieve(make_store([near, far]), intent(max_walk_min=1, night=night),
+                   make_ctx(radius=5000), None)
+    assert ids(out) == [near.id]
+
+
+def test_hours_allow_walking_and_a_minimum_visit() -> None:
+    far = make_poi("far", "museum", dlat=0.02, opening_hours="Mo-Su 10:00-12:35")
+    near = make_poi("near", "museum", dlat=0.001, opening_hours="Mo-Su 10:00-12:35")
+    out = retrieve(make_store([far, near]), intent(time_budget_min=120),
+                   make_ctx(radius=3000), None)
+    assert ids(out) == [near.id]  # 39 min to far; it closes after 35 min
+
+
+def test_budget_reserves_a_minimum_visit_after_walking() -> None:
+    far = make_poi("far", "cafe", dlat=0.005, opening_hours="24/7")
+    assert retrieve(make_store([far]), intent(time_budget_min=10),
+                    make_ctx(radius=3000), None) == []
+
+
 def test_distance_and_walk_come_from_code(synthetic_pois: list[POI]) -> None:
     out = retrieve(make_store(synthetic_pois), intent(), make_ctx(), None, k=20)
     museum = next(c for c in out if c.poi.id == "test:poi/3")

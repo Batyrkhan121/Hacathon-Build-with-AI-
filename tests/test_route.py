@@ -84,11 +84,24 @@ def test_max_stops_never_exceeds_three() -> None:
     assert len(route.stop_ids) == 3
 
 
-def test_single_stop_over_budget_is_kept_but_flagged() -> None:
-    route = plan_route(ORIGIN, [FAR], 5, VISITS)
+def test_single_stop_over_budget_has_no_feasible_route() -> None:
+    assert plan_route(ORIGIN, [FAR], 5, VISITS) is None
+
+
+def test_route_visits_early_closing_place_first() -> None:
+    early = FAR.model_copy(update={"hours": HoursVerdict(
+        status="open", confidence="high", note="closes soon", closes_in_min=35)})
+    visits = {early.poi.id: 10, NEAR.poi.id: 20}
+    route = plan_route(ORIGIN, [NEAR, early], 120, visits)
     assert route is not None
-    assert route.stop_ids == ["test:poi/far"]
-    assert route.fits_budget is False
+    assert route.stop_ids == [early.poi.id, NEAR.poi.id]
+
+
+def test_route_and_walk_reject_a_visit_that_ends_after_closing() -> None:
+    early = FAR.model_copy(update={"hours": HoursVerdict(
+        status="open", confidence="high", note="closes soon", closes_in_min=25)})
+    assert plan_route(ORIGIN, [early], 120, {early.poi.id: 20}) is None
+    assert plan_walk(ORIGIN, [early], 120) == []
 
 
 def test_max_stops_and_duplicates() -> None:

@@ -99,13 +99,31 @@ def _path_metres(origin: GeoPoint, ordered: list[Candidate], loop: bool) -> floa
     return total + (haversine_m(here, origin) if loop and ordered else 0.0)
 
 
-def _best_order(origin: GeoPoint, stops: list[Candidate], loop: bool) -> list[Candidate]:
-    """Shortest visiting order of <= 3 stops; ties keep the card order (rank)."""
-    best = min(
-        permutations(range(len(stops))),
-        key=lambda p: (round(_path_metres(origin, [stops[i] for i in p], loop)), p),
-    )
-    return [stops[i] for i in best]
+def _hours_fit(origin: GeoPoint, ordered: list[Candidate], visit_min: dict[str, int]) -> bool:
+    """Every visit must finish before the first known closure, including previous stops."""
+    elapsed = 0
+    here = origin
+    for cand in ordered:
+        elapsed += walk_minutes(haversine_m(here, cand.poi.geo))
+        elapsed += visit_min.get(cand.poi.id, DEFAULT_VISIT_MIN)
+        if cand.hours.status == "closed" and cand.hours.confidence in {"high", "medium"}:
+            return False
+        closes = cand.hours.closes_in_min
+        if cand.hours.status == "open" and closes is not None and elapsed > closes:
+            return False
+        here = cand.poi.geo
+    return True
+
+
+def _best_order(origin: GeoPoint, stops: list[Candidate], loop: bool,
+                visit_min: dict[str, int]) -> list[Candidate] | None:
+    """Shortest order that respects closing times; ties keep the card order (rank)."""
+    orders = (p for p in permutations(range(len(stops)))
+              if _hours_fit(origin, [stops[i] for i in p], visit_min))
+    best = min(orders,
+               key=lambda p: (round(_path_metres(origin, [stops[i] for i in p], loop)), p),
+               default=None)
+    return [stops[i] for i in best] if best is not None else None
 
 
 def _total_min(legs: list[RouteLeg], ordered: list[Candidate], visit_min: dict[str, int]) -> int:
@@ -136,13 +154,18 @@ def plan_route(
     if not kept:
         return None
 
-    while True:
-        ordered = _best_order(origin, kept, loop)
+    while kept:
+        ordered = _best_order(origin, kept, loop, visit_min)
+        if ordered is None:
+            kept = kept[:-1]
+            continue
         legs = _legs(origin, ordered, loop)
         total = _total_min(legs, ordered, visit_min)
-        if budget_min is None or total <= budget_min or len(kept) == 1:
+        if budget_min is None or total <= budget_min:
             break
         kept = kept[:-1]  # over budget: drop the lowest-ranked card, then re-order
+    else:
+        return None
 
     path = [origin, *(c.poi.geo for c in ordered)]
     if loop:
@@ -186,7 +209,9 @@ def plan_walk(
     visits = {c.poi.id: walk_visit_minutes(c) for c in pool}
 
     def fit(combo: tuple[Candidate, ...]) -> tuple[list[Candidate], int] | None:
-        ordered = _best_order(origin, list(combo), loop)
+        ordered = _best_order(origin, list(combo), loop, visits)
+        if ordered is None:
+            return None
         total = _total_min(_legs(origin, ordered, loop), ordered, visits)
         return (ordered, total) if total <= budget_min else None
 

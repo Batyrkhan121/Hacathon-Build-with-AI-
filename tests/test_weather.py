@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -86,7 +88,7 @@ def test_cached_for_15_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(seen) == 2
 
 
-def test_retry_then_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transient_failure_returns_without_online_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"n": 0}
 
     def flaky(_r: httpx.Request) -> httpx.Response:
@@ -96,8 +98,8 @@ def test_retry_then_success(monkeypatch: pytest.MonkeyPatch) -> None:
         return httpx.Response(200, json={"current": CURRENT})
 
     install(monkeypatch, flaky)
-    assert weather.get_weather(EXPO, now()) is not None
-    assert calls["n"] == 2
+    assert weather.get_weather(EXPO, now()) is None
+    assert calls["n"] == 1
 
 
 @pytest.mark.parametrize(
@@ -139,6 +141,35 @@ def test_time_machine_skips_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
     assert weather.get_weather(EXPO, now() + timedelta(hours=5)) is None
     assert weather.get_weather(EXPO, now() - timedelta(days=1)) is None
     assert seen == []
+
+
+def test_weather_respects_shared_request_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import request_budget
+
+    seen = install(monkeypatch, lambda r: httpx.Response(200, json={"current": CURRENT}))
+    with request_budget(0):
+        assert weather.get_weather(EXPO, now()) is None
+    assert seen == []
+
+
+def test_stalled_weather_cannot_hold_up_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    release = threading.Event()
+    finished = threading.Event()
+
+    def stalled(_lat: float, _lon: float) -> dict:
+        release.wait(1)
+        finished.set()
+        return {"current": CURRENT}
+
+    monkeypatch.setattr(weather, "_fetch", stalled)
+    monkeypatch.setattr(weather, "TIMEOUT_S", 0.02)
+    started = time.monotonic()
+    try:
+        assert weather.get_weather(EXPO, now()) is None
+        assert time.monotonic() - started < 0.5
+    finally:
+        release.set()
+        assert finished.wait(1)
 
 
 def test_naive_time_is_astana_local(monkeypatch: pytest.MonkeyPatch) -> None:

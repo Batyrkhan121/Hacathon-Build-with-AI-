@@ -91,6 +91,7 @@ const DICT = {
 
     'results.title': 'Результаты',
     'status.loading': 'Ищу места: {where}…',
+    'status.retryNoAi': 'ИИ отвечает слишком долго. Подбираю места по данным без ИИ…',
     'status.done': 'Готово за {sec} с · карточек: {n}',
     'loading.label': 'Загружаю карточки',
 
@@ -156,6 +157,7 @@ const DICT = {
     'route.start': 'Старт',
     'route.stop': 'Остановка',
     'route.leg': '{dist} · {min} мин пешком',
+    'route.visit': 'на месте {min} мин',
     'route.back': 'Обратно к старту',
     'route.overBudget': 'Маршрут не укладывается в ваше время',
     'route.show': 'Показать на карте',
@@ -338,6 +340,7 @@ const DICT = {
 
     'results.title': 'Нәтижелер',
     'status.loading': 'Орын іздеп жатырмын: {where}…',
+    'status.retryNoAi': 'ЖИ жауабы кешікті. Орындарды деректер бойынша ЖИ-сіз таңдаймын…',
     'status.done': '{sec} с ішінде дайын · карточкалар: {n}',
     'loading.label': 'Карточкаларды жүктеп жатырмын',
 
@@ -403,6 +406,7 @@ const DICT = {
     'route.start': 'Бастау',
     'route.stop': 'Аялдама',
     'route.leg': '{dist} · жаяу {min} мин',
+    'route.visit': 'орнында {min} мин',
     'route.back': 'Бастауға қайту',
     'route.overBudget': 'Бағыт сіздің уақытыңызға сыймайды',
     'route.show': 'Картада көрсету',
@@ -585,6 +589,7 @@ const DICT = {
 
     'results.title': 'Results',
     'status.loading': 'Finding places: {where}…',
+    'status.retryNoAi': 'AI is taking too long. Finding places from the data without AI…',
     'status.done': 'Done in {sec} s · cards: {n}',
     'loading.label': 'Loading cards',
 
@@ -650,6 +655,7 @@ const DICT = {
     'route.start': 'Start',
     'route.stop': 'Stop',
     'route.leg': '{dist} · {min} min walk',
+    'route.visit': '{min} min there',
     'route.back': 'Back to start',
     'route.overBudget': "The route doesn't fit your time",
     'route.show': 'Show on map',
