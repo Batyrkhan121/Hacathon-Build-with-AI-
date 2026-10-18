@@ -103,6 +103,14 @@ function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+// Название старта того запроса, на который пришёл ответ (форма к этому времени могла измениться).
+function requestOriginName() {
+  const loc = state.lastRequest?.location;
+  if (!loc) return '';
+  if (loc.h3_cell) return t('map.myArea');
+  return landmarkName(landmarkById(loc.landmark_id)) || loc.landmark_id;
+}
+
 function whereLabel() {
   if (state.location.type === 'cell') return t('map.myArea');
   return landmarkName(landmarkById(state.location.id)) || state.location.id;
@@ -241,6 +249,7 @@ function renderAnswer({ redrawMap = true } = {}) {
   view.renderAnswer(els.answer, answer, {
     request: state.lastRequest,
     meta: state.meta,
+    originName: requestOriginName(),
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),

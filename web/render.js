@@ -213,7 +213,7 @@ export function renderAnswer(root, answer, ctx) {
 
   const body = answer.cards.length
     ? [
-        answer.route ? renderRoute(answer.route, byId, ctx) : null,
+        answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
         h(
           'ol',
           { class: 'cards' },
@@ -248,18 +248,47 @@ function renderEmpty(ctx) {
   );
 }
 
-function renderRoute(route, byId, ctx) {
-  const rankOf = (id) => (id === 'origin' ? null : byId.get(id)?.rank);
-  const legs = route.legs.map((leg) => {
-    const rank = rankOf(leg.to_id);
-    return h(
+// Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
+function renderRoute(route, byId, ctx, originName) {
+  const items = [
+    h(
       'li',
-      {},
-      h('span', { class: 'leg-to', 'aria-hidden': 'true' }, rank ?? '•'),
-      h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${rank ?? ''}: ` }),
-      h('span', { class: 'leg-meta', text: `${formatDistance(leg.distance_m)} · ${leg.walk_min} ${t('unit.min')}` }),
+      { class: 'tl-point tl-origin' },
+      h('span', { class: 'tl-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'tl-name' }, h('strong', { text: t('route.start') }), originName ? ` · ${originName}` : null),
+    ),
+  ];
+  for (const leg of route.legs) {
+    items.push(
+      h('li', { class: 'tl-leg', text: t('route.leg', { dist: formatDistance(leg.distance_m), min: leg.walk_min }) }),
     );
-  });
+    const card = leg.to_id === 'origin' ? null : byId.get(leg.to_id);
+    if (card) {
+      items.push(
+        h(
+          'li',
+          { class: 'tl-point' },
+          h('span', { class: `tl-rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+          h(
+            'span',
+            { class: 'tl-name' },
+            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
+            h('strong', { text: cardTitle(card) }),
+            h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
+          ),
+        ),
+      );
+    } else {
+      items.push(
+        h(
+          'li',
+          { class: 'tl-point tl-origin' },
+          h('span', { class: 'tl-dot', 'aria-hidden': 'true' }),
+          h('span', { class: 'tl-name' }, h('strong', { text: t('route.back') })),
+        ),
+      );
+    }
+  }
   return h(
     'section',
     { class: 'route', 'aria-label': t('route.title') },
@@ -272,12 +301,7 @@ function renderRoute(route, byId, ctx) {
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
     ),
-    h(
-      'ol',
-      { class: 'legs' },
-      h('li', { class: 'leg-start' }, h('span', { class: 'leg-origin', 'aria-hidden': 'true' }), t('route.start')),
-      legs,
-    ),
+    h('ol', { class: 'timeline' }, items),
     route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
     h(
       'div',
