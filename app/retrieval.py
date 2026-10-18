@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 
 import numpy as np
 
@@ -117,7 +118,7 @@ STOPWORDS = frozenset(
     пара очень бы ли не нет да еще уже тоже сходить пойти куда-нибудь что-нибудь что-то
     the a an and or to of in on at for with near me i we want some something place where what
     is are can any go
-    мен біз қайда не бар керек жақын жерде маған
+    мен біз қайда керек жақын жерде маған
     """.split()
 )
 GENERIC_NAMES = frozenset(
@@ -249,7 +250,29 @@ def _tokens(text: str) -> list[str]:
     ]
 
 
-def _stem_hit(stem: str, doc_stems: set[str]) -> bool:
+@lru_cache(maxsize=16384)
+def _doc_index(text: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """(tokens, 5-char stems, 4-char prefixes of stems) of a POI text; cached per text."""
+    tokens = _tokens(text)
+    stems = frozenset(t[:_STEM] for t in tokens)
+    prefixes = frozenset(d[:_MIN_PREFIX] for d in stems if len(d) >= _MIN_PREFIX)
+    return frozenset(tokens), stems, prefixes
+
+
+def _query_stems(intent: QueryIntent) -> frozenset[str]:
+    return frozenset(t[:_STEM] for t in _tokens(intent.raw_query))
+
+
+def _indexed_hit(stem: str, stems: frozenset[str], prefixes: frozenset[str]) -> bool:
+    """Same rule as _stem_hit in O(1): stems are at most _STEM chars long."""
+    if stem in stems:
+        return True
+    if len(stem) < _MIN_PREFIX:
+        return False
+    return stem in prefixes or stem[:_MIN_PREFIX] in stems
+
+
+def _stem_hit(stem: str, doc_stems: set[str] | frozenset[str]) -> bool:
     if stem in doc_stems:
         return True
     if len(stem) < _MIN_PREFIX:
@@ -338,18 +361,13 @@ def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
 # ------------------------------------------------------------------ scoring
 
 
-def lexical_relevance(intent: QueryIntent, text: str) -> float:
-    """0..1 keyword overlap between intent (raw_query + tags + categories) and POI text."""
-    doc_tokens = _tokens(text)
-    if not doc_tokens:
+def _lexical(intent: QueryIntent, query_stems: frozenset[str], text: str) -> float:
+    doc_set, doc_stems, doc_prefixes = _doc_index(text)
+    if not doc_set:
         return 0.0
-    doc_set = set(doc_tokens)
-    doc_stems = {t[:_STEM] for t in doc_tokens}
-    query_stems = {t[:_STEM] for t in _tokens(intent.raw_query)}
-
     parts: list[tuple[float, float]] = []
     if query_stems:
-        hits = sum(_stem_hit(s, doc_stems) for s in query_stems)
+        hits = sum(_indexed_hit(s, doc_stems, doc_prefixes) for s in query_stems)
         parts.append((0.5, hits / len(query_stems)))
     if intent.must_tags:
         parts.append((0.3, sum(t in doc_set for t in intent.must_tags) / len(intent.must_tags)))
@@ -360,7 +378,13 @@ def lexical_relevance(intent: QueryIntent, text: str) -> float:
     return round(sum(w * v for w, v in parts) / sum(w for w, _ in parts), 4)
 
 
+def lexical_relevance(intent: QueryIntent, text: str) -> float:
+    """0..1 keyword overlap between intent (raw_query + tags + categories) and POI text."""
+    return _lexical(intent, _query_stems(intent), text)
+
+
 def _semantic_scores(store: Store, query_vec: np.ndarray | None) -> np.ndarray | None:
+    """Cosine per POI in 0..1; NaN where the POI has no vector (it is scored lexically)."""
     if query_vec is None or store.embeddings is None:
         return None
     q = np.asarray(query_vec, dtype=np.float32).ravel()
@@ -368,9 +392,12 @@ def _semantic_scores(store: Store, query_vec: np.ndarray | None) -> np.ndarray |
         log.warning("query vector dim %d does not match the index, lexical only", q.shape[0])
         return None
     norm = float(np.linalg.norm(q))
-    if norm == 0.0:
+    if not np.isfinite(norm) or norm == 0.0:
+        log.warning("query vector is zero or not finite, lexical only")
         return None
-    return np.clip(store.embeddings @ (q / norm), 0.0, 1.0)
+    scores = np.clip(store.embeddings @ (q / norm), 0.0, 1.0)
+    has_vector = np.linalg.norm(store.embeddings, axis=1) > 0
+    return np.where(has_vector & np.isfinite(scores), scores, np.nan)
 
 
 def _weather_fit(poi: POI, ctx: SearchContext) -> float:
@@ -390,8 +417,9 @@ def _score(
     distance: float,
     verdict: HoursVerdict,
     semantic: float | None,
+    query_stems: frozenset[str],
 ) -> tuple[float, dict[str, float]]:
-    lexical = lexical_relevance(intent, poi_text(poi))
+    lexical = _lexical(intent, query_stems, poi_text(poi))
     relevance = lexical if semantic is None else (
         SEMANTIC_SHARE * semantic + (1 - SEMANTIC_SHARE) * lexical
     )
@@ -490,7 +518,7 @@ def explain(
     src = _source_label(poi)
     keys: list[tuple[str, dict[str, object]]] = [("walk", {"n": cand.walk_min})]
 
-    query_stems = {t[:_STEM] for t in _tokens(intent.raw_query)}
+    query_stems = _query_stems(intent)
     wanted = [t for t in intent.must_tags if t in poi.tags]
     for tag in poi.tags:  # tags the user asked for in words, e.g. "кофе" without must_tags
         words = {t[:_STEM] for t in _tokens(TAG_WORDS.get(tag, ""))}
@@ -501,7 +529,7 @@ def explain(
         if key in REASONS and key not in ("indoor", "outdoor"):
             keys.append((key, {"src": src} if tag in FACT_TAGS else {}))
 
-    if intent.with_kids and _kids_ok(poi):
+    if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))
     if intent.wheelchair:
         access = _access(poi)
@@ -554,10 +582,13 @@ def retrieve(
     high confidence or closing before a minimal visit; night -> late_open / 24_7 / night only.
     Unknown hours are allowed but penalised. Fill Candidate.matched with short
     deterministic reasons in Russian (e.g. "есть кофе", "≈6 мин пешком").
+    Final order is MMR (score vs. redundancy); Candidate.score keeps the raw weighted score.
+    Unnamed places with the same generic name are kept once (the best one).
     """
     if k <= 0 or not store.pois:
         return []
     semantic = _semantic_scores(store, query_vec)
+    query_stems = _query_stems(intent)
     pool: list[Candidate] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
@@ -566,8 +597,8 @@ def retrieve(
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time)
         if not _passes_hours(poi, verdict, intent):
             continue
-        sem = None if semantic is None else float(semantic[i])
-        score, parts = _score(poi, intent, ctx, distance, verdict, sem)
+        sem = None if semantic is None or np.isnan(semantic[i]) else float(semantic[i])
+        score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems)
         pool.append(
             Candidate(
                 poi=poi,
@@ -579,7 +610,17 @@ def retrieve(
             )
         )
     pool.sort(key=lambda c: (-c.score, c.distance_m, c.poi.id))
-    chosen = _mmr(pool[: max(MMR_POOL, k)], k)
+    # one candidate per unnamed name: 110 of 111 playgrounds in OSM are «Детская площадка»
+    generic_seen: set[str] = set()
+    unique: list[Candidate] = []
+    for cand in pool:
+        key = generic_key(cand.poi)
+        if key is not None:
+            if key in generic_seen:
+                continue
+            generic_seen.add(key)
+        unique.append(cand)
+    chosen = _mmr(unique[: max(MMR_POOL, k)], k)
     for cand in chosen:
         cand.matched = explain(cand, intent, ctx)
     return chosen

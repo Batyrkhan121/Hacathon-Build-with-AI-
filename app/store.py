@@ -36,31 +36,35 @@ class Store:
     warnings: list[str] = field(default_factory=list)
 
 
-def _read_pois(path: Path) -> tuple[list[POI], int]:
-    """Valid, de-duplicated POIs and the number of skipped rows."""
-    if not path.exists():
+def _read_pois(path: Path) -> tuple[list[POI], int, str | None]:
+    """Valid, de-duplicated POIs, the number of skipped rows and a file-level error, if any."""
+    if not path.is_file():
         log.warning("POI file not found: %s", path)
-        return [], 0
+        return [], 0, f"нет файла POI: {path.name}"
     pois: list[POI] = []
     seen: set[str] = set()
     skipped = 0
-    with path.open(encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            if not line.strip():
-                continue
-            try:
-                poi = POI.model_validate_json(line)
-            except ValidationError:
-                skipped += 1
-                log.warning("skip invalid POI row %s:%d", path.name, lineno)
-                continue
-            if poi.id in seen:
-                skipped += 1
-                log.warning("skip duplicate POI id %s at %s:%d", poi.id, path.name, lineno)
-                continue
-            seen.add(poi.id)
-            pois.append(poi)
-    return pois, skipped
+    try:
+        with path.open(encoding="utf-8-sig") as fh:  # -sig: tolerate a BOM from Windows tools
+            for lineno, line in enumerate(fh, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    poi = POI.model_validate_json(line)
+                except ValidationError:
+                    skipped += 1
+                    log.warning("skip invalid POI row %s:%d", path.name, lineno)
+                    continue
+                if poi.id in seen:
+                    skipped += 1
+                    log.warning("skip duplicate POI id %s at %s:%d", poi.id, path.name, lineno)
+                    continue
+                seen.add(poi.id)
+                pois.append(poi)
+    except (OSError, UnicodeError) as exc:
+        log.warning("POI file unreadable: %s (%s)", path, type(exc).__name__)
+        return [], skipped, f"файл POI не читается ({type(exc).__name__}): {path.name}"
+    return pois, skipped, None
 
 
 def load_pois(path: Path) -> list[POI]:
@@ -69,13 +73,13 @@ def load_pois(path: Path) -> list[POI]:
 
 
 def load_landmarks(path: Path) -> dict[str, Landmark]:
-    if not path.exists():
+    if not path.is_file():
         log.warning("landmarks file not found: %s", path)
         return {}
     try:
-        rows = json.loads(path.read_text(encoding="utf-8"))
+        rows = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        log.warning("landmarks file is not valid JSON: %s", path)
+        log.warning("landmarks file is not readable JSON: %s", path)
         return {}
     landmarks: dict[str, Landmark] = {}
     for row in rows if isinstance(rows, list) else []:
@@ -99,10 +103,18 @@ def _load_embeddings(
         return None, None, [f"индекс эмбеддингов не найден, {lexical}"]
     try:
         matrix = np.load(paths[0], allow_pickle=False)
-        ids = json.loads(paths[1].read_text(encoding="utf-8"))
-        meta = json.loads(paths[2].read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        ids = json.loads(paths[1].read_text(encoding="utf-8-sig"))
+        meta = json.loads(paths[2].read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, EOFError) as exc:  # EOFError: empty / truncated .npy
         return None, None, [f"индекс эмбеддингов не читается ({type(exc).__name__}), {lexical}"]
+    if (
+        not isinstance(meta, dict)
+        or not isinstance(ids, list)
+        or not all(isinstance(x, str) for x in ids)
+        or not isinstance(matrix, np.ndarray)
+        or matrix.dtype.kind != "f"
+    ):
+        return None, None, [f"индекс эмбеддингов в неверном формате, {lexical}"]
 
     model, dim = meta.get("model"), meta.get("dim")
     if model != settings.embed_model or dim != settings.embed_dim:
@@ -118,8 +130,8 @@ def _load_embeddings(
     missing = 0
     for i, poi in enumerate(pois):
         row = row_of.get(poi.id)
-        if row is None:
-            missing += 1
+        if row is None or not np.isfinite(matrix[row]).all():
+            missing += 1  # zero row: retrieval scores this POI lexically
         else:
             aligned[i] = matrix[row]
     if pois and missing == len(pois):
@@ -134,9 +146,9 @@ def load_store(settings: Settings, poi_path: Path | None = None) -> Store:
     """Build the Store. Align embeddings rows to `pois` order via ids.json."""
     path = poi_path or settings.poi_path
     warnings: list[str] = []
-    pois, skipped = _read_pois(path)
-    if not path.exists():
-        warnings.append(f"нет файла POI: {path.name}")
+    pois, skipped, error = _read_pois(path)
+    if error:
+        warnings.append(error)
     if skipped:
         warnings.append(f"пропущено строк POI с ошибками или повторами: {skipped}")
 

@@ -133,3 +133,71 @@ def test_load_store_missing_poi_file(tmp_path: Path) -> None:
     assert store.pois == []
     assert store.snapshot_date is None
     assert any("POI" in w for w in store.warnings)
+
+
+# --------------------------------------------------- broken files never crash
+
+
+def test_load_pois_with_bom(tmp_path: Path) -> None:
+    path = tmp_path / "bom.jsonl"
+    path.write_text(SYNTHETIC.read_text(encoding="utf-8"), encoding="utf-8-sig")
+    assert len(load_pois(path)) == 14
+
+
+def test_load_landmarks_with_bom(tmp_path: Path) -> None:
+    path = tmp_path / "landmarks.json"
+    raw = (ROOT / "data" / "landmarks.json").read_text(encoding="utf-8")
+    path.write_text(raw, encoding="utf-8-sig")
+    assert "expo" in load_landmarks(path)
+
+
+@pytest.mark.parametrize("encoding", ["cp1251", "utf-16"])
+def test_load_store_bad_encoding(tmp_path: Path, encoding: str) -> None:
+    path = tmp_path / "poi.jsonl"
+    path.write_bytes(SYNTHETIC.read_text(encoding="utf-8").encode(encoding))
+    store = load_store(make_settings(tmp_path, poi_path=path))
+    assert store.pois == []
+    assert any("не читается" in w for w in store.warnings)
+
+
+def test_load_store_poi_path_is_directory(tmp_path: Path) -> None:
+    store = load_store(make_settings(tmp_path, poi_path=tmp_path))
+    assert store.pois == []
+    assert store.warnings
+
+
+def _broken_index(index_dir: Path, case: str) -> None:
+    ids = [p.id for p in load_pois(SYNTHETIC)]
+    write_index(index_dir, ids, np.ones((len(ids), DIM)))
+    if case == "empty_npy":
+        (index_dir / "embeddings.npy").write_bytes(b"")
+    elif case == "meta_list":
+        (index_dir / "meta.json").write_text("[]", encoding="utf-8")
+    elif case == "ids_null":
+        (index_dir / "ids.json").write_text("null", encoding="utf-8")
+    elif case == "ids_nested":
+        (index_dir / "ids.json").write_text("[[1]]", encoding="utf-8")
+    elif case == "string_matrix":
+        np.save(index_dir / "embeddings.npy", np.array([["a"] * DIM] * len(ids)))
+
+
+@pytest.mark.parametrize(
+    "case", ["empty_npy", "meta_list", "ids_null", "ids_nested", "string_matrix"]
+)
+def test_load_store_broken_index_falls_back(tmp_path: Path, case: str) -> None:
+    _broken_index(tmp_path / "index", case)
+    store = load_store(make_settings(tmp_path))
+    assert len(store.pois) == 14
+    assert store.embeddings is None
+    assert store.warnings
+
+
+def test_load_store_non_finite_rows_are_missing(tmp_path: Path) -> None:
+    ids = [p.id for p in load_pois(SYNTHETIC)]
+    matrix = np.ones((len(ids), DIM), dtype=np.float32)
+    matrix[0, 0] = np.nan
+    write_index(tmp_path / "index", ids, matrix)
+    store = load_store(make_settings(tmp_path))
+    assert store.embeddings is not None
+    assert np.isfinite(store.embeddings).all()
+    assert not store.embeddings[0].any()

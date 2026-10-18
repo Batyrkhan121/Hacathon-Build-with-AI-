@@ -7,14 +7,15 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from app.geo import haversine_m, to_h3, walk_minutes
+from app.geo import haversine_m, radius_for, to_h3, walk_minutes
 from app.hours import ASTANA_TZ
 from app.retrieval import WEIGHTS, explain, lexical_relevance, retrieve
+from app.route import plan_route
 from app.schemas import POI, GeoPoint, Landmark, QueryIntent, SearchContext, WeatherInfo
 from app.store import Store, load_pois
 from app.validate import template_cards
 
-from .conftest import EXPO, FIXTURES
+from .conftest import EXPO, FIXTURES, ROOT
 
 ORIGIN = GeoPoint(lat=EXPO[0], lon=EXPO[1])
 TUE_NOON = datetime(2026, 10, 20, 12, 0, tzinfo=ASTANA_TZ)
@@ -397,3 +398,173 @@ def test_real_s3_kids_near_expo(landmarks: dict[str, Landmark], categories: list
         assert [c.poi.name for c in out[:3]].count("Детская площадка") <= 1
     cards = template_cards(out, q, ctx)  # cards never repeat an unnamed place
     assert [c.title for c in cards].count("Детская площадка") == 1
+
+
+# --------------------------------------------------------- review follow-ups
+
+
+def test_bar_query_is_not_a_stopword(synthetic_pois: list[POI]) -> None:
+    evening = datetime(2026, 10, 20, 20, 0, tzinfo=ASTANA_TZ)
+    out = retrieve(
+        make_store(synthetic_pois), intent("хочу в бар"), make_ctx(at=evening), None, k=8
+    )
+    bar = next(c for c in out if c.poi.id == "test:poi/8")
+    assert bar.score_parts["relevance"] > 0
+
+
+def test_non_finite_query_vector_falls_back_to_lexical(synthetic_pois: list[POI]) -> None:
+    store = make_store(synthetic_pois, embeddings=np.eye(len(synthetic_pois), 4, dtype=np.float32))
+    bad = np.array([np.nan, 0, 0, 0], dtype=np.float32)
+    out = retrieve(store, intent("кофе"), make_ctx(), bad, k=5)
+    assert all(np.isfinite(c.score) for c in out)
+
+
+def test_poi_without_embedding_scored_lexically(synthetic_pois: list[POI]) -> None:
+    matrix = np.zeros((len(synthetic_pois), 4), dtype=np.float32)  # nobody has a vector
+    matrix[1] = [0, 1, 0, 0]
+    store = make_store(synthetic_pois, embeddings=matrix)
+    q = intent("кофе", must_tags=["coffee"])
+    with_vec = retrieve(store, q, make_ctx(), np.array([1, 0, 0, 0], dtype=np.float32), k=20)
+    lexical = retrieve(make_store(synthetic_pois), q, make_ctx(), None, k=20)
+    alpha_sem = next(c for c in with_vec if c.poi.id == "test:poi/1")
+    alpha_lex = next(c for c in lexical if c.poi.id == "test:poi/1")
+    assert alpha_sem.score_parts["relevance"] == alpha_lex.score_parts["relevance"]
+
+
+def test_unnamed_places_do_not_flood_candidates() -> None:
+    pois = [
+        make_poi(str(i), "playground", 0.0001 * i, name="Детская площадка", tags=["kids"])
+        for i in range(1, 31)
+    ] + [
+        make_poi(f"m{i}", "museum", 0.004 + 0.0005 * i, name=f"Музей {i}", tags=["kids"])
+        for i in range(3)
+    ]
+    out = retrieve(make_store(pois), intent("с ребёнком", with_kids=True), make_ctx(), None, k=8)
+    assert [c.poi.name for c in out].count("Детская площадка") == 1
+    assert sum(c.poi.category == "museum" for c in out) == 3
+
+
+def test_kids_reason_only_when_data_says_so() -> None:
+    pois = [make_poi("1", "mall"), make_poi("2", "mall", kids_friendly=True)]
+    out = retrieve(make_store(pois), intent(with_kids=True), make_ctx(), None, k=5)
+    reasons = {c.poi.id: c.matched for c in out}
+    assert "подходит детям" not in reasons["test:poi/1"]  # category guess, not data
+    assert "подходит детям" in reasons["test:poi/2"]
+
+
+def test_retrieve_is_fast_enough() -> None:
+    import time
+
+    pois = [
+        make_poi(str(i), ["cafe", "park", "museum", "playground"][i % 4], 0.00002 * i,
+                 opening_hours="Mo-Fr 09:00-18:00; Sa 10:00-16:00" if i % 3 else None,
+                 tags=["coffee", "indoor"] if i % 4 == 0 else ["outdoor"])
+        for i in range(5000)
+    ]
+    store = make_store(pois)
+    q = intent("тихое место с кофе и розеткой", must_tags=["coffee", "quiet"])
+    started = time.perf_counter()
+    retrieve(store, q, make_ctx(radius=2500), None, k=8)
+    assert time.perf_counter() - started < 1.0
+
+
+# ------------------------------------------- full OSM dump (T11: 531 POI, 5 demo zones)
+# Data facts: hours known for ~28% of places, wheelchair for ~1%, 110 of 111 playgrounds
+# are unnamed «Детская площадка», the airport zone has only a handful of objects.
+
+FULL = ROOT / "data" / "processed" / "poi.jsonl"
+needs_full = pytest.mark.skipif(not FULL.exists(), reason="data/processed/poi.jsonl not merged")
+
+
+@pytest.fixture(scope="module")
+def full_store() -> Store:
+    return make_store(load_pois(FULL))
+
+
+def zone_ctx(
+    landmarks: dict[str, Landmark], landmark_id: str, q: QueryIntent, at: datetime = TUE_AFTERNOON
+) -> SearchContext:
+    origin = landmarks[landmark_id].geo
+    return SearchContext(
+        origin=origin,
+        h3_cell=to_h3(origin),
+        h3_res=9,
+        area_label=landmark_id,
+        landmark_id=landmark_id,
+        local_time=at,
+        radius_m=radius_for(q),
+    )
+
+
+@needs_full
+def test_full_s1_walk_route_fits_budget(
+    full_store: Store, landmarks: dict[str, Landmark]
+) -> None:
+    q = intent("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут", time_budget_min=60)
+    ctx = zone_ctx(landmarks, "mega_silk_way", q)
+    cards = template_cards(retrieve(full_store, q, ctx, None, k=8), q, ctx)
+    assert len(cards) == 3
+    stops = [c for c in retrieve(full_store, q, ctx, None, k=8) if c.poi.id in
+             {card.poi_id for card in cards}]
+    route = plan_route(ctx.origin, stops, 60, {c.poi_id: c.visit_min_low for c in cards})
+    assert route is not None
+    assert len(route.stop_ids) >= 2
+    assert route.fits_budget
+
+
+@needs_full
+def test_full_s2_cafes_near_expo(full_store: Store, landmarks: dict[str, Landmark]) -> None:
+    q = intent("Хочу тихое место с кофе и розеткой", must_tags=["coffee", "power_outlets", "quiet"])
+    out = retrieve(full_store, q, zone_ctx(landmarks, "expo", q), None, k=8)
+    assert [c.poi.category for c in out[:2]] == ["cafe", "cafe"]
+
+
+@needs_full
+def test_full_s3_kids_one_unnamed_playground(
+    full_store: Store, landmarks: dict[str, Landmark]
+) -> None:
+    q = intent("Еду с ребёнком — где детские площадки или музей?", with_kids=True)
+    ctx = zone_ctx(landmarks, "expo", q)
+    out = retrieve(full_store, q, ctx, None, k=8)
+    assert out[0].poi.category in {"playground", "museum"}
+    assert [c.poi.name for c in out].count("Детская площадка") <= 1
+    cards = template_cards(out, q, ctx)
+    assert len(cards) >= 2
+
+
+@needs_full
+def test_full_sparse_hours_are_honest(full_store: Store, landmarks: dict[str, Landmark]) -> None:
+    q = intent("куда сходить")
+    ctx = zone_ctx(landmarks, "baiterek", q)
+    out = retrieve(full_store, q, ctx, None, k=8)
+    assert out
+    for c in out:
+        assert c.hours.status in {"open", "unknown"}  # closed places are filtered out
+        if c.hours.status == "unknown":
+            assert "часы работы не указаны" in c.matched
+    for card in template_cards(out, q, ctx):
+        if card.open_status == "unknown":
+            assert card.open_note == "нет данных о часах, проверьте перед визитом"
+
+
+@needs_full
+def test_full_wheelchair_mostly_unconfirmed(
+    full_store: Store, landmarks: dict[str, Landmark]
+) -> None:
+    q = intent("кафе", wheelchair=True)
+    out = retrieve(full_store, q, zone_ctx(landmarks, "expo", q), None, k=8)
+    assert out  # unknown accessibility is kept, never silently dropped
+    for c in out:
+        assert any(m.startswith(("доступно", "частично", "доступность не")) for m in c.matched)
+
+
+@needs_full
+def test_full_airport_zone_is_sparse_but_safe(
+    full_store: Store, landmarks: dict[str, Landmark]
+) -> None:
+    q = intent("2 часа до вылета, что посмотреть рядом", time_budget_min=120, tourist=True)
+    ctx = zone_ctx(landmarks, "airport_nqz", q)
+    out = retrieve(full_store, q, ctx, None, k=8)
+    assert 1 <= len(out) <= 8
+    cards = template_cards(out, q, ctx)
+    assert 1 <= len(cards) <= 3

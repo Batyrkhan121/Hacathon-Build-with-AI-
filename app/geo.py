@@ -111,6 +111,7 @@ def resolve_origin(
     """Return (origin, h3_cell, landmark_id, area_label).
 
     h3_cell input -> origin = cell centre, area_label like "ваш район (≈0,1 км²)".
+    Cells finer than r9 are rejected with ValueError (privacy: no near-exact points).
     landmark_id input -> origin = landmark point, h3_cell = to_h3(point), label "у <name>".
     Unknown landmark id -> raise KeyError (API maps it to HTTP 422).
     """
@@ -123,6 +124,8 @@ def resolve_origin(
     cell = loc.h3_cell
     if cell is None or not h3.is_valid_cell(cell):
         raise ValueError("invalid H3 cell")
+    if h3.get_resolution(cell) > DEFAULT_H3_RES:  # finer cells are effectively raw coordinates
+        raise ValueError(f"H3 cell finer than r{DEFAULT_H3_RES} is not accepted")
     origin = h3_center(cell)
     area = f"{h3.cell_area(cell, unit='km^2'):.1f}".replace(".", ",")
     label = f"ваш район (≈{area} км²)"

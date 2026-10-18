@@ -10,6 +10,7 @@ from app.geo import haversine_m, walk_minutes
 from app.schemas import Candidate, GeoPoint, MiniRoute, RouteLeg
 
 DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
+MAX_ROUTE_STOPS = 3  # MiniRoute.stop_ids allows at most 3
 ROUTE_NOTE = (
     "Маршрут приблизительный: прямые отрезки × 1,3, скорость 4,5 км/ч, без обратной дороги"
 )
@@ -60,17 +61,18 @@ def plan_route(
     for cand in stops:
         if all(cand.poi.id != u.poi.id for u in unique):
             unique.append(cand)
-    ordered = _nearest_neighbour(origin, unique[: max(0, max_stops)])
-    if not ordered:
+    kept = unique[: max(0, min(max_stops, MAX_ROUTE_STOPS))]  # stops come ranked best first
+    if not kept:
         return None
 
     while True:
+        ordered = _nearest_neighbour(origin, kept)
         legs = _legs(origin, ordered)
         visits = sum(visit_min.get(c.poi.id, DEFAULT_VISIT_MIN) for c in ordered)
         total = sum(leg.walk_min for leg in legs) + visits
-        if budget_min is None or total <= budget_min or len(ordered) == 1:
+        if budget_min is None or total <= budget_min or len(kept) == 1:
             break
-        ordered = ordered[:-1]
+        kept = kept[:-1]  # over budget: drop the lowest-ranked card, then re-order
 
     return MiniRoute(
         stop_ids=[c.poi.id for c in ordered],

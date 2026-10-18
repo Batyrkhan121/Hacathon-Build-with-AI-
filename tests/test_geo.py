@@ -162,3 +162,12 @@ def test_resolve_origin_invalid_cell(landmarks: dict[str, Landmark]) -> None:
 )
 def test_radius_for(kwargs: dict[str, int], radius: int) -> None:
     assert radius_for(QueryIntent(raw_query="погулять", **kwargs)) == radius
+
+
+def test_resolve_origin_rejects_cells_finer_than_r9(landmarks: dict[str, Landmark]) -> None:
+    fine = to_h3(EXPO, res=15)  # ~1 m², effectively a raw coordinate
+    with pytest.raises(ValueError):
+        resolve_origin(LocationInput(h3_cell=fine), landmarks)
+    coarse = to_h3(EXPO, res=8)  # coarser is fine for privacy
+    origin, _, _, _ = resolve_origin(LocationInput(h3_cell=coarse), landmarks)
+    assert origin == h3_center(coarse)

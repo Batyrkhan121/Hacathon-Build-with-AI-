@@ -63,16 +63,25 @@ def test_legs_and_totals() -> None:
     assert route.fits_budget is True
 
 
-def test_budget_drops_trailing_stops() -> None:
+def test_budget_drops_lowest_ranked_stop() -> None:
+    # cards come ranked: FAR is the best card, MID the weakest
     full = plan_route(ORIGIN, [FAR, NEAR, MID], None, VISITS)
     assert full is not None
-    two_stops = sum(leg.walk_min for leg in full.legs[:2]) + 25
-    route = plan_route(ORIGIN, [FAR, NEAR, MID], two_stops, VISITS)
+    without_mid = plan_route(ORIGIN, [FAR, NEAR], None, VISITS)
+    assert without_mid is not None
+    route = plan_route(ORIGIN, [FAR, NEAR, MID], without_mid.total_min, VISITS)
     assert route is not None
-    assert route.stop_ids == ["test:poi/near", "test:poi/mid"]
-    assert route.total_min == two_stops
+    assert route.stop_ids == ["test:poi/near", "test:poi/far"]  # re-ordered after the drop
+    assert route.total_min == without_mid.total_min
     assert route.fits_budget is True
     assert len(route.path) == 3
+
+
+def test_max_stops_never_exceeds_three() -> None:
+    extra = [stop(f"x{i}", 0.001 * i, 0.001) for i in range(1, 4)]
+    route = plan_route(ORIGIN, [FAR, NEAR, MID, *extra], None, VISITS, max_stops=6)
+    assert route is not None
+    assert len(route.stop_ids) == 3
 
 
 def test_single_stop_over_budget_is_kept_but_flagged() -> None:

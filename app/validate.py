@@ -6,6 +6,7 @@ Owner: CORE lane (task T24). Pure functions, no network.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from app.retrieval import explain, generic_key
 from app.schemas import (
@@ -34,6 +35,16 @@ FORBIDDEN_OPEN_CLAIMS: tuple[str, ...] = (
     "уже открыт",
     "open right now",
     "қазір жұмыс істейді",
+    # hours claims the code did not confirm
+    "now open",
+    "already open",
+    "open until",
+    "open till",
+    "открыто до",
+    "открыт до",
+    "открыта до",
+    "работает до",
+    "уже работает",
 )
 MAX_WHY_CHARS = 280
 MAX_TODO_CHARS = 360
@@ -45,7 +56,12 @@ _CLAIM_RE = re.compile(
     "|".join(r"\s+".join(map(re.escape, claim.split())) for claim in FORBIDDEN_OPEN_CLAIMS),
     re.IGNORECASE,
 )
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+# sentence end, but not after common abbreviations: «ул. Абая», «пр. Мангилик Ел»
+_SENTENCE_SPLIT = re.compile(
+    r"(?<!\bул\.)(?<!\bпр\.)(?<!\bд\.)(?<!\bг\.)(?<!\bим\.)(?<!\bст\.)(?<!\bst\.)"
+    r"(?<=[.!?…])\s+",
+    re.IGNORECASE,
+)
 
 # Planned minutes on site (low, high) when there is no LLM estimate.
 VISIT_MIN: dict[str, tuple[int, int]] = {
@@ -188,13 +204,14 @@ def _visit_minutes(category: Category, intent: QueryIntent) -> tuple[int, int]:
     low, high = VISIT_MIN.get(category, VISIT_MIN["other"])
     if intent.time_budget_min:
         high = max(5, min(high, intent.time_budget_min))
-        low = min(low, high)
+        # a route has up to 3 stops: the minimal visit must leave room for the others
+        low = min(low, high, max(10, intent.time_budget_min // 3))
     return low, high
 
 
 def _facts_sources(cand: Candidate) -> list[Source]:
-    sources = list(dict.fromkeys(cand.poi.sources))
-    facts = [s for s in sources if s != "llm_generated"]
+    sources: list[Source] = list(dict.fromkeys(cand.poi.sources))
+    facts: list[Source] = [s for s in sources if s != "llm_generated"]
     return facts or sources
 
 
@@ -205,7 +222,7 @@ def _card(
     why: str,
     todo: str,
     visit: tuple[int, int],
-    idea_source: str,
+    idea_source: Literal["poi_data", "generated"],
 ) -> Card:
     poi, hours = cand.poi, cand.hours
     note = hours.note
@@ -236,6 +253,16 @@ def _card(
 
 
 # ------------------------------------------------------------------ public
+
+
+def sanitize_summary(summary: str, cards: list[Card]) -> str:
+    """Remove "open now" style sentences from the LLM summary unless every card is open/high.
+
+    finalize() never sees DraftResponse.summary; the pipeline calls this on it.
+    """
+    if cards and all(c.open_status == "open" and c.open_confidence == "high" for c in cards):
+        return summary.strip()
+    return _strip_open_claims(summary)[0]
 
 
 def finalize(
@@ -326,7 +353,7 @@ def template_cards(
         for cand in candidates:
             if len(chosen) >= n:
                 break
-            if cand in chosen:
+            if any(c.poi.id == cand.poi.id for c in chosen):
                 continue
             # never two cards for unnamed places with the same name: fewer cards is better
             key = generic_key(cand.poi)

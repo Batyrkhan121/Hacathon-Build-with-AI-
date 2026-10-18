@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from app.schemas import HoursVerdict
 
@@ -36,7 +37,7 @@ NOTE_ONLY_HOLIDAYS = "есть только праздничные часы, п�
 NOTE_HOLIDAYS = "в праздники часы могут отличаться"
 
 Interval = tuple[int, int]  # minutes from the day's midnight; end may exceed DAY_MIN (overnight)
-Week = list[list[Interval] | None]  # None = day not described by any rule
+Week = tuple[tuple[Interval, ...] | None, ...]  # 7 days; None = day not described by any rule
 
 
 class _Unparsable(ValueError):
@@ -97,9 +98,10 @@ def _parse_times(spec: str) -> list[Interval]:
     return intervals
 
 
+@lru_cache(maxsize=8192)
 def _parse(raw: str) -> tuple[Week, bool]:
-    """Week table + whether PH/SH rules were present. Raises _Unparsable."""
-    week: Week = [None] * 7
+    """Week table + whether PH/SH rules were present. Raises _Unparsable. Cached: immutable."""
+    week: list[list[Interval] | None] = [None] * 7
     holidays = False
     for rule in raw.split(";"):
         rule = " ".join(rule.split())
@@ -121,7 +123,7 @@ def _parse(raw: str) -> tuple[Week, bool]:
             for day in days:
                 additional = n > 0 and intervals and week[day] is not None
                 week[day] = [*(week[day] or []), *intervals] if additional else list(intervals)
-    return week, holidays
+    return tuple(None if day is None else tuple(day) for day in week), holidays
 
 
 # ----------------------------------------------------------------- rendering
@@ -157,9 +159,9 @@ def _days_label(days: list[int]) -> str:
 
 def _render(week: Week) -> str:
     groups: dict[tuple[Interval, ...], list[int]] = {}
-    for day, intervals in enumerate(week):
-        if intervals is not None:
-            groups.setdefault(tuple(intervals), []).append(day)
+    for day, day_intervals in enumerate(week):
+        if day_intervals is not None:
+            groups.setdefault(day_intervals, []).append(day)
     parts = []
     for intervals, days in groups.items():
         if not intervals:
@@ -179,7 +181,7 @@ def _spans(week: Week, weekday: int) -> list[Interval]:
     """Merged open spans from yesterday to tomorrow, in minutes from today's midnight."""
     raw: list[Interval] = []
     for offset in (-1, 0, 1):
-        for start, end in week[(weekday + offset) % 7] or []:
+        for start, end in week[(weekday + offset) % 7] or ():
             raw.append((offset * DAY_MIN + start, offset * DAY_MIN + end))
     merged: list[Interval] = []
     for start, end in sorted(raw):
@@ -238,9 +240,10 @@ def evaluate_hours(raw: str | None, at: datetime) -> HoursVerdict:
         )
 
     next_start = next((s for s, _ in spans if s > now), None)
-    opens_in = next_start - now if next_start is not None and next_start < DAY_MIN else None
-    head = "сегодня выходной" if week[weekday] == [] else "закрыто"
-    if opens_in is not None:
+    opens_in: int | None = None
+    head = "сегодня выходной" if week[weekday] == () else "закрыто"
+    if next_start is not None and next_start < DAY_MIN:
+        opens_in = next_start - now
         when = f"через {_duration(opens_in)}" if opens_in <= 60 else f"в {_clock(next_start)}"
         head = f"{head}, откроется {when}"
     elif next_start is not None and next_start < 2 * DAY_MIN:

@@ -18,7 +18,13 @@ from app.schemas import (
     QueryIntent,
     SearchContext,
 )
-from app.validate import MAX_TODO_CHARS, MAX_WHY_CHARS, finalize, template_cards
+from app.validate import (
+    MAX_TODO_CHARS,
+    MAX_WHY_CHARS,
+    finalize,
+    sanitize_summary,
+    template_cards,
+)
 
 from .conftest import EXPO
 
@@ -271,3 +277,38 @@ def test_template_visit_fits_budget(cands: list[Candidate]) -> None:
     cards = template_cards(cands, intent(time_budget_min=30), ctx())
     assert all(c.visit_min_high <= 30 for c in cards)
     assert all(c.visit_min_low <= c.visit_min_high for c in cards)
+
+
+# --------------------------------------------------------- review follow-ups
+
+
+@pytest.mark.parametrize(
+    "claim",
+    ["Now open!", "Already open.", "Open until 10 PM.", "Заведение открыто до 22:00.",
+     "Работает до 02:00."],
+)
+def test_strips_more_open_claims(cands: list[Candidate], claim: str) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3", why=f"{claim} Тихое место.")])
+    cards, _ = finalize(resp, cands, intent(), ctx())
+    assert cards[0].why == "Тихое место."
+
+
+def test_abbreviations_do_not_split_sentences(cands: list[Candidate]) -> None:
+    why = "Находится на ул. Абая, рядом с парком. Есть кофе и тихий зал. Третье."
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=why)])
+    cards, _ = finalize(resp, cands, intent(), ctx())
+    assert cards[0].why == "Находится на ул. Абая, рядом с парком. Есть кофе и тихий зал."
+
+
+def test_sanitize_summary(cands: list[Candidate]) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1"), draft("test:poi/3")])
+    cards, _ = finalize(resp, cands, intent(), ctx())
+    text = "Сейчас открыто 2 места. Рядом тихое кафе и музей."
+    assert sanitize_summary(text, cards) == "Рядом тихое кафе и музей."
+    open_cards = [c for c in cards if c.open_status == "open"]
+    assert sanitize_summary(text, open_cards) == text  # all cards open/high -> keep
+
+
+def test_template_visit_leaves_room_for_a_route() -> None:
+    cards = template_cards([cand(make_poi("1", "mall"))], intent(time_budget_min=60), ctx())
+    assert (cards[0].visit_min_low, cards[0].visit_min_high) == (20, 60)
