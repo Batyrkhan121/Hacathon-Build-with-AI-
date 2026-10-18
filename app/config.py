@@ -8,6 +8,8 @@ EMBED_PROVIDER picks where they come from:
   a fallback). The model id gets the vendor prefix ("google/gemini-embedding-001"), so its
   vectors and cache never mix with an index built through Gemini directly (meta.model must match);
 - "gemini" (fallback): Gemini via `google-genai`, needs GEMINI_API_KEY and an index built with it.
+WALK_GRAPH (default on): routes follow the OSM walk graph data/processed/walk_graph.npz when the
+file exists (`walk_graph_ready`); off, missing or any error -> straight segments.
 Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`.
 """
 
@@ -52,6 +54,8 @@ class Settings:
     contact: str  # QADAM_CONTACT, goes into the User-Agent of Overpass / Wikidata requests
     openrouter_api_key: str | None = None  # optional, embeddings through OpenRouter only
     embed_provider: str = "openrouter"  # "openrouter" | "gemini"
+    walk_graph_enabled: bool = True  # WALK_GRAPH; false -> straight segments
+    walk_graph_path: Path | None = None  # data/processed/walk_graph.npz (QADAM_WALK_GRAPH_PATH)
 
     @property
     def has_llm(self) -> bool:
@@ -63,6 +67,18 @@ class Settings:
         if not self.anthropic_workspace_id:
             return {}
         return {"anthropic-workspace-id": self.anthropic_workspace_id}
+
+    @property
+    def walk_graph_meta_path(self) -> Path | None:
+        if self.walk_graph_path is None:
+            return None
+        return self.walk_graph_path.with_name("walk_graph_meta.json")
+
+    @property
+    def walk_graph_ready(self) -> bool:
+        """WALK_GRAPH is on and the graph file exists (load errors: app.walkgraph falls back)."""
+        path = self.walk_graph_path
+        return bool(self.walk_graph_enabled and path is not None and path.exists())
 
     @property
     def has_embeddings(self) -> bool:
@@ -101,4 +117,7 @@ def get_settings() -> Settings:
         openrouter_api_key=(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_KEY")
                             or None),
         embed_provider=provider,
+        walk_graph_enabled=_bool("WALK_GRAPH", True),
+        walk_graph_path=Path(os.getenv("QADAM_WALK_GRAPH_PATH",
+                                       data_dir / "processed" / "walk_graph.npz")),
     )
