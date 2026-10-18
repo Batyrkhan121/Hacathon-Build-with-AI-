@@ -3,6 +3,7 @@ import { t, getLang, setLang, applyI18n, onLangChange, formatNumber } from './i1
 import { fetchLandmarks, fetchMeta, recommend, isMock } from './api.js';
 import * as mapView from './map.js';
 import * as view from './render.js';
+import { astanaClock, atIso, shortDay } from './time.js';
 
 const PRESETS = [
   { id: 'S1', landmark: 'mega_silk_way', time: '15:00' },
@@ -28,6 +29,7 @@ const state = {
   budget: null,
   flags: { with_kids: false, wheelchair: false, indoor_only: false, group: false },
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
+  day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
   inflight: null,
@@ -51,6 +53,7 @@ const els = {
   budgetChips: $('budget-chips'),
   flagChips: $('flag-chips'),
   filterHint: $('filter-hint'),
+  dayChips: $('day-chips'),
   timeChips: $('time-chips'),
   timeInput: $('time-input'),
   results: $('results'),
@@ -63,21 +66,6 @@ const els = {
 };
 
 // ------------------------------------------------------------------ helpers
-
-function astanaNow() {
-  // Астана = UTC+5 круглый год; не зависим от часового пояса браузера.
-  return new Date(Date.now() + 5 * 3600 * 1000);
-}
-
-function astanaClock() {
-  return astanaNow().toISOString().slice(11, 16);
-}
-
-function atIso(time) {
-  if (!time) return null;
-  const date = astanaNow().toISOString().slice(0, 10);
-  return `${date}T${time}:00+05:00`;
-}
 
 function landmarkById(id) {
   return state.landmarks.find((l) => l.id === id) || null;
@@ -124,7 +112,7 @@ function buildRequest(query, useLlm = true) {
   return {
     query,
     location,
-    at: atIso(state.time),
+    at: atIso(state.time, state.day),
     lang: getLang(),
     overrides: Object.keys(overrides).length ? overrides : null,
     want_route: true,
@@ -336,9 +324,19 @@ function renderChips() {
       }),
     ),
   );
+  els.dayChips.replaceChildren(
+    ...[0, 1].map((d) =>
+      chip(`${t(d ? 'when.tomorrow' : 'when.today')} · ${shortDay(d)}`, state.day === d, () => {
+        state.day = d;
+        filtersChanged();
+      }),
+    ),
+  );
+  // «Сейчас» завтра = то же время суток, но следующего дня.
+  const nowLabel = state.day ? t('when.sameTime') : t('when.now');
   els.timeChips.replaceChildren(
     ...TIMES.map((time) =>
-      chip(time ? time : `${t('when.now')} · ${astanaClock()}`, state.time === time, () => {
+      chip(time ? time : `${nowLabel} · ${astanaClock()}`, state.time === time, () => {
         state.time = time;
         filtersChanged();
       }),

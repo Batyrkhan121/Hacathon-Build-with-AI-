@@ -1,5 +1,6 @@
 // Отрисовка результатов. Все тексты с сервера вставляем через textContent: это данные, не разметка.
 import { t, formatNumber } from './i18n.js';
+import { dayOffsetOf } from './time.js';
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -56,9 +57,10 @@ function cardTitle(card) {
   return card.title?.trim() || categoryLabel(card.category);
 }
 
+// Сервер различает безымянные места суффиксом: «Детская площадка · 350 м» — смотрим часть до « · ».
 function isUnnamed(card) {
-  const title = card.title?.trim().toLowerCase();
-  return !title || GENERIC_TITLES.has(title);
+  const base = card.title?.split(' · ')[0].trim().toLowerCase();
+  return !base || GENERIC_TITLES.has(base);
 }
 
 function sourceName(src) {
@@ -80,16 +82,20 @@ function safeUrl(url) {
   }
 }
 
-function timeOf(request) {
-  return request?.at ? request.at.slice(11, 16) : null;
+// Для какого момента считались часы: время из `at` и «завтра» ли это.
+function whenOf(request) {
+  if (!request?.at) return { time: null, tomorrow: false };
+  return { time: request.at.slice(11, 16), tomorrow: dayOffsetOf(request.at) === 1 };
 }
 
 // «Открыто» — только при open + high (правило продукта 2).
-export function hoursBadge(card, atTime) {
+export function hoursBadge(card, when = {}) {
   const s = card.open_status;
   const c = card.open_confidence;
   if (s === 'open' && c === 'high') {
-    return { cls: 'open', text: atTime ? t('hours.openAt', { time: atTime }) : t('hours.open') };
+    if (!when.time) return { cls: 'open', text: t('hours.open') };
+    const key = when.tomorrow ? 'hours.openAtTomorrow' : 'hours.openAt';
+    return { cls: 'open', text: t(key, { time: when.time }) };
   }
   if (s === 'open' && c === 'medium') return { cls: 'maybe', text: t('hours.probably') };
   if (s === 'closed') return { cls: 'closed', text: c === 'low' ? t('hours.maybeClosed') : t('hours.closed') };
@@ -186,7 +192,7 @@ export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onS
 // ------------------------------------------------------------------ answer
 
 export function renderAnswer(root, answer, ctx) {
-  const atTime = timeOf(ctx.request);
+  const when = whenOf(ctx.request);
   const byId = new Map(answer.cards.map((c) => [c.poi_id, c]));
   const noAi = answer.data_used?.generation === 'template';
 
@@ -211,7 +217,7 @@ export function renderAnswer(root, answer, ctx) {
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, atTime, ctx, answer)),
+          answer.cards.map((c) => renderCard(c, when, ctx)),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -282,8 +288,8 @@ function renderRoute(route, byId, ctx) {
   );
 }
 
-function renderCard(card, atTime, ctx) {
-  const badge = hoursBadge(card, atTime);
+function renderCard(card, when, ctx) {
+  const badge = hoursBadge(card, when);
   const poi = card.idea_source === 'poi_data';
   const pct = Math.round((card.data_confidence ?? 0) * 100);
   const site = card.website ? safeUrl(card.website) : null;

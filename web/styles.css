@@ -541,6 +541,10 @@ select {
   color: #fff;
 }
 
+.day-chips {
+  margin-bottom: 6px;
+}
+
 .when-row {
   display: flex;
   flex-wrap: wrap;
