@@ -35,16 +35,21 @@ FEATURES — route/query_parser/pipeline/weather/api/llm/hours и соответ
 ## Что попадает в образ
 
 - Python 3.12 slim / Debian Bookworm; зависимости из существующего `requirements.txt`.
-- `app/`, `prompts/`, `web/` с текущими HTML/CSS/JS и mock JSON.
+- `app/`, `prompts/`, `web/` с текущими HTML/CSS/JS и mock JSON;
+  `web/vendor/**` с локальными Leaflet и h3-js из актуального main.
 - `data/processed/poi.jsonl`, отчёт данных, `data/index/` и `data/landmarks.json`.
 
 Снимки данных уже подготовлены: сборка не запускает pipeline и не обращается
 к LLM. Пакет подготовки данных `pipeline/` приложению на этой базе не требуется
 и в образ не включён.
 
-`.dockerignore` сначала исключает всё, затем разрешает перечисленные входы.
-Новые типы ресурсов/подкаталоги web нужно явно добавить в allowlist.
-Git, локальные окружения, кэши, `.env` и файлы ключей не передаются в контекст.
+`.dockerignore` сначала исключает всё, затем разрешает отдельные файлы/маски
+файлов, без разрешения родительских каталогов целиком. Исключение для ресурсов
+карты задано явно: `!web/vendor/**`. `COPY web/ ./web/` переносит их в
+`/app/web/vendor`. Новые типы ресурсов/подкаталоги web нужно явно добавить
+в allowlist. `data/cache`, `data/raw`, `data/manual` и `.claude` вместе с их
+содержимым явно запрещены. Git, локальные окружения, `.env` и файлы ключей
+также не передаются в контекст.
 Dockerfile использует явные COPY; секретных ARG/ENV и `COPY . .` нет.
 Это защита от случайного включения локальных файлов, а не сканер ключей,
 вписанных прямо в разрешённый исходный код: проверка T80/T83 остаётся обязательной.
@@ -57,8 +62,12 @@ Dockerfile использует явные COPY; секретных ARG/ENV и `
 отключён. Не включать DEBUG для SDK и не печатать окружение.
 
 Docker HEALTHCHECK обращается к `/api/health` на текущем `PORT`, проверяет
-`status=ok` и `poi_count > 0`. Этот результат не доказывает свежесть эмбеддингов.
-Платформам отдельно задаётся HTTP health check `/api/health`.
+`status` в `ok/degraded` и `poi_count > 0`. `degraded` с загруженными POI
+допустим: например, приложение может работать с устаревшим индексом или без
+квоты эмбеддингов. Предупреждения нужно просмотреть отдельно. HTTP 503 остаётся
+ошибкой независимо от JSON: `urlopen` выбрасывает исключение до проверки тела.
+Результат health не доказывает свежесть эмбеддингов. Платформам отдельно задаётся
+HTTP health check `/api/health`.
 
 По умолчанию `LLM_ENABLED=false`, загрузка dotenv отключена. **Ключи добавляются
 только в секретные настройки хостинга во время запуска**, после согласования.
@@ -68,9 +77,13 @@ Docker HEALTHCHECK обращается к `/api/health` на текущем `PO
 
 ## Проверка Docker на машине Батырхана
 
-Нужен запущенный Docker с Linux containers. Выполнять из отдельного checkout
-`feat/deploy`, чтобы не переключать рабочую папку интегратора с незавершёнными правками.
-Ветка проверки не должна содержать дополнительные незакоммиченные изменения.
+Нужен запущенный Docker с Linux containers. Батырхан выполняет проверку в отдельном
+временном worktree: **актуальный main плюс изменения `origin/feat/deploy`**,
+с уже добавленной POLISH папкой `web/vendor`. База этой ветки — `0a486c9`,
+в ней самой vendor ещё нет; сборка только старой базы не проверяет итоговое демо.
+Файлы POLISH в этой дорожке не копируются и не редактируются. Рабочую папку
+интегратора с незавершёнными изменениями не переключать. Посторонних
+незакоммиченных изменений в worktree проверки быть не должно.
 Не монтировать локальные каталоги и не подключать `.env`.
 
 PowerShell, шаг 1 — сборка и запуск. Порт специально отличается от значения по
@@ -81,6 +94,9 @@ PowerShell, шаг 1 — сборка и запуск. Порт специаль
 git branch --show-current
 git rev-parse HEAD
 docker version
+if (-not (Test-Path -LiteralPath 'web/vendor' -PathType Container)) {
+    throw 'Missing web/vendor: test current main with feat/deploy changes'
+}
 docker build --pull -t qadam:t77 .
 if ($LASTEXITCODE -ne 0) { throw 'Docker build failed' }
 docker run --detach --name qadam-t77 --publish 127.0.0.1:18777:18777 --env PORT=18777 --env LLM_ENABLED=false qadam:t77
@@ -95,7 +111,7 @@ $health = $null
 for ($i = 0; $i -lt 30; $i++) {
     try {
         $candidate = Invoke-RestMethod "$base/api/health" -TimeoutSec 3
-        if ($candidate.status -eq 'ok' -and $candidate.poi_count -gt 0) {
+        if ($candidate.status -in @('ok', 'degraded') -and $candidate.poi_count -gt 0) {
             $health = $candidate
             break
         }
@@ -103,6 +119,8 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 2
 }
 if ($null -eq $health) { throw 'Health failed or no POI loaded' }
+$health | ConvertTo-Json -Depth 6 -Compress
+[pscustomobject]@{ warnings = @($health.warnings) } | ConvertTo-Json -Depth 6 -Compress
 if ($health.llm -ne 'off') { throw 'LLM must be off for this check' }
 $ui = Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 10
 if ($ui.StatusCode -ne 200 -or $ui.Content -notmatch 'Qadam') { throw 'UI failed' }
@@ -119,7 +137,6 @@ if (@($answer.cards).Count -lt 1) { throw 'No recommendation cards' }
 if ($answer.data_used.parser -ne 'rules' -or $answer.data_used.generation -ne 'template') {
     throw 'Expected deterministic recommendations'
 }
-$health | ConvertTo-Json -Compress
 [pscustomobject]@{
     cards = @($answer.cards).Count
     parser = $answer.data_used.parser
@@ -127,16 +144,22 @@ $health | ConvertTo-Json -Compress
 } | ConvertTo-Json -Compress
 ```
 
+HTTP 503 попадает в `catch` и не принимается как успешный health, даже если
+в его JSON указан `degraded`. Выведенные `warnings` сохраняются в отчёте.
+
 Историческое дневное время выбрано намеренно: оно дальше трёх часов от момента
 проверки и не вызывает сетевой запрос текущей погоды. `use_llm=false` исключает
-Claude и Gemini для этого запроса. Погода и карты в живом UI зависят от сети;
-этот smoke не проверяет эти внешние сервисы.
+Claude и Gemini для этого запроса. Leaflet и h3-js теперь загружаются из
+`web/vendor`, без CDN; погода и тайлы карты по-прежнему зависят от внешней сети.
+Этот smoke не проверяет доступность этих внешних сервисов.
 
 Шаг 3 — права, состав и встроенный HEALTHCHECK:
 
 ```powershell
 docker exec qadam-t77 python -c "import os; from pathlib import Path; assert os.getuid() == 1000; assert not list(Path('/app').rglob('.env*')); assert not Path('/app/.git').exists(); p = Path('/tmp/qadam-cache/t77-check'); p.write_text('ok'); p.unlink(); print('runtime user, cache and file boundaries: PASS')"
 if ($LASTEXITCODE -ne 0) { throw 'Runtime isolation check failed' }
+docker exec qadam-t77 python -c "from pathlib import Path; v = Path('/app/web/vendor'); assert v.is_dir(); assert any(v.rglob('*.js')); assert any(v.rglob('*.css')); print('web/vendor JS and CSS: PASS')"
+if ($LASTEXITCODE -ne 0) { throw 'Missing vendor assets in image' }
 $dockerHealth = ''
 for ($i = 0; $i -lt 30; $i++) {
     $dockerHealth = docker inspect --format '{{.State.Health.Status}}' qadam-t77
@@ -146,13 +169,25 @@ for ($i = 0; $i -lt 30; $i++) {
 if ($dockerHealth -ne 'healthy') { throw 'Docker HEALTHCHECK failed' }
 docker stats --no-stream --format '{{.MemUsage}}' qadam-t77
 docker image inspect --format '{{.Id}} {{.Size}}' qadam:t77
-docker rm --force qadam-t77
 ```
 
-Прислать Megah commit SHA, успешный build, image ID/размер, health JSON,
-число карточек, rules/template, Docker health и потребление памяти.
-Не присылать содержимое окружения или ключи. Проверить память особенно важно
-из-за 512 MB у бесплатных инстансов. Эти результаты нужны до T77 READY.
+В браузере проверить загрузку локальных Leaflet/h3-js и ресурсов карты без 404.
+Перед удалением тестового контейнера выполнить полный smoke интегратора:
+полученные от Megah `smoke.py` и `ctx.Dockerfile` хранить **вне репозитория**, не
+включать в Git. Запускать по инструкции к этим файлам; их содержимое и интерфейс
+этой дорожке пока не переданы. Отдельный `ctx.Dockerfile` проверяет реальный
+контекст сборки, что не заменяется проверкой файлов уже запущенного контейнера.
+
+Прислать Megah SHA актуального main, SHA DEPLOY и проверенного объединённого кода;
+время сборки; image ID/размер и память; health с `warnings`; результаты S1, S4 и E7
+при `use_llm=false`; ответы 422 и 413; Docker health; наличие `/app/web/vendor`
+и успешную загрузку его ресурсов. Проверить отсутствие `.env` в образе и ключей
+в ENV/history, а также отсутствие трейсбеков и текста тестовых запросов в
+`docker logs`. Для секретов сообщать только PASS/FAIL, не печатать найденные
+значения. Если подозрение подтвердилось, не пересылать сырые логи/ENV/history.
+После сбора результатов удалить только свой контейнер: `docker rm --force qadam-t77`.
+Проверить память особенно важно из-за 512 MB у бесплатных инстансов.
+Эти результаты нужны до T77 READY.
 
 ## Два провайдера с бесплатными вычислительными ресурсами
 
@@ -229,7 +264,8 @@ Megah. Автодеплой не должен публиковать незав�
 
 ## Результаты проверок и REQUEST
 
-Проверено на Windows / Python 3.14.3, без Docker:
+Предыдущие проверки на базе `0a486c9`, Windows / Python 3.14.3, без Docker.
+Они не проверяют актуальный main, новый режим `degraded` или ресурсы vendor:
 
 | Проверка | Результат |
 |---|---|
@@ -237,9 +273,18 @@ Megah. Автодеплой не должен публиковать незав�
 | `python -m ruff check app pipeline eval scripts tests` | PASS |
 | Статические проверки Dockerfile, обязательных входов, `git diff --check` | PASS |
 | Повторный запуск uvicorn из отдельной временной папки с 35 разрешёнными файлами, без корневого `pipeline/` | PASS; `.env` не копировался, dotenv отключён, ключи провайдеров удалены из окружения дочернего процесса |
-| HTTP `/` и `/api/health` | 200; `status=ok`, `poi_count=1222`, `llm=off` |
+| HTTP `/` и `/api/health` | Ранее наблюдались 200, `status=ok`, `poi_count=1222`, `llm=off`. Новый критерий: 200, `status` в `ok/degraded`, `poi_count > 0`; `warnings` выводятся отдельно |
 | HTTP `/api/recommend`, payload из инструкции выше | 200; 3 карточки, `parser=rules`, `generation=template`; 18 мс на этой машине |
 | Независимое чтение Dockerfile/allowlist/инструкции | Блокирующих замечаний нет; согласован fallback порта для пустого `PORT` |
+
+После REQUEST интегратора отдельно проверены новые правила, без запуска Docker:
+
+| Проверка изменений DEPLOY | Результат |
+|---|---|
+| Настоящая Python-команда HEALTHCHECK из Dockerfile против локального тестового HTTP-сервера | 10/10: `ok/degraded` с POI принимаются; ноль, отрицательное/отсутствующее число POI, неизвестный/отсутствующий статус и HTTP 503 отклоняются |
+| PowerShell-инструкция | Синтаксис всех трёх блоков проверен; команды Docker здесь не исполнялись |
+| `.dockerignore` | Статически проверены отсутствие разрешений родительских папок, наличие `!web/vendor/**` и финальных запретов; реальный build context ещё проверяет Батырхан |
+| Повторное независимое чтение трёх изменённых файлов | Блокирующих замечаний нет |
 
 Host smoke проверяет полноту набора файлов и работу API. Это **не результат
 Docker-сборки** и не прогноз скорости на бесплатном сервере. Docker build/run,
@@ -247,8 +292,10 @@ Python 3.12/Linux-зависимости, права UID 1000 и фактиче�
 пока **не проверены**; это обязательная передача Батырхану по решению Meyrban.
 
 - **REQUEST Батырхан / QA:** выполнить три шага Docker smoke выше и прислать
-  результаты; до этого не помечать T77 READY. После интеграции собрать повторно
-  окончательный коммит, поскольку файлы приложения меняют другие дорожки.
+  результаты полного smoke интегратора на актуальном main плюс DEPLOY, включая
+  `web/vendor`, S1/S4/E7, ошибки 422/413 и проверку контекста через `ctx.Dockerfile`;
+  до этого не помечать T77 READY. После интеграции собрать повторно окончательный
+  коммит, поскольку файлы приложения меняют другие дорожки.
 - **REQUEST FEATURES:** перед публичным включением Claude добавить лимиты запросов
   на посетителя/сервис; согласовать меньший максимум output tokens и число retries.
   Существующий семафор ограничивает параллельность, а не стоимость.
