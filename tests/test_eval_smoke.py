@@ -414,3 +414,13 @@ def test_url_runner_503_without_data_stops_with_reason() -> None:
     assert "без данных" in notes[0]
     assert "status=degraded" in notes[0] and "POI=0" in notes[0]
     assert "poi.jsonl не найден" in notes[0]
+
+
+def test_intent_categories_include_exclude(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.intent.categories = ["attraction", "park"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]}) == []
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]})
+    ans.intent.categories = ["attraction"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]})
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]}) == []

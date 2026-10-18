@@ -249,6 +249,14 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
             got = detect_script(c.open_note)
             if c.open_status == "unknown" and got != exp["unknown_note_lang"]:
                 fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
+    if "intent_categories_include" in exp:
+        lacking = [c for c in exp["intent_categories_include"] if c not in ans.intent.categories]
+        if lacking:
+            fails.append(f"intent.categories без {lacking}: {ans.intent.categories}")
+    if "intent_categories_exclude" in exp:
+        extra = [c for c in exp["intent_categories_exclude"] if c in ans.intent.categories]
+        if extra:
+            fails.append(f"intent.categories содержит {extra}: {ans.intent.categories}")
     for key, want in (exp.get("intent") or {}).items():
         got = getattr(ans.intent, key, None)
         if got != want:
