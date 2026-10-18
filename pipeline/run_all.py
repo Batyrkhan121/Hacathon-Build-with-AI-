@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, fetch_osm, normalize, report
+from pipeline import build_index, etalon, fetch_osm, normalize, report
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -80,6 +80,9 @@ def run(
     log.info("index: %s (%s)", idx.status, idx.reason)
     if idx.status == "skipped":
         notes.append(f"Индекс пропущен: {idx.reason}.")
+
+    if (etalon_note := etalon.run()) is not None:
+        notes.append(etalon_note + " Подробно: data/processed/ETALON.md.")
 
     out = report.write_report(area, notes=notes)
     log.info("report -> %s; total %.0f s", out, time.time() - started)
