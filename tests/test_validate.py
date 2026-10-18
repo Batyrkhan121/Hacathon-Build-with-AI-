@@ -417,3 +417,29 @@ def test_hours_note_follows_language(lang: str, note: str, expected: str) -> Non
     hours = HoursVerdict(status="open", confidence="high", note=note)
     card = template_cards([cand(make_poi("1", "cafe", "Мю"), hours)], intent(lang=lang), ctx())[0]
     assert card.open_note == expected
+
+
+@pytest.mark.parametrize(
+    ("lang", "name", "distance", "title"),
+    [
+        ("kk", "Детская площадка", 350, "Балалар алаңы · 350 м"),
+        ("en", "Детская площадка", 350, "Playground · 350 m"),
+        ("ru", "Детская площадка", 350, "Детская площадка · 350 м"),
+        ("en", "Сквер", 1250, "Public garden · 1.3 km"),
+        ("en", "Детская площадка у Хатико", 300, "Playground near Хатико"),
+        ("kk", "Детская площадка у Хатико", 300, "Хатико маңындағы балалар алаңы"),
+        ("ru", "Детская площадка у Хатико", 300, "Детская площадка у Хатико"),
+    ],
+)
+def test_unnamed_place_titles_are_translated(
+    lang: str, name: str, distance: int, title: str
+) -> None:
+    category = "park" if name == "Сквер" else "playground"
+    poi = make_poi("1", category, name)
+    card = template_cards([cand(poi, distance=distance)], intent(lang=lang), ctx())[0]
+    assert card.title == title
+
+
+def test_own_translation_wins_over_generic_title() -> None:
+    poi = make_poi("1", "playground", "Детская площадка", name_i18n={"en": "Rainbow playground"})
+    assert template_cards([cand(poi)], intent(lang="en"), ctx())[0].title == "Rainbow playground"

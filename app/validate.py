@@ -11,6 +11,7 @@ from typing import Literal
 
 from app.retrieval import explain, generic_key
 from app.schemas import (
+    POI,
     Candidate,
     Card,
     Category,
@@ -296,7 +297,7 @@ def _card(
     return Card(
         rank=rank,
         poi_id=poi.id,
-        title=poi.name_i18n.get(intent.lang) or poi.name,
+        title=_title(poi, intent.lang),
         category=poi.category,
         geo=poi.geo,
         distance_m=cand.distance_m,
@@ -326,6 +327,47 @@ def _distance_label(metres: int, lang: Lang) -> str:
     return f"{km} km" if lang == "en" else f"{km} км"
 
 
+# Unnamed OSM places carry a Russian generic name; kk / en cards show it translated.
+GENERIC_TITLES: dict[str, dict[str, str]] = {
+    "детская площадка": {"kk": "Балалар алаңы", "en": "Playground"},
+    "детская игровая площадка": {"kk": "Балалар алаңы", "en": "Playground"},
+    "игровая площадка": {"kk": "Ойын алаңы", "en": "Playground"},
+    "площадка": {"kk": "Алаң", "en": "Playground"},
+    "спортивная площадка": {"kk": "Спорт алаңы", "en": "Sports ground"},
+    "сквер": {"kk": "Гүлзар", "en": "Public garden"},
+    "парк": {"kk": "Саябақ", "en": "Park"},
+    "кафе": {"kk": "Кафе", "en": "Cafe"},
+    "кофейня": {"kk": "Кофехана", "en": "Coffee shop"},
+    "ресторан": {"kk": "Мейрамхана", "en": "Restaurant"},
+    "памятник": {"kk": "Ескерткіш", "en": "Monument"},
+    "смотровая площадка": {"kk": "Көру алаңы", "en": "Viewpoint"},
+    "фонтан": {"kk": "Субұрқақ", "en": "Fountain"},
+}
+_NEAR_NAME = re.compile(r"^(?P<generic>.+?)\s+у\s+(?P<near>.+)$")  # «Детская площадка у Хатико»
+
+
+def _generic_name(name: str) -> str:
+    return name.lower().replace("ё", "е").strip(" «»\"'")
+
+
+def _title(poi: POI, lang: Lang) -> str:
+    """Own translation first; unnamed places get a translated generic name for kk / en."""
+    own = poi.name_i18n.get(lang)
+    if own or lang == "ru":
+        return own or poi.name
+    generic = GENERIC_TITLES.get(_generic_name(poi.name))
+    if generic:
+        return generic[lang]
+    near = _NEAR_NAME.match(poi.name)
+    generic = GENERIC_TITLES.get(_generic_name(near["generic"])) if near else None
+    if near and generic:
+        if lang == "en":
+            return f"{generic['en']} near {near['near']}"
+        kk = generic["kk"]
+        return f"{near['near']} маңындағы {kk[0].lower()}{kk[1:]}"
+    return poi.name
+
+
 def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> list[Card]:
     """Unnamed places and same-named branches get the distance: «Детская площадка · 350 м».
 
@@ -337,7 +379,8 @@ def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> l
     out: list[Card] = []
     for card, cand in zip(cards, cands, strict=True):
         title = card.title
-        if generic_key(cand.poi) is not None or counts[title.casefold()] > 1:
+        unnamed = generic_key(cand.poi) is not None and not cand.poi.name_i18n.get(lang)
+        if unnamed or counts[title.casefold()] > 1:
             title = f"{title} · {_distance_label(card.distance_m, lang)}"
         if title.casefold() in used:
             title = f"{title} · {cand.poi.address or f'№{card.rank}'}"
