@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from collections.abc import Set as AbstractSet
 from itertools import combinations, permutations
 
 from app import walkgraph
@@ -337,7 +338,7 @@ def plan_walk(
     *,
     loop: bool = True,
     max_stops: int = MAX_ROUTE_STOPS,
-    wanted_categories: frozenset[str] | set[str] = frozenset(),
+    wanted_categories: AbstractSet[str] = frozenset(),
     graph: walkgraph.WalkGraph | None = None,
     mode: walkgraph.Mode = walkgraph.WALK,
     origin_landmark: str | None = None,
@@ -389,7 +390,7 @@ def plan_walk(
     return best
 
 
-def walk_eligible(cand: Candidate, wanted_categories: frozenset[str] | set[str] = frozenset()
+def walk_eligible(cand: Candidate, wanted_categories: AbstractSet[str] = frozenset()
                   ) -> bool:
     """May be a stop (or an alternative card) of a walk: not where the person already is, not
     fast food / bar / nightlife / restaurant unless that category was asked for."""

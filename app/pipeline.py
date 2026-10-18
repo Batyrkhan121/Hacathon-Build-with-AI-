@@ -29,6 +29,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import math
 import re
 import time
 import traceback
@@ -40,7 +41,7 @@ from datetime import datetime, timedelta
 import h3
 import numpy as np
 
-from app import geo, hours, retrieval, route, validate, weather
+from app import geo, hours, retrieval, route, validate, walkgraph, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
@@ -592,14 +593,25 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
 
+    # T91: the walk graph (loaded once, cached); None -> straight segments as before
+    graph = _walk_graph(deps.settings, request_id)
+    walk_mode = walkgraph.Mode(wheelchair=intent.wheelchair, night=plan_intent.night,
+                               kids=intent.with_kids)
+
     # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
     walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
                  and not intent.tourist and not plan_intent.night)
     gen_candidates = candidates
     if walk_loop and req.want_route and len(candidates) >= 2:
         try:
-            picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0,
-                                     wanted_categories=set(plan_intent.categories))
+            budget, wanted_cats = plan_intent.time_budget_min or 0, set(plan_intent.categories)
+            if graph is None:  # without a graph the call is exactly the old one
+                picked = route.plan_walk(ctx.origin, candidates, budget,
+                                         wanted_categories=wanted_cats)
+            else:
+                picked = route.plan_walk(ctx.origin, candidates, budget,
+                                         wanted_categories=wanted_cats, graph=graph,
+                                         mode=walk_mode, origin_landmark=ctx.landmark_id)
         except Exception as exc:  # noqa: BLE001 - the cards are still useful without it
             log.error("request %s: plan_walk failed (%s)\n%s", request_id, type(exc).__name__,
                       _frames(exc))
@@ -611,6 +623,12 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             wanted = set(plan_intent.categories)
             gen_candidates = picked + [c for c in candidates if c not in picked
                                        and route.walk_eligible(c, wanted)]
+
+    # T91: minutes on the cards of the places that may be shown come from the graph too
+    # (ranking is untouched: it already happened with the straight estimate)
+    if graph is not None and gen_candidates:
+        gen_candidates = _graph_minutes(graph, ctx, gen_candidates, search_intent, walk_mode,
+                                        request_id)
 
     # 6. cards
     cards: list[Card] = []
@@ -659,10 +677,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 7. route
     note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
                             wheelchair=intent.wheelchair)
+    graph_note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
+                                  wheelchair=intent.wheelchair, graph=True)
     # At a transport hub people pick one place to wait: a tour of three cafes makes no sense.
     mini_route, route_broke = _route(ctx, cards, candidates, search_intent,
                                      req.want_route and not at_hub, request_id, loop=walk_loop,
-                                     note=note)
+                                     note=note, graph=graph, mode=walk_mode,
+                                     graph_note=graph_note)
     if route_broke:
         warn.append(t["route_failed"])
 
@@ -1002,6 +1023,46 @@ def _retrieve(
         return [], True
 
 
+def _walk_graph(settings: Settings, request_id: str) -> walkgraph.WalkGraph | None:
+    """The walk graph when WALK_GRAPH is on and the file is there; None on any problem."""
+    if not settings.walk_graph_ready:
+        return None
+    try:
+        return walkgraph.load_graph(settings.walk_graph_path, settings.walk_graph_meta_path)
+    except Exception as exc:  # noqa: BLE001 - the straight route is always available
+        log.error("request %s: walk graph failed (%s)", request_id, type(exc).__name__)
+        return None
+
+
+def _graph_minutes(
+    graph: walkgraph.WalkGraph,
+    ctx: SearchContext,
+    candidates: list[Candidate],
+    intent: QueryIntent,
+    mode: walkgraph.Mode,
+    request_id: str,
+) -> list[Candidate]:
+    """walk_min of these candidates by the graph (one search from the start) and their
+    reasons («≈N мин пешком») rebuilt to match; any problem -> the straight minutes."""
+    try:
+        lengths = graph.lengths_from(ctx.origin, {c.poi.id: c.poi.geo for c in candidates},
+                                     mode, origin_landmark=ctx.landmark_id)
+        out: list[Candidate] = []
+        for cand in candidates:
+            metres = lengths.get(cand.poi.id)
+            if metres is None:
+                out.append(cand)
+                continue
+            minutes = max(1, math.ceil(metres / walkgraph.WALK_M_PER_MIN - 1e-9))
+            moved = cand.model_copy(update={"walk_min": minutes})
+            moved.matched = retrieval.explain(moved, intent, ctx)
+            out.append(moved)
+        return out
+    except Exception as exc:  # noqa: BLE001 - straight minutes are still right enough
+        log.error("request %s: graph minutes failed (%s)", request_id, type(exc).__name__)
+        return candidates
+
+
 def _route(
     ctx: SearchContext,
     cards: list[Card],
@@ -1012,6 +1073,9 @@ def _route(
     *,
     loop: bool = False,
     note: str | None = None,
+    graph: walkgraph.WalkGraph | None = None,
+    mode: walkgraph.Mode = walkgraph.WALK,
+    graph_note: str | None = None,
 ) -> tuple[MiniRoute | None, bool]:
     """(route, failed): a crash in plan_route is reported, not swallowed."""
     if not want_route or len(cards) < 2:
@@ -1019,9 +1083,13 @@ def _route(
     by_id = {c.poi.id: c for c in candidates}
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
     try:
+        visits = {c.poi_id: c.visit_min_low for c in cards}
+        if graph is None:  # without a graph the call is exactly the old one
+            return route.plan_route(ctx.origin, stops, intent.time_budget_min, visits,
+                                    loop=loop, note=note), False
         return route.plan_route(
-            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards},
-            loop=loop, note=note,
+            ctx.origin, stops, intent.time_budget_min, visits, loop=loop, note=note,
+            graph=graph, mode=mode, origin_landmark=ctx.landmark_id, graph_note=graph_note,
         ), False
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)\n%s", request_id, type(exc).__name__,
