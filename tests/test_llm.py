@@ -417,8 +417,15 @@ def test_embed_query_without_key_is_none(tmp_path: Path) -> None:
 
 
 def test_embed_documents_without_key_raises(tmp_path: Path) -> None:
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(LLMUnavailable, match="GEMINI_API_KEY"):
         LLMClient(make_settings(tmp_path)).embed_documents(["кофе"])
+
+
+def test_embed_documents_without_key_names_the_openrouter_key(tmp_path: Path) -> None:
+    llm = LLMClient(make_settings(tmp_path, embed_provider="openrouter"))
+    with pytest.raises(LLMUnavailable, match="OPENROUTER_API_KEY") as err:
+        llm.embed_documents(["кофе"])
+    assert "GEMINI" not in str(err.value)
 
 
 def test_embed_query_is_normalised_and_cached(tmp_path: Path) -> None:
