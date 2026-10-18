@@ -229,6 +229,11 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         hits = [s for s in exp["top1_note_forbid"] if s.lower() in top.open_note.lower()]
         if hits:
             fails.append(f"первая карточка: {hits} в «{top.open_note[:60]}»")
+    if "notes_lang" in exp:
+        for c in ans.cards:
+            got = detect_script(c.open_note)
+            if got != exp["notes_lang"]:
+                fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
     if "unknown_note_lang" in exp:
         for c in ans.cards:
             got = detect_script(c.open_note)

@@ -288,3 +288,12 @@ def test_top1_why_any(mock_answer: Answer) -> None:
     word = mock_answer.cards[0].why.split()[0]
     assert check_expect(mock_answer, {"top1_why_any": [word]}) == []
     assert check_expect(mock_answer, {"top1_why_any": ["нет данных"]})
+
+
+def test_notes_lang(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    for c in ans.cards:
+        c.open_note = "OSM hours: daily 10:00–22:00"
+    assert check_expect(ans, {"notes_lang": "en"}) == []
+    ans.cards[0].open_note = "по данным OSM: ежедневно 10:00–22:00"
+    assert check_expect(ans, {"notes_lang": "en"})

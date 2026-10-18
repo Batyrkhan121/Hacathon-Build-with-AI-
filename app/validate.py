@@ -162,6 +162,62 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
 }
 
 
+# T70 step 9: hours notes come from hours.py in Russian; cards for kk / en get them translated.
+# Ordered: longer phrases first. Only the fixed vocabulary of app/hours.py is used there.
+_NOTE_PHRASES: dict[str, tuple[tuple[str, str], ...]] = {
+    "en": (
+        ("по данным OSM сегодня не работает", "closed today according to OSM"),
+        ("в праздники часы могут отличаться", "hours may differ on holidays"),
+        ("откроется завтра в", "opens tomorrow at"),
+        ("откроется через", "opens in"),
+        ("откроется в", "opens at"),
+        ("закроется через", "closes in"),
+        ("по данным OSM:", "OSM hours:"),
+        ("сегодня выходной", "closed today"),
+        ("закрыто", "closed"),
+        ("ежедневно", "daily"),
+        ("круглосуточно", "24/7"),
+        ("выходной", "closed"),
+        ("часы:", "hours:"),
+    ),
+    "kk": (
+        ("по данным OSM сегодня не работает", "OSM деректері бойынша бүгін жұмыс істемейді"),
+        ("в праздники часы могут отличаться", "мереке күндері уақыт өзгеруі мүмкін"),
+        ("откроется завтра в", "ертең ашылады:"),
+        ("откроется через", "ашылуына"),
+        ("откроется в", "ашылады:"),
+        ("закроется через", "жабылуына"),
+        ("по данным OSM:", "OSM деректері бойынша:"),
+        ("сегодня выходной", "бүгін демалыс"),
+        ("закрыто", "жабық"),
+        ("ежедневно", "күн сайын"),
+        ("круглосуточно", "тәулік бойы"),
+        ("выходной", "демалыс"),
+        ("часы:", "уақыты:"),
+    ),
+}
+_NOTE_DAYS: dict[str, dict[str, str]] = {
+    "en": {
+        "Пн": "Mon", "Вт": "Tue", "Ср": "Wed", "Чт": "Thu", "Пт": "Fri", "Сб": "Sat", "Вс": "Sun"
+    },
+    "kk": {"Пн": "Дс", "Вт": "Сс", "Ср": "Ср", "Чт": "Бс", "Пт": "Жм", "Сб": "Сн", "Вс": "Жс"},
+}
+_NOTE_UNITS: dict[str, dict[str, str]] = {"en": {"ч": "h", "мин": "min"}, "kk": {"ч": "сағ"}}
+_NOTE_DAY_RE = re.compile(r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\b")
+_NOTE_UNIT_RE = re.compile(r"(?<=\d )(ч|мин)\b")
+
+
+def _localize_note(note: str, lang: Lang) -> str:
+    """Translate an app/hours.py note for kk / en cards; ru notes are returned as is."""
+    if lang not in _NOTE_PHRASES:
+        return note
+    for ru, other in _NOTE_PHRASES[lang]:
+        note = note.replace(ru, other)
+    days, units = _NOTE_DAYS[lang], _NOTE_UNITS[lang]
+    note = _NOTE_DAY_RE.sub(lambda m: days[m.group(1)], note)
+    return _NOTE_UNIT_RE.sub(lambda m: units.get(m.group(1), m.group(1)), note)
+
+
 # ------------------------------------------------------------------ helpers
 
 
@@ -235,6 +291,8 @@ def _card(
     if hours.status == "unknown" and (intent.lang != "ru" or "проверьте" not in note):
         # ru keeps a more specific hours.py note ("…нестандартный формат, проверьте…")
         note = UNKNOWN_HOURS_NOTES.get(intent.lang, UNKNOWN_HOURS_NOTE)
+    else:
+        note = _localize_note(note, intent.lang)
     return Card(
         rank=rank,
         poi_id=poi.id,

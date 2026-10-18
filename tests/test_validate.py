@@ -383,3 +383,37 @@ def test_unknown_hours_note_in_user_language(
     resp = DraftResponse(summary="", cards=[draft("test:poi/3")])
     finalized, _ = finalize(resp, cands, intent(lang=lang), ctx())
     assert finalized[0].open_note == note
+
+
+@pytest.mark.parametrize(
+    ("lang", "note", "expected"),
+    [
+        (
+            "en",
+            "закроется через 45 мин · по данным OSM: ежедневно 10:00–24:00 · "
+            "в праздники часы могут отличаться",
+            "closes in 45 min · OSM hours: daily 10:00–24:00 · hours may differ on holidays",
+        ),
+        (
+            "en",
+            "по данным OSM: Пн–Пт 09:00–18:00; Сб 10:00–16:00; Вс выходной",
+            "OSM hours: Mon–Fri 09:00–18:00; Sat 10:00–16:00; Sun closed",
+        ),
+        ("en", "по данным OSM: круглосуточно", "OSM hours: 24/7"),
+        (
+            "kk",
+            "закроется через 1 ч 10 мин · по данным OSM: Пн, Ср, Пт 10:00–14:00",
+            "жабылуына 1 сағ 10 мин · OSM деректері бойынша: Дс, Ср, Жм 10:00–14:00",
+        ),
+        (
+            "kk",
+            "по данным OSM: ежедневно 08:00–22:00 · в праздники часы могут отличаться",
+            "OSM деректері бойынша: күн сайын 08:00–22:00 · мереке күндері уақыт өзгеруі мүмкін",
+        ),
+        ("ru", "по данным OSM: ежедневно 08:00–22:00", "по данным OSM: ежедневно 08:00–22:00"),
+    ],
+)
+def test_hours_note_follows_language(lang: str, note: str, expected: str) -> None:
+    hours = HoursVerdict(status="open", confidence="high", note=note)
+    card = template_cards([cand(make_poi("1", "cafe", "Мю"), hours)], intent(lang=lang), ctx())[0]
+    assert card.open_note == expected

@@ -6,6 +6,8 @@
 #   top1_categories_any   категория первой карточки из списка
 #   top1_note_forbid      подстрок нет в open_note первой карточки
 #   unknown_note_lang     пометка о часах у карточек с unknown написана на этом языке
+#   notes_lang            пометки о часах у всех карточек на этом языке
+#   top1_why_any          в why первой карточки есть одна из подстрок
 # Запуск: python -m eval.run_eval --no-llm --scenarios eval/probes.yaml --out <папка>
 # (папка не eval/, чтобы не затереть report.md основного прогона).
 # Время: пн 19.10.2026, Астана UTC+5.
@@ -83,6 +85,7 @@
   expect:
     min_cards: 1
     unknown_note_lang: kk
+    notes_lang: kk
 
 - id: P8
   title: "English: hours note in English too"
@@ -94,6 +97,7 @@
   expect:
     min_cards: 1
     unknown_note_lang: en
+    notes_lang: en
 
 - id: P9
   title: "Компания из 5 человек вечером: первым занятие для компании, а не кафе"
