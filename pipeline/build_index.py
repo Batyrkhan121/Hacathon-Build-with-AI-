@@ -2,10 +2,15 @@
 
     python -m pipeline.build_index
 
-Embeddings come from Gemini and only when GEMINI_API_KEY is set (`settings.has_embeddings`):
-the Anthropic API has no embeddings endpoint. Without a key (or on quota errors) the index
-is skipped, the pipeline does not fail, and retrieval stays lexical; REPORT.md says so.
-Vectors are cached by sha256 of the document text, so a rerun embeds only changed POIs.
+Embeddings come from Gemini (the Anthropic API has no embeddings endpoint), by
+EMBED_PROVIDER: "gemini" calls Google directly (GEMINI_API_KEY, task_type
+RETRIEVAL_DOCUMENT); "openrouter" calls the same model through OpenRouter's
+OpenAI-compatible /api/v1/embeddings (OPENROUTER_API_KEY, no task_type, provider
+data_collection "deny"). Without a key, or on quota/auth errors, the old index is kept but
+marked stale, the pipeline does not fail, and REPORT.md says why.
+Vectors are cached per provider + model + dimension (one cache file each, keyed by sha256
+of the document text), so vectors of different models never mix and a rerun embeds only
+changed POIs.
 """
 
 from __future__ import annotations
@@ -20,16 +25,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import numpy as np
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
 
 log = logging.getLogger(__name__)
 
 DOC_TEMPLATE = "{name}. {category_ru}. Теги: {tags}. {description}"
-TASK_TYPE = "RETRIEVAL_DOCUMENT"
+TASK_TYPE = "RETRIEVAL_DOCUMENT"  # Gemini direct; OpenRouter takes no task type
+OPENROUTER_TASK_TYPE = "none (openrouter)"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/embeddings"
+OPENROUTER_TIMEOUT_S = 60.0
+NO_RETRY_STATUS = frozenset({400, 401, 402, 403})  # bad request / key / credits: retry cannot help
 BATCH = 100
 RETRY_PAUSES_S: tuple[float, ...] = (5.0, 15.0, 45.0)
 
@@ -99,6 +109,78 @@ def gemini_embedder() -> EmbedFn:
     return embed
 
 
+class EmbedHTTPError(RuntimeError):
+    """A non-200 answer (or an error body) from an HTTP embeddings API."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"HTTP {status}: {detail}")
+        self.status = status
+
+
+def openrouter_embedder(
+    api_key: str, model: str, dim: int, client: httpx.Client | None = None
+) -> EmbedFn:
+    """Gemini embeddings through OpenRouter. A longer vector is cut to `dim` and
+    L2-normalized again (Matryoshka-style); a shorter one is an error."""
+    http = client or httpx.Client(timeout=OPENROUTER_TIMEOUT_S)
+    headers = {"Authorization": f"Bearer {api_key}", "X-Title": "Qadam"}
+
+    def embed(batch: list[str]) -> list[list[float]]:
+        body = {
+            "model": model,
+            "input": batch,
+            "encoding_format": "float",
+            "dimensions": dim,
+            "provider": {"data_collection": "deny"},
+        }
+        resp = http.post(OPENROUTER_URL, headers=headers, json=body)
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = {}
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if resp.status_code != 200 or error:
+            status = resp.status_code if resp.status_code != 200 else int(
+                (error or {}).get("code") or 502
+            )
+            detail = (error or {}).get("message") if isinstance(error, dict) else resp.text
+            raise EmbedHTTPError(status, str(detail or "")[:160])
+        rows = sorted(payload.get("data") or [], key=lambda d: d.get("index", 0))
+        if len(rows) != len(batch):
+            raise ValueError(f"OpenRouter вернул {len(rows)} векторов на {len(batch)} текстов")
+        out: list[list[float]] = []
+        for row in rows:
+            values = row.get("embedding") or []
+            if len(values) < dim:
+                raise ValueError(f"размерность ответа {len(values)} меньше EMBED_DIM={dim}")
+            vec = np.asarray(values[:dim], dtype=np.float32)
+            norm = float(np.linalg.norm(vec))
+            if norm == 0:
+                raise ValueError("нулевой вектор от OpenRouter")
+            out.append((vec / norm).tolist())
+        return out
+
+    return embed
+
+
+def make_embedder(settings: Settings) -> EmbedFn:
+    if settings.embed_provider == "openrouter":
+        return with_retries(
+            openrouter_embedder(settings.openrouter_api_key, settings.embed_model,
+                                settings.embed_dim)
+        )
+    return with_retries(gemini_embedder())
+
+
+def cache_file(provider: str, model: str, dim: int) -> str:
+    """One cache file per provider + model + dimension. The Gemini-direct name is the
+    historic one, so its existing vectors stay usable."""
+    if provider == "gemini":
+        return f"embeddings_{model}_{dim}.npz"
+    safe = model.replace("/", "__").replace(":", "_")
+    return f"embeddings_{provider}_{safe}_{dim}.npz"
+
+
 def is_daily_quota(exc: Exception) -> bool:
     text = str(exc)
     return "RESOURCE_EXHAUSTED" in text and "PerDay" in text
@@ -107,6 +189,14 @@ def is_daily_quota(exc: Exception) -> bool:
 def failure_reason(exc: Exception) -> str:
     """Short human reason for REPORT.md instead of the raw SDK error JSON."""
     text = str(exc)
+    if isinstance(exc, EmbedHTTPError):
+        if exc.status in (401, 403):
+            return f"OpenRouter: ключ не принят ({exc.status}), проверьте OPENROUTER_API_KEY"
+        if exc.status == 402:
+            return "OpenRouter: недостаточно средств на ключе (402)"
+        if exc.status == 429:
+            return "лимит запросов OpenRouter (429), повторы не помогли"
+        return f"OpenRouter: ошибка {exc.status}"
     if is_daily_quota(exc):
         return (
             "дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: "
@@ -127,8 +217,12 @@ def with_retries(
             try:
                 return fn(batch)
             except Exception as exc:  # SDK raises its own error types; retry any of them
-                if attempt == len(pauses) or is_daily_quota(exc):
-                    raise  # a daily quota resets in hours: retrying in seconds only wastes time
+                if (
+                    attempt == len(pauses)
+                    or is_daily_quota(exc)  # resets in hours: retrying in seconds wastes time
+                    or (isinstance(exc, EmbedHTTPError) and exc.status in NO_RETRY_STATUS)
+                ):
+                    raise
                 log.warning("embed batch failed (%s), retry in %ss", exc, pauses[attempt])
                 sleep(pauses[attempt])
         raise AssertionError("unreachable")
@@ -159,10 +253,14 @@ def build_index(
     cache_path: Path | None = None,
     model: str | None = None,
     dim: int | None = None,
+    provider: str | None = None,
 ) -> IndexResult:
     """Build the index, or leave the old one on disk marked `status: "stale"` (with the
     reason) so the app never mistakes it for a fresh one."""
-    result = _build(pois, index_dir, embed=embed, cache_path=cache_path, model=model, dim=dim)
+    result = _build(
+        pois, index_dir, embed=embed, cache_path=cache_path, model=model, dim=dim,
+        provider=provider,
+    )
     if result.status == "skipped":
         mark_stale(index_dir, result.reason)
     return result
@@ -195,17 +293,20 @@ def _build(
     cache_path: Path | None,
     model: str | None,
     dim: int | None,
+    provider: str | None = None,
 ) -> IndexResult:
     settings = get_settings()
+    provider = provider or settings.embed_provider
     model = model or settings.embed_model
     dim = dim or settings.embed_dim
     if embed is None:
         if not settings.has_embeddings:
+            key = "OPENROUTER_API_KEY" if provider == "openrouter" else "GEMINI_API_KEY"
             return IndexResult(
-                "skipped", "нет GEMINI_API_KEY: индекс не строится, retrieval лексический"
+                "skipped", f"нет {key}: индекс не строится, retrieval лексический"
             )
-        embed = with_retries(gemini_embedder())
-    cache_path = cache_path or settings.cache_dir / f"embeddings_{model}_{dim}.npz"
+        embed = make_embedder(settings)
+    cache_path = cache_path or settings.cache_dir / cache_file(provider, model, dim)
     cache = load_cache(cache_path)
 
     texts = [doc_text(p) for p in pois]
@@ -248,7 +349,8 @@ def _build(
         "dim": dim,
         "count": len(pois),
         "created_at": datetime.now(ASTANA_TZ).isoformat(timespec="seconds"),
-        "task_type": TASK_TYPE,
+        "provider": provider,
+        "task_type": OPENROUTER_TASK_TYPE if provider == "openrouter" else TASK_TYPE,
         "doc_template": DOC_TEMPLATE,
         "ids_sha256": ids_hash(pois),
         "docs_sha256": docs_hash(pois),
