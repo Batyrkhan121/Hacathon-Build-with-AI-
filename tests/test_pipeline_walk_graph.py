@@ -186,3 +186,54 @@ def test_coverage_meta_marks_a_partial_graph(tmp_path: Path) -> None:
     assert cov["tiles_loaded"] == ["walk_tile_1", "walk_tile_4"]
     assert cov["tiles_partial"] == ["walk_tile_1"] and len(cov["tiles_missing"]) == 7
     assert cov["covered_bboxes"][1] == [51.11, 71.35, 51.19, 71.5]  # the centre tile
+
+
+CROSSINGS = {
+    "osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"},
+    "elements": [
+        n(20, 0, 0), n(21, 0, 1), n(22, 0, 2), n(30, -1, 1), n(31, 1, 1), n(41, 1.5, 1),
+        n(42, 2, 1), n(50, 0, 3, highway="traffic_signals", crossing="traffic_signals"),
+        n(51, 0, 4), n(60, 0, 5, highway="crossing"), n(61, 0, 6),
+        w(200, [20, 21, 22], highway="residential"),
+        # the crossing type is only on the way: it goes to node 21 where the way meets the road
+        w(201, [30, 21, 31], highway="footway", footway="crossing", crossing="traffic_signals"),
+        # no road node: the middle node 41 becomes the crossing; markings=no -> unmarked
+        w(202, [31, 41, 42], highway="footway", footway="crossing", crossing="uncontrolled",
+          **{"crossing:markings": "no"}),
+        w(203, [22, 50, 51], highway="footway"),
+        # an untyped highway=crossing node takes the way's type
+        w(204, [51, 60, 61], highway="footway", footway="crossing", crossing="unmarked"),
+    ],
+}
+
+
+def test_crossing_type_from_way_tags_and_every_crossing_segment_ends_at_one() -> None:
+    graph, stats = build_graph([CROSSINGS])
+    flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
+    assert flags[21] == NODE_CROSSING | NODE_SIGNALS
+    assert flags[41] == NODE_CROSSING | NODE_UNMARKED
+    assert flags[50] == NODE_CROSSING | NODE_SIGNALS  # traffic_signals + crossing=traffic_signals
+    assert flags[60] == NODE_CROSSING | NODE_UNMARKED
+    assert flags[20] == flags[31] == 0
+    assert stats["crossings_from_way_tags"] == 3
+    for k in np.flatnonzero(graph.edge_flags & EDGE_CROSSING):
+        ends = graph.node_flags[graph.edge_u[k]] | graph.node_flags[graph.edge_v[k]]
+        assert ends & NODE_CROSSING, k
+
+
+@pytest.mark.parametrize("payload", [PAYLOAD, CROSSINGS])
+def test_edge_length_never_below_straight_line_of_stored_ends(payload: dict) -> None:
+    graph, _ = build_graph([payload])
+    la, lo = np.radians(graph.node_lat.astype(float)), np.radians(graph.node_lon.astype(float))
+    u, v = graph.edge_u, graph.edge_v
+    a = np.sin((la[v] - la[u]) / 2) ** 2 + np.cos(la[u]) * np.cos(la[v]) * np.sin(
+        (lo[v] - lo[u]) / 2) ** 2
+    straight = 2 * 6_371_000.0 * np.arcsin(np.sqrt(a))
+    assert (graph.edge_len_m.astype(float) >= straight).all()
+
+
+def test_meta_has_format_version_and_steps(built, tmp_path: Path) -> None:
+    graph, stats = built
+    meta = save_graph(graph, {}, {}, stats, tmp_path / "g.npz", tmp_path / "m.json",
+                      poi_total=0, landmark_total=0, osm_snapshot="2026-10-19")
+    assert meta["format_version"] == 1 and meta["steps"] == 1

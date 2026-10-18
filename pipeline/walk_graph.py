@@ -16,7 +16,10 @@ walk_graph.npz (np.savez_compressed), node number = row in the node arrays:
   node_lat, node_lon float32[N]; node_flags uint8[N] (1 crossing, 2 traffic signals,
   4 lowered kerb, 8 unmarked crossing)
   edge_u, edge_v int32[E]: undirected, every edge once, u != v; edge_len_m float32[E] along
-  the OSM line; edge_flags uint8[E] (1 steps, 2 lit, 4 footway, 8 major road, 16 crossing)
+  the OSM line, never shorter than the straight line between the stored (float32) ends;
+  edge_flags uint8[E] (1 steps, 2 lit, 4 footway, 8 major road, 16 crossing)
+A footway=crossing way whose nodes carry no crossing tag gives its own crossing tags to the
+node where it meets a road (or to its middle node), so every crossing has a crossing node.
 walk_graph_meta.json: osm_snapshot, bbox [south, west, north, east], nodes, edges,
   crossings, signals, largest_component_share, poi_nodes {poi_id: node},
   landmark_nodes {landmark_id: node}, created_at (+ reference counters and flag legend).
@@ -65,6 +68,10 @@ WALKABLE: tuple[str, ...] = (
 FOOT_INFRA = frozenset({"footway", "path", "pedestrian", "steps", "corridor", "living_street"})
 MAJOR_ROADS = frozenset({"primary", "secondary", "tertiary"})
 CROSSING_TYPES = frozenset({"traffic_signals", "marked", "zebra", "uncontrolled", "unmarked"})
+# roads with cars: where a footway=crossing way meets one, that node is the crossing itself
+CAR_ROADS = frozenset(
+    {"residential", "service", "unclassified", "tertiary", "secondary", "primary"}
+)
 KERB_LOW = frozenset({"lowered", "flush"})
 
 NODE_CROSSING, NODE_SIGNALS, NODE_KERB, NODE_UNMARKED = 1, 2, 4, 8
@@ -77,6 +84,7 @@ EDGE_FLAGS = {
     "steps": EDGE_STEPS, "lit": EDGE_LIT, "footway": EDGE_FOOTWAY, "major_road": EDGE_MAJOR,
     "crossing": EDGE_CROSSING,
 }
+FORMAT_VERSION = 1
 NPZ_KEYS = ("node_lat", "node_lon", "node_flags", "edge_u", "edge_v", "edge_len_m", "edge_flags")
 
 SNAP_MAX_M = 150.0
@@ -167,12 +175,23 @@ def walkable(tags: Mapping[str, str]) -> bool:
     )
 
 
+def crossing_flags_of(tags: Mapping[str, str]) -> int:
+    """Crossing type from crossing=* / crossing:markings=* (no tag = an ordinary crossing)."""
+    kind = tags.get("crossing")
+    if kind is not None and kind not in CROSSING_TYPES:
+        return 0  # crossing=no, informal...
+    flags = NODE_CROSSING
+    if kind == "traffic_signals":
+        flags |= NODE_SIGNALS
+    if kind == "unmarked" or tags.get("crossing:markings") == "no":
+        flags |= NODE_UNMARKED
+    return flags
+
+
 def node_flags_of(tags: Mapping[str, str]) -> int:
     flags = 0
-    if tags.get("highway") == "crossing" and tags.get("crossing", "marked") in CROSSING_TYPES:
-        flags |= NODE_CROSSING
-        if tags.get("crossing") == "unmarked":
-            flags |= NODE_UNMARKED
+    if tags.get("highway") == "crossing" or tags.get("crossing") in CROSSING_TYPES:
+        flags |= crossing_flags_of(tags)
     if tags.get("highway") == "traffic_signals" or tags.get("crossing") == "traffic_signals":
         flags |= NODE_SIGNALS
     if tags.get("kerb") in KERB_LOW:
@@ -222,8 +241,10 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
     for refs, _ in kept_ways:
         for ref in refs:
             uses[ref] += 1
+    node_flags = {r: node_flags_of(node_tags.get(r, {})) for r in uses}
+    from_ways = _crossings_from_ways(kept_ways, node_tags, node_flags)
     keep: set[int] = {r for r, c in uses.items() if c > 1}
-    keep |= {r for r in uses if node_flags_of(node_tags.get(r, {}))}
+    keep |= {r for r, f in node_flags.items() if f}
     for refs, _ in kept_ways:
         keep.update((refs[0], refs[-1]))
 
@@ -261,15 +282,21 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
     node_ids = sorted({u for u, *_ in edges} | {v for _, v, *_ in edges})
     index = {osm_id: i for i, osm_id in enumerate(node_ids)}
 
-    node_flag_arr = np.array([node_flags_of(node_tags.get(i, {})) for i in node_ids], np.uint8)
+    node_flag_arr = np.array([node_flags[i] for i in node_ids], dtype=np.uint8)
     edge_flag_arr = np.array([e[3] for e in edges], dtype=np.uint8)
+    lat = np.array([coords[i][0] for i in node_ids], dtype=np.float32)
+    lon = np.array([coords[i][1] for i in node_ids], dtype=np.float32)
+    edge_u = np.array([index[e[0]] for e in edges], dtype=np.int32)
+    edge_v = np.array([index[e[1]] for e in edges], dtype=np.int32)
     graph = WalkGraph(
-        node_lat=np.array([coords[i][0] for i in node_ids], dtype=np.float32),
-        node_lon=np.array([coords[i][1] for i in node_ids], dtype=np.float32),
+        node_lat=lat,
+        node_lon=lon,
         node_flags=node_flag_arr,
-        edge_u=np.array([index[e[0]] for e in edges], dtype=np.int32),
-        edge_v=np.array([index[e[1]] for e in edges], dtype=np.int32),
-        edge_len_m=np.array([e[2] for e in edges], dtype=np.float32),
+        edge_u=edge_u,
+        edge_v=edge_v,
+        edge_len_m=_not_shorter_than_straight(
+            np.array([e[2] for e in edges], dtype=np.float64), lat, lon, edge_u, edge_v
+        ),
         edge_flags=edge_flag_arr,
         node_osm_id=np.array(node_ids, dtype=np.int64),
     )
@@ -284,6 +311,7 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "crossings": int(np.count_nonzero(node_flag_arr & NODE_CROSSING)),
         "signals": int(np.count_nonzero(node_flag_arr & NODE_SIGNALS)),
         "unmarked_crossings": int(np.count_nonzero(node_flag_arr & NODE_UNMARKED)),
+        "crossings_from_way_tags": sum(1 for r in from_ways if r in index),
         "kerbs_lowered": int(np.count_nonzero(node_flag_arr & NODE_KERB)),
         "crossing_edges": int(np.count_nonzero(edge_flag_arr & EDGE_CROSSING)),
         "steps_edges": int(np.count_nonzero(edge_flag_arr & EDGE_STEPS)),
@@ -291,6 +319,53 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "total_length_km": round(float(graph.edge_len_m.sum()) / 1000, 1),
     }
     return graph, stats
+
+
+def _crossings_from_ways(
+    kept_ways: Sequence[tuple[list[int], Mapping[str, str]]],
+    node_tags: Mapping[int, Mapping[str, str]],
+    node_flags: dict[int, int],
+) -> set[int]:
+    """Crossing tags of footway=crossing ways onto nodes (updates node_flags in place).
+
+    OSM puts crossing=* both on the crossing node and on the crossing way; when the node is
+    missing or untyped, the way's type is used, so a crossing segment always ends at a
+    crossing node and a signalised crossing is not taken for an unmarked one.
+    Returns the nodes that got flags this way."""
+    road_nodes = {r for refs, tags in kept_ways if tags.get("highway") in CAR_ROADS for r in refs}
+    changed: set[int] = set()
+    for refs, tags in kept_ways:
+        if tags.get("footway") != "crossing" or not (flags := crossing_flags_of(tags)):
+            continue
+        typed = [r for r in refs if node_flags.get(r, 0) & NODE_CROSSING]
+        if typed:  # an untyped crossing node (highway=crossing alone) takes the way's type
+            for r in typed:
+                untyped = "crossing" not in node_tags.get(r, {})
+                if untyped and node_flags[r] | flags != node_flags[r]:
+                    node_flags[r] |= flags
+                    changed.add(r)
+            continue
+        inner = refs[1:-1]
+        at = [r for r in refs if r in road_nodes] or ([inner[len(inner) // 2]] if inner else [])
+        for r in at:
+            node_flags[r] = node_flags.get(r, 0) | flags
+            changed.add(r)
+    return changed
+
+
+def _not_shorter_than_straight(
+    length: np.ndarray, lat: np.ndarray, lon: np.ndarray, u: np.ndarray, v: np.ndarray
+) -> np.ndarray:
+    """float32 lengths >= the haversine between the stored float32 ends (+0.01%), so a
+    straight-line A* bound never overestimates."""
+    la, lo = np.radians(lat.astype(np.float64)), np.radians(lon.astype(np.float64))
+    a = (np.sin((la[v] - la[u]) / 2) ** 2
+         + np.cos(la[u]) * np.cos(la[v]) * np.sin((lo[v] - lo[u]) / 2) ** 2)
+    straight = 2 * 6_371_000.0 * np.arcsin(np.sqrt(a)) * 1.0001
+    out = np.maximum(length, straight).astype(np.float32)
+    short = out.astype(np.float64) < straight
+    out[short] = np.nextafter(out[short], np.float32(np.inf))
+    return out
 
 
 def _largest_component(edges: Sequence[tuple]) -> tuple[set[int], int, int]:
@@ -372,6 +447,7 @@ def save_graph(
     dists = [d for _, d in poi_snaps.values()]
     meta = {
         # contract keys (docs/ARCHITECTURE.md section 5)
+        "format_version": FORMAT_VERSION,
         "osm_snapshot": osm_snapshot,
         "bbox": list(ASTANA_BBOX),
         "nodes": int(len(graph.node_lat)),
@@ -385,6 +461,7 @@ def save_graph(
         # reference
         **{k: v for k, v in stats.items() if k not in {"crossings", "signals",
                                                       "largest_component_share"}},
+        "steps": stats.get("steps_edges", 0),  # stair segments (edge bit 1)
         "poi_total": poi_total,
         "poi_snapped": len(poi_snaps),
         "poi_snapped_share": round(len(poi_snaps) / poi_total, 3) if poi_total else 0.0,
