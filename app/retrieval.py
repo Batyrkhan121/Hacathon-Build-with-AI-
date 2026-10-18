@@ -300,7 +300,7 @@ def _bad_weather(ctx: SearchContext) -> bool | None:
     return None if ctx.weather is None else not ctx.weather.outdoor_ok
 
 
-def _generic_key(poi: POI) -> str | None:
+def generic_key(poi: POI) -> str | None:
     """Same key for unnamed places like the 23 «Детская площадка» in the OSM fixture."""
     name = _normalize(poi.name).strip(" «»\"'")
     return f"{poi.category}:{name}" if name in GENERIC_NAMES or name == poi.category else None
@@ -414,8 +414,8 @@ def _score(
 
 
 def _similarity(a: POI, b: POI) -> float:
-    key = _generic_key(a)
-    if key is not None and key == _generic_key(b):
+    key = generic_key(a)
+    if key is not None and key == generic_key(b):
         return 1.0
     tags_a, tags_b = set(a.tags), set(b.tags)
     union = tags_a | tags_b
@@ -427,8 +427,8 @@ def _violation(cand: Candidate, selected: list[Candidate]) -> str | None:
     """Top-3 rules: one unnamed place per name, at most two places of one category."""
     if len(selected) >= TOP_N:
         return None
-    key = _generic_key(cand.poi)
-    if key is not None and any(_generic_key(s.poi) == key for s in selected):
+    key = generic_key(cand.poi)
+    if key is not None and any(generic_key(s.poi) == key for s in selected):
         return "generic"
     if sum(s.poi.category == cand.poi.category for s in selected) >= MAX_SAME_CATEGORY:
         return "category"
