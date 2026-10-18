@@ -313,6 +313,7 @@ def test_search_mode_from_filters(mock_answer: Answer, line: str, mode: str) -> 
     ans = mock_answer.model_copy(deep=True)
     ans.data_used.filters = ["пешком ≤ 15 мин", line]
     assert run_eval.search_mode(Outcome(answer=ans)) == mode
+    assert run_eval.search_line(Outcome(answer=ans)) == line
     assert run_eval.search_mode(Outcome(answer=mock_answer)) is None  # no such line -> unknown
 
 
