@@ -122,7 +122,7 @@ export function renderLoading(root, { onCancel } = {}) {
     h(
       'li',
       { class: 'card skeleton' },
-      h('div', { class: 'card-head' }, h('span', { class: 'rank sk' }), h('span', { class: 'sk sk-title' })),
+      h('div', { class: 'card-head' }, h('span', { class: 'sk sk-title' })),
       h('span', { class: 'sk sk-line' }),
       h('span', { class: 'sk sk-line short' }),
       h('span', { class: 'sk sk-block' }),
@@ -131,11 +131,18 @@ export function renderLoading(root, { onCancel } = {}) {
     h(
       'div',
       { class: 'loading', 'aria-label': t('loading.label') },
-      onCancel
-        ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
-        : null,
-      h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
-      h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),
+      h('div', { class: 'search-progress' },
+        h('div', { class: 'search-steps', 'aria-hidden': 'true' },
+          h('span', { class: 'search-step search-step-left' }, h('img', { src: '../assets/search-sole.svg', alt: '', width: '20', height: '42' })),
+          h('span', { class: 'search-step search-step-right' }, h('img', { src: '../assets/search-sole.svg', alt: '', width: '20', height: '42' })),
+        ),
+        h('p', { class: 'search-progress-title', role: 'status' }, t('loading.search')),
+        h('p', { class: 'search-progress-hint' }, t('loading.walk')),
+        onCancel
+          ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
+          : null,
+      ),
+      h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel()),
     ),
   );
 }
