@@ -144,6 +144,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_outdoor": "на улице", "f_night": "ночь", "f_tourist": "турист",
         "f_group": "группа {v}", "f_categories": "категории: {v}", "f_tags": "теги: {v}",
         "f_no_ai": "режим без ИИ",
+        "f_search_semantic": "поиск: по смыслу и по словам",
+        "f_search_lexical": "поиск: по словам",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -193,6 +195,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_wheelchair": "кедергісіз орта", "f_indoor": "ғимарат ішінде", "f_outdoor": "далада",
         "f_night": "түн", "f_tourist": "турист", "f_group": "топ {v}",
         "f_categories": "санаттар: {v}", "f_tags": "тегтер: {v}", "f_no_ai": "ЖИ-сыз режим",
+        "f_search_semantic": "іздеу: мағынасы мен сөздері бойынша",
+        "f_search_lexical": "іздеу: сөздері бойынша",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -240,6 +244,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_outdoor": "outdoor", "f_night": "night", "f_tourist": "tourist",
         "f_group": "group of {v}", "f_categories": "categories: {v}", "f_tags": "tags: {v}",
         "f_no_ai": "no-AI mode",
+        "f_search_semantic": "search: by meaning and keywords",
+        "f_search_lexical": "search: by keywords",
     },
 }
 
@@ -450,8 +456,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         if len(picked) >= 2:
             gen_candidates = picked
         elif picked:  # one stop fits: it goes first, the rest stay as alternatives
+            wanted = set(plan_intent.categories)
             gen_candidates = picked + [c for c in candidates if c not in picked
-                                       and c.distance_m >= route.AT_ORIGIN_M]
+                                       and route.walk_eligible(c, wanted)]
 
     # 6. cards
     cards: list[Card] = []
@@ -524,6 +531,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             weather=(weather.summary_for(wx, intent.lang) if wx is not None
                      else t["weather_unknown"]),
             filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
+                             semantic=query_vec is not None,
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None),
@@ -752,7 +760,9 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
              *, lang: Lang = "ru", airport: int | None = None,
-             night_by_clock: bool = False) -> list[str]:
+             night_by_clock: bool = False, semantic: bool = False) -> list[str]:
+    """`semantic`: the query vector was computed. The Gemini quota can run out silently
+    (embed_query then returns None), so the panel always says which search actually ran."""
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
     if intent.time_budget_min and airport is not None:
@@ -776,6 +786,7 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if intent.must_tags:
         tags = TAG_NAMES[lang]
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
+    out.append(t["f_search_semantic" if semantic else "f_search_lexical"])
     if not use_llm:
         out.append(t["f_no_ai"])
     return out

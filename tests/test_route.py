@@ -239,6 +239,8 @@ def test_plan_walk_skips_fast_food_and_bars_unless_asked() -> None:
     asked = {c.poi.category for c in plan_walk(ORIGIN, cands, 90,
                                                wanted_categories={"fast_food"})}
     assert "fast_food" in asked and "bar" not in asked
+    dinner = placed("dinner", 0.0025, category="restaurant", score=0.99)
+    assert "restaurant" not in {c.poi.category for c in plan_walk(ORIGIN, [dinner, *cands], 90)}
 
 
 def test_plan_walk_respects_budget_and_diversity() -> None:

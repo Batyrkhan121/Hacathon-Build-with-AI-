@@ -26,8 +26,9 @@ DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
 MAX_ROUTE_STOPS = 3  # MiniRoute.stop_ids allows at most 3
 WALK_POOL = 8  # plan_walk looks at the best N candidates
 MAX_SAME_CATEGORY = 2
-# Not a stop for a walk unless asked for explicitly (S1: a walk is not a fast-food crawl).
-NOT_WALK_STOPS = frozenset({"fast_food", "bar", "nightlife"})
+# Not a stop for a walk unless asked for explicitly (S1: a walk is not a fast-food crawl, and
+# a sit-down restaurant does not fit a 30–60 minute walk either).
+NOT_WALK_STOPS = frozenset({"fast_food", "bar", "nightlife", "restaurant"})
 AT_ORIGIN_M = 100  # closer than this = where the person already is (P1: the mall, its café)
 # A walk should have at least one place to walk to (P1: NU Park, not «mall + coffee»).
 WALK_STOP_CATEGORIES = frozenset({"park", "viewpoint", "monument", "attraction", "religious"})
@@ -181,9 +182,7 @@ def plan_walk(
     bars / nightlife unless in `wanted_categories`. At most MAX_SAME_CATEGORY of one category
     and no two places with the same name. [] when not even one stop fits.
     """
-    skip = NOT_WALK_STOPS - set(wanted_categories)
-    pool = [c for c in candidates
-            if c.poi.category not in skip and c.distance_m >= AT_ORIGIN_M][:WALK_POOL]
+    pool = [c for c in candidates if walk_eligible(c, wanted_categories)][:WALK_POOL]
     visits = {c.poi.id: walk_visit_minutes(c) for c in pool}
 
     def fit(combo: tuple[Candidate, ...]) -> tuple[list[Candidate], int] | None:
@@ -210,6 +209,14 @@ def plan_walk(
             if best_key is None or key > best_key:
                 best_key, best = key, ordered
     return best
+
+
+def walk_eligible(cand: Candidate, wanted_categories: frozenset[str] | set[str] = frozenset()
+                  ) -> bool:
+    """May be a stop (or an alternative card) of a walk: not where the person already is, not
+    fast food / bar / nightlife / restaurant unless that category was asked for."""
+    skip = NOT_WALK_STOPS - set(wanted_categories)
+    return cand.poi.category not in skip and cand.distance_m >= AT_ORIGIN_M
 
 
 def is_walk_stop(cand: Candidate) -> bool:
