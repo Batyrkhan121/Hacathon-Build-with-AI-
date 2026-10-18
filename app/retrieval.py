@@ -61,6 +61,9 @@ GROUP_FRIENDLY = frozenset(
     | {"park", "attraction"}
 )
 GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
+# T70 step 15: the user named tags (coffee, power_outlets, quiet …) and the place has none of
+# them -> it must not ride on proximity / popularity / MMR diversity past places that match
+NO_TAG_MATCH_PENALTY = -0.10
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -494,6 +497,9 @@ def _score(
     if intent.group_size is not None and intent.group_size >= GROUP_MIN:
         parts["group"] = _group_fit(poi, intent)
         score += parts["group"]
+    if intent.must_tags and not set(intent.must_tags) & set(poi.tags):
+        parts["no_tags"] = NO_TAG_MATCH_PENALTY
+        score += NO_TAG_MATCH_PENALTY
     if intent.wheelchair and _access(poi) == "unknown":
         parts["penalty"] = WHEELCHAIR_UNKNOWN_PENALTY
         score += WHEELCHAIR_UNKNOWN_PENALTY

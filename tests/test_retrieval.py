@@ -220,11 +220,8 @@ def test_score_is_weighted_sum(synthetic_pois: list[POI]) -> None:
     out = retrieve(make_store(synthetic_pois), intent("кофе"), make_ctx(), None, k=8)
     for c in out:
         parts = c.score_parts
-        expected = (
-            sum(WEIGHTS[k] * parts[k] for k in WEIGHTS)
-            + parts.get("penalty", 0.0)
-            + parts.get("group", 0.0)
-        )
+        bonuses = sum(v for k, v in parts.items() if k not in WEIGHTS and k != "mmr")
+        expected = sum(WEIGHTS[k] * parts[k] for k in WEIGHTS) + bonuses
         assert c.score == pytest.approx(expected, abs=1e-3)
         assert 0.0 <= parts["proximity"] <= 1.0
         assert 0.0 <= parts["relevance"] <= 1.0
@@ -668,3 +665,30 @@ def test_night_needs_confirmed_hours_or_late_tags() -> None:
                must_tags=["night", "late_open"])
     out = retrieve(make_store(pois), q, make_ctx(at=at), None, k=5)
     assert set(ids(out)) == {"test:poi/2", "test:poi/3", "test:poi/4"}
+
+
+def test_place_without_any_requested_tag_does_not_jump_the_cafes() -> None:
+    """S2 near EXPO with DATA e2b82fe: the sphere museum got confirmed hours, sits at 0 m and
+    is popular, but has none of coffee / power_outlets / quiet; MMR must not pull it to #2."""
+    tue = datetime(2026, 10, 20, 15, 0, tzinfo=ASTANA_TZ)
+    cafes = [
+        make_poi(str(i), "cafe", 0.0043 + 0.0003 * i, tags=["coffee", "indoor"],
+                 opening_hours="Mo-Su 08:00-22:00", data_confidence=0.55, popularity=0.1)
+        for i in range(1, 4)
+    ]
+    museum = make_poi("9", "museum", 0.0, name="Alem.ai", tags=["indoor"], indoor=True,
+                      opening_hours="Tu-Su 10:00-18:30; Mo off", popularity=0.61,
+                      data_confidence=0.75)
+    filler = [  # weak far places, as in the real pool: they set the low end of MMR scaling
+        make_poi(f"f{i}", "monument", 0.0090 + 0.0002 * i, data_confidence=0.3) for i in range(3)
+    ]
+    q = intent("Хочу тихое место с кофе и розеткой", must_tags=["coffee", "power_outlets", "quiet"])
+    out = retrieve(make_store([*cafes, museum, *filler]), q, make_ctx(at=tue), None, k=4)
+    assert [c.poi.category for c in out[:2]] == ["cafe", "cafe"]
+    assert next(c for c in out if c.poi.id == "test:poi/9").score_parts["no_tags"] < 0
+
+
+def test_no_tags_penalty_only_when_tags_were_asked() -> None:
+    museum = make_poi("9", "museum", 0.0, tags=["indoor"])
+    out = retrieve(make_store([museum]), intent("куда сходить"), make_ctx(), None)
+    assert "no_tags" not in out[0].score_parts
