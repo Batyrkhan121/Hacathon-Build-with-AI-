@@ -114,6 +114,11 @@ def test_prompt_single_candidate_and_language(cands: list[Candidate]) -> None:
     assert "kk (қазақ тілі" in prompt
 
 
+def test_prompt_tourist_with_budget_asks_for_fewer_cards(cands: list[Candidate]) -> None:
+    intent = QueryIntent(raw_query="2 часа до вылета", tourist=True, time_budget_min=70)
+    assert "1 или 2 карточки" in build_prompt(intent, context(), cands)
+
+
 def test_prompt_weather_and_hours_details(synthetic_pois: list[POI]) -> None:
     w = WeatherInfo(temp_c=-8, summary="-8°C, ветер 10 м/с", outdoor_ok=False,
                     fetched_at=datetime.now(UTC))

@@ -504,6 +504,47 @@ class TestRealData:
         cands = fake_retrieve(real_deps.store, a.intent, a.context, None)
         assert '"name_is_generic": true' in build_prompt(a.intent, a.context, cands)
 
+    def test_s4_tourist_deadline_from_baiterek(self, real_deps: Deps,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+        """EVAL request: walk budget = 120 - 50 = 70 min -> leave by 15:10, at most 2 cards."""
+        seen: list[int | None] = []
+        monkeypatch.setattr(geo, "radius_for",
+                            lambda intent: seen.append(intent.time_budget_min) or 1200)
+        a = recommend(RecommendRequest.model_validate({
+            "query": "Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
+            "location": {"landmark_id": "baiterek"}, "at": "2026-10-19T14:00:00+05:00",
+            "lang": "ru", "use_llm": False}), real_deps)
+        assert "Выезжайте в аэропорт не позже 15:10." in a.warnings
+        assert seen == [70]  # the radius is planned on the walk budget
+        assert a.intent.time_budget_min == 120  # what the user said is kept
+        assert 1 <= len(a.cards) <= 2
+        assert "время на прогулку 70 мин (с учётом дороги в аэропорт)" in a.data_used.filters
+        assert not any("Заложите время" in w for w in a.warnings)  # replaced by the deadline
+        if a.route is not None:
+            assert len(a.route.stop_ids) <= 2
+
+    def test_e11_already_at_airport(self, real_deps: Deps) -> None:
+        a = recommend(RecommendRequest.model_validate({
+            "query": "Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть рядом?",
+            "location": {"landmark_id": "airport_nqz"}, "at": "2026-10-19T14:00:00+05:00",
+            "lang": "ru", "use_llm": False}), real_deps)
+        assert a.summary.startswith("Рядом с аэропортом почти ничего нет; ехать в город за "
+                                    "2 часа до вылета не советуем.")
+        assert not any("Выезжайте" in w for w in a.warnings)  # already there
+        assert all(c.category not in {"bar", "nightlife"} for c in a.cards)
+
+    def test_e11_honest_summary_survives_llm(self, real_deps: Deps) -> None:
+        a = recommend(RecommendRequest.model_validate({
+            "query": "Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть рядом?",
+            "location": {"landmark_id": "airport_nqz"}}), real_deps)
+        assert a.data_used.generation == "llm"
+        assert "почти ничего нет" in a.summary
+
+    def test_tourist_deadline_when_time_is_short(self, real_deps: Deps) -> None:
+        a = recommend(req("я турист, до вылета 40 минут", at="2026-10-19T14:00:00+05:00",
+                          use_llm=False), real_deps)
+        assert "Выезжайте в аэропорт не позже 14:00." in a.warnings
+
     def test_sparse_area_warns(self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(geo, "radius_for", lambda intent: 150)
         a = recommend(RecommendRequest.model_validate({

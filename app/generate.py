@@ -63,7 +63,12 @@ def draft_cards(
 
 
 def build_prompt(intent: QueryIntent, ctx: SearchContext, candidates: list[Candidate]) -> str:
-    n_hint = "1 карточка" if len(candidates) == 1 else "2 или 3 карточки"
+    if len(candidates) == 1:
+        n_hint = "1 карточка"
+    elif intent.tourist and intent.time_budget_min is not None:
+        n_hint = "1 или 2 карточки: человеку нужно успеть к вылету"
+    else:
+        n_hint = "2 или 3 карточки"
     sections = [
         f"ЗАДАЧА: {n_hint}. Язык всех текстов: {LANG_NAMES[intent.lang]}.",
         "ЗАПРОС (разобран кодом):\n" + _dump(_intent_view(intent)),
