@@ -661,7 +661,8 @@ def retrieve(
         distance = haversine_m(ctx.origin, poi.geo)
         if distance > ctx.radius_m or not _passes_profile(poi, intent):
             continue
-        verdict = evaluate_hours(poi.opening_hours, ctx.local_time)
+        # the note is written in the user's language by app.hours (FEATURES, T73)
+        verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
         if not _passes_hours(poi, verdict, intent):
             continue
         sem = None if semantic is None or np.isnan(semantic[i]) else float(semantic[i])

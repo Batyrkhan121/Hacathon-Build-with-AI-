@@ -7,7 +7,8 @@ from datetime import datetime
 import pytest
 
 from app.geo import to_h3
-from app.hours import ASTANA_TZ
+from app.hours import ASTANA_TZ, evaluate_hours, unknown_note
+from app.retrieval import retrieve
 from app.schemas import (
     POI,
     Candidate,
@@ -18,6 +19,7 @@ from app.schemas import (
     QueryIntent,
     SearchContext,
 )
+from app.store import Store
 from app.validate import (
     MAX_TODO_CHARS,
     MAX_WHY_CHARS,
@@ -27,6 +29,10 @@ from app.validate import (
 )
 
 from .conftest import EXPO
+
+
+def make_store_for(pois: list[POI]) -> Store:
+    return Store(pois=pois, by_id={p.id: p for p in pois}, landmarks={})
 
 ORIGIN = GeoPoint(lat=EXPO[0], lon=EXPO[1])
 OPEN_HIGH = HoursVerdict(status="open", confidence="high", note="по данным OSM: ежедневно")
@@ -92,7 +98,7 @@ def cands(synthetic_pois: list[POI]) -> list[Candidate]:
     by_id = {p.id: p for p in synthetic_pois}
     return [
         cand(by_id["test:poi/1"], OPEN_HIGH, 250),
-        cand(by_id["test:poi/3"], UNKNOWN, 150),
+        cand(by_id["test:poi/3"].model_copy(update={"opening_hours": None}), UNKNOWN, 150),
         cand(by_id["test:poi/7"], OPEN_HIGH, 300),
         cand(by_id["test:poi/4"], UNKNOWN, 900),
     ]
@@ -365,17 +371,9 @@ def test_title_distance_units(lang: str, near: str, far: str) -> None:
     assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)
 
 
-@pytest.mark.parametrize(
-    ("lang", "note"),
-    [
-        ("ru", "нет данных о часах, проверьте перед визитом"),
-        ("kk", "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз"),
-        ("en", "no opening hours data, check before you go"),
-    ],
-)
-def test_unknown_hours_note_in_user_language(
-    cands: list[Candidate], lang: str, note: str
-) -> None:
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_unknown_hours_note_in_user_language(cands: list[Candidate], lang: str) -> None:
+    note = unknown_note(lang)  # texts live in app.hours (FEATURES); validate only picks them
     cards = template_cards(cands, intent(lang=lang), ctx())
     unknown = [c for c in cards if c.open_status == "unknown"]
     assert unknown
@@ -385,38 +383,19 @@ def test_unknown_hours_note_in_user_language(
     assert finalized[0].open_note == note
 
 
-@pytest.mark.parametrize(
-    ("lang", "note", "expected"),
-    [
-        (
-            "en",
-            "закроется через 45 мин · по данным OSM: ежедневно 10:00–24:00 · "
-            "в праздники часы могут отличаться",
-            "closes in 45 min · OSM hours: daily 10:00–24:00 · hours may differ on holidays",
-        ),
-        (
-            "en",
-            "по данным OSM: Пн–Пт 09:00–18:00; Сб 10:00–16:00; Вс выходной",
-            "OSM hours: Mon–Fri 09:00–18:00; Sat 10:00–16:00; Sun closed",
-        ),
-        ("en", "по данным OSM: круглосуточно", "OSM hours: 24/7"),
-        (
-            "kk",
-            "закроется через 1 ч 10 мин · по данным OSM: Пн, Ср, Пт 10:00–14:00",
-            "жабылуына 1 сағ 10 мин · OSM деректері бойынша: Дс, Ср, Жм 10:00–14:00",
-        ),
-        (
-            "kk",
-            "по данным OSM: ежедневно 08:00–22:00 · в праздники часы могут отличаться",
-            "OSM деректері бойынша: күн сайын 08:00–22:00 · мереке күндері уақыт өзгеруі мүмкін",
-        ),
-        ("ru", "по данным OSM: ежедневно 08:00–22:00", "по данным OSM: ежедневно 08:00–22:00"),
-    ],
-)
-def test_hours_note_follows_language(lang: str, note: str, expected: str) -> None:
-    hours = HoursVerdict(status="open", confidence="high", note=note)
-    card = template_cards([cand(make_poi("1", "cafe", "Мю"), hours)], intent(lang=lang), ctx())[0]
-    assert card.open_note == expected
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_hours_note_is_passed_through_in_user_language(lang: str) -> None:
+    """retrieval asks app.hours for the note in the user's language; validate keeps it."""
+    at = datetime(2026, 10, 19, 23, 15, tzinfo=ASTANA_TZ)
+    poi = make_poi("1", "cafe", "Мю", opening_hours="Mo-Su 10:00-24:00")
+    q = intent(lang=lang)
+    context = ctx().model_copy(update={"local_time": at})
+    out = retrieve(make_store_for([poi]), q, context, None)
+    expected = evaluate_hours("Mo-Su 10:00-24:00", at, lang=lang).note
+    assert out[0].hours.note == expected
+    assert template_cards(out, q, context)[0].open_note == expected
+    if lang != "ru":
+        assert "по данным OSM" not in expected
 
 
 @pytest.mark.parametrize(
@@ -443,3 +422,14 @@ def test_unnamed_place_titles_are_translated(
 def test_own_translation_wins_over_generic_title() -> None:
     poi = make_poi("1", "playground", "Детская площадка", name_i18n={"en": "Rainbow playground"})
     assert template_cards([cand(poi)], intent(lang="en"), ctx())[0].title == "Rainbow playground"
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_indoor_attraction_gets_indoor_advice(lang: str) -> None:
+    """Rides inside Khan Shatyr are attractions with indoor=True: no «оденьтесь по погоде»."""
+    ride = make_poi("1", "attraction", "Gold Mine Coaster", indoor=True)
+    square = make_poi("2", "attraction", "Монумент", indoor=False)
+    inside = template_cards([cand(ride)], intent(lang=lang), ctx())[0].what_to_do
+    outside = template_cards([cand(square)], intent(lang=lang), ctx())[0].what_to_do
+    assert inside != outside
+    assert not any(w in inside for w in ("оденьтесь", "киініңіз", "dress"))

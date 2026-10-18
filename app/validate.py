@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from typing import Literal
 
+from app.hours import unknown_note
 from app.retrieval import explain, generic_key
 from app.schemas import (
     POI,
@@ -52,12 +53,7 @@ MAX_WHY_CHARS = 280
 MAX_TODO_CHARS = 360
 MAX_WHY_SENTENCES = 2
 MAX_CARDS = 3
-UNKNOWN_HOURS_NOTE = "нет данных о часах, проверьте перед визитом"
-UNKNOWN_HOURS_NOTES: dict[str, str] = {  # T70 step 6: the note follows the user's language
-    "ru": UNKNOWN_HOURS_NOTE,
-    "kk": "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз",
-    "en": "no opening hours data, check before you go",
-}
+UNKNOWN_HOURS_NOTE = unknown_note("ru")  # texts in ru/kk/en live in app.hours
 
 _CLAIM_RE = re.compile(
     "|".join(r"\s+".join(map(re.escape, claim.split())) for claim in FORBIDDEN_OPEN_CLAIMS),
@@ -135,6 +131,11 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
         "kk": "Айналасын аралап, бірнеше сурет түсіріңіз; ауа райына қарай киініңіз.",
         "en": "Walk around and take a few photos; dress for the weather.",
     },
+    "indoor_fun": {
+        "ru": "Загляните внутрь и выберите, что попробовать; заложите время с запасом.",
+        "kk": "Ішке кіріп, нені көретініңізді таңдаңыз; уақытты қормен жоспарлаңыз.",
+        "en": "Step inside and pick what to try; allow some extra time.",
+    },
     "kids": {
         "ru": "Дайте ребёнку поиграть, а сами сделайте паузу рядом.",
         "kk": "Бала ойнап жүргенде, қасында демалып алыңыз.",
@@ -161,62 +162,6 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
         "en": "Have a look on the way — it is close by.",
     },
 }
-
-
-# T70 step 9: hours notes come from hours.py in Russian; cards for kk / en get them translated.
-# Ordered: longer phrases first. Only the fixed vocabulary of app/hours.py is used there.
-_NOTE_PHRASES: dict[str, tuple[tuple[str, str], ...]] = {
-    "en": (
-        ("по данным OSM сегодня не работает", "closed today according to OSM"),
-        ("в праздники часы могут отличаться", "hours may differ on holidays"),
-        ("откроется завтра в", "opens tomorrow at"),
-        ("откроется через", "opens in"),
-        ("откроется в", "opens at"),
-        ("закроется через", "closes in"),
-        ("по данным OSM:", "OSM hours:"),
-        ("сегодня выходной", "closed today"),
-        ("закрыто", "closed"),
-        ("ежедневно", "daily"),
-        ("круглосуточно", "24/7"),
-        ("выходной", "closed"),
-        ("часы:", "hours:"),
-    ),
-    "kk": (
-        ("по данным OSM сегодня не работает", "OSM деректері бойынша бүгін жұмыс істемейді"),
-        ("в праздники часы могут отличаться", "мереке күндері уақыт өзгеруі мүмкін"),
-        ("откроется завтра в", "ертең ашылады:"),
-        ("откроется через", "ашылуына"),
-        ("откроется в", "ашылады:"),
-        ("закроется через", "жабылуына"),
-        ("по данным OSM:", "OSM деректері бойынша:"),
-        ("сегодня выходной", "бүгін демалыс"),
-        ("закрыто", "жабық"),
-        ("ежедневно", "күн сайын"),
-        ("круглосуточно", "тәулік бойы"),
-        ("выходной", "демалыс"),
-        ("часы:", "уақыты:"),
-    ),
-}
-_NOTE_DAYS: dict[str, dict[str, str]] = {
-    "en": {
-        "Пн": "Mon", "Вт": "Tue", "Ср": "Wed", "Чт": "Thu", "Пт": "Fri", "Сб": "Sat", "Вс": "Sun"
-    },
-    "kk": {"Пн": "Дс", "Вт": "Сс", "Ср": "Ср", "Чт": "Бс", "Пт": "Жм", "Сб": "Сн", "Вс": "Жс"},
-}
-_NOTE_UNITS: dict[str, dict[str, str]] = {"en": {"ч": "h", "мин": "min"}, "kk": {"ч": "сағ"}}
-_NOTE_DAY_RE = re.compile(r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\b")
-_NOTE_UNIT_RE = re.compile(r"(?<=\d )(ч|мин)\b")
-
-
-def _localize_note(note: str, lang: Lang) -> str:
-    """Translate an app/hours.py note for kk / en cards; ru notes are returned as is."""
-    if lang not in _NOTE_PHRASES:
-        return note
-    for ru, other in _NOTE_PHRASES[lang]:
-        note = note.replace(ru, other)
-    days, units = _NOTE_DAYS[lang], _NOTE_UNITS[lang]
-    note = _NOTE_DAY_RE.sub(lambda m: days[m.group(1)], note)
-    return _NOTE_UNIT_RE.sub(lambda m: units.get(m.group(1), m.group(1)), note)
 
 
 # ------------------------------------------------------------------ helpers
@@ -258,8 +203,11 @@ def _template_why(cand: Candidate, intent: QueryIntent, ctx: SearchContext) -> s
     return _trim(_sentence(reasons[:3]), MAX_WHY_CHARS)
 
 
-def _template_todo(category: Category, lang: Lang) -> str:
-    texts = TODO_TEMPLATES[_TODO_GROUP.get(category, "other")]
+def _template_todo(poi: POI, lang: Lang) -> str:
+    group = _TODO_GROUP.get(poi.category, "other")
+    if group == "outdoor" and poi.indoor is True:  # rides inside Khan Shatyr, indoor attractions
+        group = "indoor_fun"
+    texts = TODO_TEMPLATES[group]
     return texts.get(lang, texts["ru"])
 
 
@@ -288,12 +236,10 @@ def _card(
     idea_source: Literal["poi_data", "generated"],
 ) -> Card:
     poi, hours = cand.poi, cand.hours
-    note = hours.note
-    if hours.status == "unknown" and (intent.lang != "ru" or "проверьте" not in note):
-        # ru keeps a more specific hours.py note ("…нестандартный формат, проверьте…")
-        note = UNKNOWN_HOURS_NOTES.get(intent.lang, UNKNOWN_HOURS_NOTE)
-    else:
-        note = _localize_note(note, intent.lang)
+    note = hours.note  # already in the user's language (retrieval asks app.hours with lang)
+    if hours.status == "unknown" and not (poi.opening_hours or "").strip():
+        # same rule as pipeline._localize_hours, so its re-wording gives the same text
+        note = unknown_note(intent.lang)
     return Card(
         rank=rank,
         poi_id=poi.id,
@@ -454,7 +400,7 @@ def finalize(
                 cand=cand,
                 intent=intent,
                 why=why or _template_why(cand, intent, ctx),
-                todo=todo or _template_todo(cand.poi.category, intent.lang),
+                todo=todo or _template_todo(cand.poi, intent.lang),
                 visit=(low, high),
                 idea_source=item.idea_source,
             )
@@ -506,7 +452,7 @@ def template_cards(
             cand=cand,
             intent=intent,
             why=_template_why(cand, intent, ctx),
-            todo=_template_todo(cand.poi.category, intent.lang),
+            todo=_template_todo(cand.poi, intent.lang),
             visit=_visit_minutes(cand.poi.category, intent),
             idea_source="poi_data",
         )
