@@ -12,14 +12,16 @@
       "нур алем",
       "нұр әлем",
       "nur alem",
-      "сфера экспо"
+      "сфера экспо",
+      "alem.ai",
+      "alem ai"
     ],
     "geo": {
-      "lat": 51.0894,
-      "lon": 71.4161
+      "lat": 51.08925,
+      "lon": 71.41619
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "mega_silk_way",
@@ -38,11 +40,11 @@
       "silk way"
     ],
     "geo": {
-      "lat": 51.0889,
-      "lon": 71.4103
+      "lat": 51.08909,
+      "lon": 71.40733
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "baiterek",
@@ -58,11 +60,11 @@
       "bayterek"
     ],
     "geo": {
-      "lat": 51.1283,
-      "lon": 71.4305
+      "lat": 51.12829,
+      "lon": 71.43045
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "khan_shatyr",
@@ -77,11 +79,11 @@
       "khan shatyr"
     ],
     "geo": {
-      "lat": 51.1323,
-      "lon": 71.4036
+      "lat": 51.13251,
+      "lon": 71.40387
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "palace_peace",
@@ -97,11 +99,11 @@
       "pyramid"
     ],
     "geo": {
-      "lat": 51.1236,
-      "lon": 71.4636
+      "lat": 51.12312,
+      "lon": 71.46346
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "hazrat_sultan",
@@ -117,11 +119,11 @@
       "hazrat sultan"
     ],
     "geo": {
-      "lat": 51.1253,
-      "lon": 71.4714
+      "lat": 51.12543,
+      "lon": 71.47219
     },
     "kind": "landmark",
-    "verified": false
+    "verified": true
   },
   {
     "id": "airport_nqz",
@@ -137,10 +139,52 @@
       "әуежай"
     ],
     "geo": {
-      "lat": 51.0222,
-      "lon": 71.4669
+      "lat": 51.02797,
+      "lon": 71.46348
     },
     "kind": "transport",
-    "verified": false
+    "verified": true
+  },
+  {
+    "id": "astana_opera",
+    "names": {
+      "ru": "Театр «Астана Опера»",
+      "kk": "«Астана Опера» театры",
+      "en": "Astana Opera"
+    },
+    "aliases": [
+      "астана опера",
+      "опера",
+      "оперный театр",
+      "astana opera",
+      "opera"
+    ],
+    "geo": {
+      "lat": 51.13545,
+      "lon": 71.41075
+    },
+    "kind": "landmark",
+    "verified": true
+  },
+  {
+    "id": "nurly_zhol",
+    "names": {
+      "ru": "Вокзал «Нурлы Жол»",
+      "kk": "«Нұрлы Жол» вокзалы",
+      "en": "Nurly Zhol railway station"
+    },
+    "aliases": [
+      "нурлы жол",
+      "нұрлы жол",
+      "nurly zhol",
+      "новый вокзал",
+      "вокзал нурлы жол"
+    ],
+    "geo": {
+      "lat": 51.11201,
+      "lon": 71.52887
+    },
+    "kind": "transport",
+    "verified": true
   }
 ]

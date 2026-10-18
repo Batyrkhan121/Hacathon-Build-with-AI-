@@ -1,0 +1,34 @@
+# Rebuilds the POI dataset from OpenStreetMap: on demand and every Monday.
+# No LLM step (no secrets needed); results are uploaded as an artifact for review.
+name: refresh-data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1" # Monday 03:00 UTC = 08:00 Astana
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      - name: Fetch OSM and rebuild data (retries missing tiles for up to 40 min)
+        run: python -m pipeline.run_all --skip-enrich --deadline "$(date -d '+40 min' +%H:%M)"
+        env:
+          QADAM_CONTACT: ${{ vars.QADAM_CONTACT }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qadam-data
+          path: |
+            data/processed/poi.jsonl
+            data/processed/REPORT.md

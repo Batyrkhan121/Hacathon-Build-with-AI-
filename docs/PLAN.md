@@ -27,14 +27,16 @@
 
 ## Волна 1: параллельная сборка
 ### DATA (`/poi-data-pipeline`)
-- [ ] **T10 Быстрый фикстур (≤ 40 мин, ранний мерж!).**
+- [x] **T10 Быстрый фикстур (≤ 40 мин, ранний мерж!).**
   - Реальные POI в радиусе 1,5 км от EXPO и Mega Silk Way → `tests/fixtures/poi_sample.jsonl` (≥ 40 POI, валидны).
   - Сверить ориентиры в `data/landmarks.json` с OSM.
   - Сообщение «T10 READY».
-- [ ] **T11 Выгрузка Астаны.** `fetch_osm.py` (bbox, зеркала, повторы, кэш) + `normalize.py` → `data/processed/poi.jsonl` (≥ 1500) + REPORT.md.
-- [ ] **T12 Обогащение.** Wikidata, затем описания Claude для топ-300 (`llm_generated`, кэш).
-- [ ] **T13 Индекс.** `build_index.py` → `embeddings.npy`, `ids.json`, `meta.json` (модель и размерность из настроек). Эмбеддинги Gemini — только при `GEMINI_API_KEY`; без ключа индекс пропускается, retrieval лексический.
-- [ ] **T14 Одна команда + документ.**
+- [~] **T11 Выгрузка Астаны.** `fetch_osm.py` (bbox, зеркала, повторы, кэш) + `normalize.py` → `data/processed/poi.jsonl` (≥ 1500) + REPORT.md.
+  - Заметка: влито 531 POI (демо-зоны), цель ≥1500 не достигнута; тайлы города ещё не выгружены.
+- [x] **T12 Обогащение.** Wikidata, затем описания Claude для топ-300 (`llm_generated`, кэш).
+  - Заметка: код влит; описания Claude не прогонялись (нужен ключ), покрыта только ветка без ключа.
+- [x] **T13 Индекс.** `build_index.py` → `embeddings.npy`, `ids.json`, `meta.json` (модель и размерность из настроек). Эмбеддинги Gemini — только при `GEMINI_API_KEY`; без ключа индекс пропускается, retrieval лексический.
+- [x] **T14 Одна команда + документ.**
   - `pipeline/run_all.py` + `docs/DATA.md`.
   - По желанию GitHub Action, обновление по кнопке или раз в неделю.
 
