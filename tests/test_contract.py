@@ -62,3 +62,20 @@ def test_location_needs_exactly_one_field() -> None:
     with pytest.raises(ValidationError):
         LocationInput(h3_cell="892153833a7ffff", landmark_id="expo")
     assert LocationInput(landmark_id="expo").landmark_id == "expo"
+
+
+def test_default_embeddings_settings_match_the_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without EMBED_* variables the query model must be the one data/index was built with,
+    otherwise Store drops the index and search silently falls back to words (Docker smoke 18.10)."""
+    from app.config import get_settings
+
+    meta_path = ROOT / "data" / "index" / "meta.json"
+    if not meta_path.exists():
+        pytest.skip("no data/index/meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    for name in ("EMBED_PROVIDER", "EMBED_MODEL", "EMBED_DIM"):
+        monkeypatch.delenv(name, raising=False)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.embed_provider == meta.get("provider", "gemini") == "openrouter"
+    assert (s.embed_model, s.embed_dim) == (meta["model"], meta["dim"])

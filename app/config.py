@@ -3,11 +3,11 @@
 LLM (query parsing, card texts, POI descriptions) = Claude via the `anthropic` SDK.
 Embeddings are optional (Anthropic has no embeddings API); without them retrieval is lexical.
 EMBED_PROVIDER picks where they come from:
-- "gemini" (default): Gemini via `google-genai`, needs GEMINI_API_KEY;
-- "openrouter": the same Gemini model through OpenRouter's OpenAI-compatible
-  /api/v1/embeddings, needs OPENROUTER_API_KEY (OPEN_ROUTER_KEY is read as a fallback).
-  The model id then gets the vendor prefix ("google/gemini-embedding-001"), so its vectors
-  and cache never mix with an index built through Gemini directly (meta.model must match).
+- "openrouter" (default, data/index is built this way): Gemini's model through OpenRouter's
+  OpenAI-compatible /api/v1/embeddings, needs OPENROUTER_API_KEY (OPEN_ROUTER_KEY is read as
+  a fallback). The model id gets the vendor prefix ("google/gemini-embedding-001"), so its
+  vectors and cache never mix with an index built through Gemini directly (meta.model must match);
+- "gemini" (fallback): Gemini via `google-genai`, needs GEMINI_API_KEY and an index built with it.
 Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`.
 """
 
@@ -51,7 +51,7 @@ class Settings:
     log_level: str
     contact: str  # QADAM_CONTACT, goes into the User-Agent of Overpass / Wikidata requests
     openrouter_api_key: str | None = None  # optional, embeddings through OpenRouter only
-    embed_provider: str = "gemini"  # "gemini" | "openrouter"
+    embed_provider: str = "openrouter"  # "openrouter" | "gemini"
 
     @property
     def has_llm(self) -> bool:
@@ -74,7 +74,7 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     data_dir = Path(os.getenv("QADAM_DATA_DIR", ROOT / "data"))
-    provider = (os.getenv("EMBED_PROVIDER") or "gemini").strip().lower()
+    provider = (os.getenv("EMBED_PROVIDER") or "openrouter").strip().lower()
     if provider not in ("gemini", "openrouter"):
         raise ValueError(f"EMBED_PROVIDER must be 'gemini' or 'openrouter', got {provider!r}")
     embed_model = os.getenv("EMBED_MODEL") or "gemini-embedding-001"
