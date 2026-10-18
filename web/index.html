@@ -44,10 +44,11 @@
           <div class="preset-list" id="presets"></div>
         </section>
 
-        <form id="ask" class="block ask" novalidate>
+        <form id="ask" class="block ask" action="#" novalidate>
           <label for="query" class="label" data-i18n="query.label">Что хотите?</label>
           <div class="query-row">
-            <textarea id="query" name="query" rows="2" maxlength="500" required
+            <!-- без name: если JS не загрузился, браузер не отправит текст запроса в URL (и в логи) -->
+            <textarea id="query" rows="2" maxlength="500" required
                       data-i18n-placeholder="query.placeholder"></textarea>
             <button type="submit" class="btn btn-primary" id="submit">
               <span data-i18n="submit">Подсказать</span>
@@ -71,15 +72,25 @@
             <p class="where-note" id="where-note" aria-live="polite"></p>
           </fieldset>
 
+          <fieldset class="modes">
+            <legend class="label" data-i18n="mode.legend">Режим</legend>
+            <div class="chips" id="mode-chips"></div>
+            <div class="departure" id="departure" hidden>
+              <span class="departure-label" id="departure-label" data-i18n="departure.label">Вылет через</span>
+              <div class="chips" id="departure-chips" role="group" aria-labelledby="departure-label"></div>
+            </div>
+            <p class="hint" id="filter-hint" hidden></p>
+          </fieldset>
+
           <fieldset class="filters">
             <legend class="label" data-i18n="filters.legend">Фильтры</legend>
             <div class="chips" id="budget-chips" role="group" data-i18n-aria="budget.aria" aria-label="Сколько есть времени"></div>
             <div class="chips" id="flag-chips"></div>
-            <p class="hint" id="filter-hint" hidden></p>
           </fieldset>
 
           <fieldset class="when">
             <legend class="label" data-i18n="when.legend">Когда</legend>
+            <div class="chips day-chips" id="day-chips" role="group" data-i18n-aria="when.dayAria" aria-label="День"></div>
             <div class="when-row">
               <div class="chips" id="time-chips"></div>
               <input type="time" id="time-input" step="300" data-i18n-aria="when.custom" aria-label="Своё время">

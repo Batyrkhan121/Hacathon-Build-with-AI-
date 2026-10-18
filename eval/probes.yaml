@@ -1,0 +1,133 @@
+# Qadam: ранжирующие пробы для подбора качества (QUALITY, T70).
+#
+# Основной eval (scenarios.yaml) проверяет, что ответ допустим. Пробы проверяют, что
+# лучший вариант стоит первым, и меряют эффект отдельных рычагов: веса, ночь, прогулка,
+# группа, язык пометок. Ключи те же, что в scenarios.yaml, плюс:
+#   top1_categories_any   категория первой карточки из списка
+#   top1_note_forbid      подстрок нет в open_note первой карточки
+#   unknown_note_lang     пометка о часах у карточек с unknown написана на этом языке
+#   notes_lang            пометки о часах у всех карточек на этом языке
+#   top1_why_any          в why первой карточки есть одна из подстрок
+# Запуск: python -m eval.run_eval --no-llm --scenarios eval/probes.yaml --out <папка>
+# (папка не eval/, чтобы не затереть report.md основного прогона).
+# Время: пн 19.10.2026, Астана UTC+5.
+
+- id: P1
+  title: "Прогулка у Mega Silk Way: первым место для прогулки, а не ТРЦ"
+  request:
+    query: "Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — что посоветуете?"
+    location: {landmark_id: mega_silk_way}
+    at: "2026-10-19T15:00:00+05:00"
+    lang: ru
+  expect:
+    top1_categories_any: [park, viewpoint, monument, attraction]
+
+- id: P2
+  title: "Просто погулять 40 минут у EXPO"
+  request:
+    query: "Хочу пройтись минут 40, куда погулять?"
+    location: {landmark_id: expo}
+    at: "2026-10-19T16:00:00+05:00"
+    lang: ru
+  expect:
+    top1_categories_any: [park, viewpoint, monument, attraction]
+
+- id: P3
+  title: "Детские площадки: первой площадка"
+  request:
+    query: "Где рядом детские площадки?"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-19T12:00:00+05:00"
+    lang: ru
+  expect:
+    top1_categories_any: [playground]
+
+- id: P4
+  title: "Ночь у Хан Шатыра: первое место не закрывается через полчаса"
+  request:
+    query: "Куда пойти посидеть ночью?"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-19T23:30:00+05:00"
+    lang: ru
+  expect:
+    min_cards: 1
+    top1_note_forbid: ["закроется через"]
+
+- id: P5
+  title: "Ночь у Байтерека: первое место работает ещё хотя бы час"
+  request:
+    query: "Поздно вечером хочу поесть где-нибудь рядом"
+    location: {landmark_id: baiterek}
+    at: "2026-10-19T23:15:00+05:00"
+    lang: ru
+  expect:
+    min_cards: 1
+    top1_note_forbid: ["закроется через"]
+
+- id: P6
+  title: "Компания из 5 человек: первым просторное место"
+  request:
+    query: "Нас 5 человек, где посидеть вместе и поесть?"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-19T19:00:00+05:00"
+    lang: ru
+  expect:
+    intent: {group_size: 5}
+    top1_categories_any: [restaurant, mall, fast_food, entertainment, park, cinema]
+
+- id: P7
+  title: "Казахский: пометка о часах тоже на казахском"
+  request:
+    query: "Бәйтерек маңында серуендеуге қайда баруға болады?"
+    location: {landmark_id: baiterek}
+    at: "2026-10-19T16:00:00+05:00"
+    lang: kk
+  expect:
+    min_cards: 1
+    unknown_note_lang: kk
+    notes_lang: kk
+
+- id: P8
+  title: "English: hours note in English too"
+  request:
+    query: "Where can I take a short walk near EXPO?"
+    location: {landmark_id: expo}
+    at: "2026-10-19T16:00:00+05:00"
+    lang: en
+  expect:
+    min_cards: 1
+    unknown_note_lang: en
+    notes_lang: en
+
+- id: P9
+  title: "Компания из 5 человек вечером: первым занятие для компании, а не кафе"
+  request:
+    query: "Мы компанией из 5 человек, чем заняться вечером?"
+    location: {landmark_id: baiterek}
+    at: "2026-10-19T18:00:00+05:00"
+    lang: ru
+  expect:
+    intent: {group_size: 5}
+    top1_categories_any: [restaurant, mall, cinema, entertainment, sport, bar, nightlife, theatre, park, attraction, monument, viewpoint]
+
+- id: P10
+  title: "Кофе и розетка: о розетке в данных нет — карточка честно это говорит"
+  request:
+    query: "Где выпить кофе и поработать с ноутбуком? Нужна розетка"
+    location: {landmark_id: mega_silk_way}
+    at: "2026-10-19T10:00:00+05:00"
+    lang: ru
+  expect:
+    min_cards: 1
+    top1_why_any: ["нет данных"]
+
+- id: P11
+  title: "E2 без Claude: 02:30, бары — только подтверждённо открытые или late_open / 24_7"
+  request:
+    query: "Сейчас глубокая ночь, хочу посидеть в баре"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-20T02:30:00+05:00"
+    lang: ru
+    overrides: {night: true, categories: [bar, nightlife]}
+  expect:
+    night_safe: true

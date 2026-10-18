@@ -57,10 +57,23 @@ const DICT = {
     'flag.wheelchair': 'Доступная среда',
     'flag.indoor_only': 'В помещении',
     'flag.group': 'Нас 3–5',
+    'flag.tourist': 'Турист до вылета',
+    'flag.night': 'Ночь',
+    'mode.legend': 'Режим',
+    'departure.label': 'Вылет через',
+    'departure.90': '1,5 ч',
+    'departure.120': '2 ч',
+    'departure.180': '3 ч',
+    'departure.240': '4 ч',
+    'hint.tourist': 'Учтём дорогу в аэропорт: на прогулку останется меньше времени.',
     'hint.wheelchair': 'Доступность отмечена лишь у ≈1% мест в OSM, поэтому выбор будет узким.',
 
     'when.legend': 'Когда',
     'when.now': 'Сейчас',
+    'when.sameTime': 'В это же время',
+    'when.today': 'Сегодня',
+    'when.tomorrow': 'Завтра',
+    'when.dayAria': 'День',
     'when.custom': 'Своё время',
     'when.hint': 'Машина времени для демо, время Астаны (UTC+5)',
 
@@ -78,13 +91,17 @@ const DICT = {
 
     'results.title': 'Результаты',
     'status.loading': 'Ищу места: {where}…',
-    'status.done': 'Готово за {sec} с',
+    'status.done': 'Готово за {sec} с · карточек: {n}',
     'loading.label': 'Загружаю карточки',
 
     'error.title': 'Не получилось получить ответ',
     'error.timeout': 'Сервер не ответил за 25 секунд.',
     'error.network': 'Нет связи с сервером.',
     'error.validation': 'Сервер не принял запрос: {detail}',
+    'error.tooLargeTitle': 'Запрос слишком длинный',
+    'error.tooLarge': 'Сократите текст запроса и отправьте снова.',
+    'error.shorten': 'Сократить запрос',
+    'error.unavailable': 'Данные на сервере ещё загружаются. Повторите через минуту.',
     'error.server': 'Ошибка сервера ({status}).',
     'error.format': 'Сервер вернул неожиданный ответ.',
     'error.mock': 'Имитация сбоя ИИ (mock=error).',
@@ -96,6 +113,8 @@ const DICT = {
     'map.fallback': 'Карта не загрузилась. Карточки работают и без неё.',
     'map.origin': 'Старт: {name}',
     'map.myArea': 'ваш район',
+    'map.zoomIn': 'Приблизить',
+    'map.zoomOut': 'Отдалить',
 
     'unit.m': 'м',
     'unit.km': 'км',
@@ -125,6 +144,7 @@ const DICT = {
     'badge.aiTitle': 'Сгенерировано моделью, проверьте',
     'hours.open': 'Открыто (OSM)',
     'hours.openAt': 'Открыто в {time} (OSM)',
+    'hours.openAtTomorrow': 'Открыто завтра в {time} (OSM)',
     'hours.probably': 'Вероятно открыто',
     'hours.unknown': 'Часы не подтверждены',
     'hours.closed': 'Закрыто',
@@ -135,6 +155,8 @@ const DICT = {
     'route.total': '≈{min} мин с посещением · {dist} пешком',
     'route.start': 'Старт',
     'route.stop': 'Остановка',
+    'route.leg': '{dist} · {min} мин пешком',
+    'route.back': 'Обратно к старту',
     'route.overBudget': 'Маршрут не укладывается в ваше время',
     'route.show': 'Показать на карте',
     'route.direct': 'Прямая от старта: расстояние приблизительное',
@@ -282,10 +304,23 @@ const DICT = {
     'flag.wheelchair': 'Кедергісіз орта',
     'flag.indoor_only': 'Ғимарат ішінде',
     'flag.group': '3–5 адампыз',
+    'flag.tourist': 'Ұшуға дейін турист',
+    'flag.night': 'Түн',
+    'mode.legend': 'Режим',
+    'departure.label': 'Ұшуға дейін',
+    'departure.90': '1,5 сағ',
+    'departure.120': '2 сағ',
+    'departure.180': '3 сағ',
+    'departure.240': '4 сағ',
+    'hint.tourist': 'Әуежайға жолды ескереміз: серуенге уақыт азырақ қалады.',
     'hint.wheelchair': 'OSM-де қолжетімділік орындардың тек ≈1%-ында көрсетілген, сондықтан таңдау тар болады.',
 
     'when.legend': 'Қашан',
     'when.now': 'Қазір',
+    'when.sameTime': 'Осы уақытта',
+    'when.today': 'Бүгін',
+    'when.tomorrow': 'Ертең',
+    'when.dayAria': 'Күн',
     'when.custom': 'Өз уақытым',
     'when.hint': 'Демоға арналған уақыт машинасы, Астана уақыты (UTC+5)',
 
@@ -303,13 +338,17 @@ const DICT = {
 
     'results.title': 'Нәтижелер',
     'status.loading': 'Орын іздеп жатырмын: {where}…',
-    'status.done': '{sec} с ішінде дайын',
+    'status.done': '{sec} с ішінде дайын · карточкалар: {n}',
     'loading.label': 'Карточкаларды жүктеп жатырмын',
 
     'error.title': 'Жауап алу мүмкін болмады',
     'error.timeout': 'Сервер 25 секунд ішінде жауап бермеді.',
     'error.network': 'Сервермен байланыс жоқ.',
     'error.validation': 'Сервер сұрауды қабылдамады: {detail}',
+    'error.tooLargeTitle': 'Сұрау тым ұзын',
+    'error.tooLarge': 'Сұрау мәтінін қысқартып, қайта жіберіңіз.',
+    'error.shorten': 'Сұрауды қысқарту',
+    'error.unavailable': 'Сервердегі деректер әлі жүктеліп жатыр. Бір минуттан кейін қайталаңыз.',
     'error.server': 'Сервер қатесі ({status}).',
     'error.format': 'Сервер күтпеген жауап қайтарды.',
     'error.mock': 'ЖИ ақауын имитациялау (mock=error).',
@@ -321,6 +360,8 @@ const DICT = {
     'map.fallback': 'Карта жүктелмеді. Карточкалар онсыз да жұмыс істейді.',
     'map.origin': 'Бастау: {name}',
     'map.myArea': 'сіздің аумағыңыз',
+    'map.zoomIn': 'Жақындату',
+    'map.zoomOut': 'Алыстату',
 
     'unit.m': 'м',
     'unit.km': 'км',
@@ -350,6 +391,7 @@ const DICT = {
     'badge.aiTitle': 'Модель жасаған, тексеріңіз',
     'hours.open': 'Ашық (OSM)',
     'hours.openAt': '{time} кезінде ашық (OSM)',
+    'hours.openAtTomorrow': 'Ертең {time} кезінде ашық (OSM)',
     'hours.probably': 'Ашық болуы мүмкін',
     'hours.unknown': 'Жұмыс уақыты расталмаған',
     'hours.closed': 'Жабық',
@@ -360,6 +402,8 @@ const DICT = {
     'route.total': '≈{min} мин (жол мен болу) · жаяу {dist}',
     'route.start': 'Бастау',
     'route.stop': 'Аялдама',
+    'route.leg': '{dist} · жаяу {min} мин',
+    'route.back': 'Бастауға қайту',
     'route.overBudget': 'Бағыт сіздің уақытыңызға сыймайды',
     'route.show': 'Картада көрсету',
     'route.direct': 'Бастаудан түзу сызық: қашықтық шамамен',
@@ -507,10 +551,23 @@ const DICT = {
     'flag.wheelchair': 'Step-free',
     'flag.indoor_only': 'Indoors',
     'flag.group': 'Group of 3–5',
+    'flag.tourist': 'Tourist before a flight',
+    'flag.night': 'Night',
+    'mode.legend': 'Mode',
+    'departure.label': 'Flight in',
+    'departure.90': '1.5 h',
+    'departure.120': '2 h',
+    'departure.180': '3 h',
+    'departure.240': '4 h',
+    'hint.tourist': 'We account for the trip to the airport, so there is less time to walk.',
     'hint.wheelchair': 'Accessibility is tagged for only ≈1% of places in OSM, so the choice will be narrow.',
 
     'when.legend': 'When',
     'when.now': 'Now',
+    'when.sameTime': 'Same time',
+    'when.today': 'Today',
+    'when.tomorrow': 'Tomorrow',
+    'when.dayAria': 'Day',
     'when.custom': 'Custom time',
     'when.hint': 'Demo time machine, Astana time (UTC+5)',
 
@@ -528,13 +585,17 @@ const DICT = {
 
     'results.title': 'Results',
     'status.loading': 'Finding places: {where}…',
-    'status.done': 'Done in {sec} s',
+    'status.done': 'Done in {sec} s · cards: {n}',
     'loading.label': 'Loading cards',
 
     'error.title': "Couldn't get an answer",
     'error.timeout': "The server didn't answer within 25 seconds.",
     'error.network': "Can't reach the server.",
     'error.validation': 'The server rejected the request: {detail}',
+    'error.tooLargeTitle': 'The request is too long',
+    'error.tooLarge': 'Shorten the request text and send it again.',
+    'error.shorten': 'Shorten the request',
+    'error.unavailable': 'The server is still loading its data. Try again in a minute.',
     'error.server': 'Server error ({status}).',
     'error.format': 'The server sent an unexpected answer.',
     'error.mock': 'Simulated AI failure (mock=error).',
@@ -546,6 +607,8 @@ const DICT = {
     'map.fallback': "The map didn't load. Cards still work without it.",
     'map.origin': 'Start: {name}',
     'map.myArea': 'your area',
+    'map.zoomIn': 'Zoom in',
+    'map.zoomOut': 'Zoom out',
 
     'unit.m': 'm',
     'unit.km': 'km',
@@ -575,6 +638,7 @@ const DICT = {
     'badge.aiTitle': 'Generated by the model, please verify',
     'hours.open': 'Open (OSM)',
     'hours.openAt': 'Open at {time} (OSM)',
+    'hours.openAtTomorrow': 'Open tomorrow at {time} (OSM)',
     'hours.probably': 'Probably open',
     'hours.unknown': 'Hours not confirmed',
     'hours.closed': 'Closed',
@@ -585,6 +649,8 @@ const DICT = {
     'route.total': '≈{min} min incl. visits · {dist} on foot',
     'route.start': 'Start',
     'route.stop': 'Stop',
+    'route.leg': '{dist} · {min} min walk',
+    'route.back': 'Back to start',
     'route.overBudget': "The route doesn't fit your time",
     'route.show': 'Show on map',
     'route.direct': 'Straight line from start: approximate distance',
@@ -701,8 +767,27 @@ export function getLang() {
   return current;
 }
 
+// Не во всех браузерах есть данные Intl для kk-KZ (тогда числа выходят как в en: «0.7»).
+// Казахский пишет числа так же, как русский (запятая, пробел), поэтому запасной вариант — ru-RU.
+const numberLocaleCache = {};
 export function locale() {
-  return LOCALES[current];
+  if (!(current in numberLocaleCache)) {
+    const wanted = LOCALES[current];
+    // supportedLocalesOf может «поддерживать» kk-KZ, но форматировать по-английски — проверяем результат.
+    const probe = new Intl.NumberFormat(wanted, { minimumFractionDigits: 1 }).format(0.5);
+    numberLocaleCache[current] = current === 'kk' && !probe.includes(',') ? 'ru-RU' : wanted;
+  }
+  return numberLocaleCache[current];
+}
+
+// Короткие дни недели свои, а не из Intl: у kk-KZ в Intl их может не быть. Индекс = getUTCDay().
+const WEEKDAYS = {
+  ru: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'],
+  kk: ['жс', 'дс', 'сс', 'ср', 'бс', 'жм', 'сб'],
+  en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+};
+export function weekday(dayIndex) {
+  return (WEEKDAYS[current] || WEEKDAYS.ru)[dayIndex];
 }
 
 export function t(key, vars) {

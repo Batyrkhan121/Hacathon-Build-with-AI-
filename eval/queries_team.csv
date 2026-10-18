@@ -1,0 +1,11 @@
+# Запросы для smoke-прогона: python -m eval.run_eval --smoke [--no-llm | --url URL]
+# Колонки: id,query[,location,at,lang]. location — id ориентира (expo, mega_silk_way, baiterek,
+# khan_shatyr, palace_peace, hazrat_sultan, airport_nqz) или H3-ячейка r9; пусто -> expo.
+# at — ISO-время с +05:00; пусто -> пн 19.10.2026 15:00. lang — ru/kk/en; пусто -> по тексту.
+# Ниже примеры. Запросы роли B вставлять вместо них (строки с # пропускаются).
+id,query,location,at,lang
+Q01,Где выпить кофе и поработать часик?,mega_silk_way,2026-10-19T10:00:00+05:00,
+Q02,Куда сходить с ребёнком 5 лет в дождь?,khan_shatyr,,
+Q03,Что посмотреть вечером у Пирамиды?,palace_peace,2026-10-19T19:30:00+05:00,
+Q04,Қазір қайда серуендеуге болады?,baiterek,,kk
+Q05,Any good local food near Khan Shatyr?,khan_shatyr,2026-10-19T13:00:00+05:00,en

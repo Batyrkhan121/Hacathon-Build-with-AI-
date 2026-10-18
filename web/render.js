@@ -1,5 +1,6 @@
 // Отрисовка результатов. Все тексты с сервера вставляем через textContent: это данные, не разметка.
 import { t, formatNumber } from './i18n.js';
+import { dayOffsetOf } from './time.js';
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -56,9 +57,10 @@ function cardTitle(card) {
   return card.title?.trim() || categoryLabel(card.category);
 }
 
+// Сервер различает безымянные места суффиксом: «Детская площадка · 350 м» — смотрим часть до « · ».
 function isUnnamed(card) {
-  const title = card.title?.trim().toLowerCase();
-  return !title || GENERIC_TITLES.has(title);
+  const base = card.title?.split(' · ')[0].trim().toLowerCase();
+  return !base || GENERIC_TITLES.has(base);
 }
 
 function sourceName(src) {
@@ -80,16 +82,20 @@ function safeUrl(url) {
   }
 }
 
-function timeOf(request) {
-  return request?.at ? request.at.slice(11, 16) : null;
+// Для какого момента считались часы: время из `at` и «завтра» ли это.
+function whenOf(request) {
+  if (!request?.at) return { time: null, tomorrow: false };
+  return { time: request.at.slice(11, 16), tomorrow: dayOffsetOf(request.at) === 1 };
 }
 
 // «Открыто» — только при open + high (правило продукта 2).
-export function hoursBadge(card, atTime) {
+export function hoursBadge(card, when = {}) {
   const s = card.open_status;
   const c = card.open_confidence;
   if (s === 'open' && c === 'high') {
-    return { cls: 'open', text: atTime ? t('hours.openAt', { time: atTime }) : t('hours.open') };
+    if (!when.time) return { cls: 'open', text: t('hours.open') };
+    const key = when.tomorrow ? 'hours.openAtTomorrow' : 'hours.openAt';
+    return { cls: 'open', text: t(key, { time: when.time }) };
   }
   if (s === 'open' && c === 'medium') return { cls: 'maybe', text: t('hours.probably') };
   if (s === 'closed') return { cls: 'closed', text: c === 'low' ? t('hours.maybeClosed') : t('hours.closed') };
@@ -140,6 +146,10 @@ export function errorText(err) {
       return t('error.timeout');
     case 'validation':
       return t('error.validation', { detail: err.detail || '422' });
+    case 'too_large':
+      return t('error.tooLarge');
+    case 'unavailable':
+      return t('error.unavailable');
     case 'server':
       return t('error.server', { status: err.status ?? '?' });
     case 'format':
@@ -151,22 +161,30 @@ export function errorText(err) {
   }
 }
 
-export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi }) {
+// Повтор без ИИ помогает только при сбоях ИИ/сети; при 413, 422 и 503 тот же запрос не пройдёт.
+const NO_AI_USELESS = new Set(['too_large', 'validation', 'unavailable']);
+
+export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onShorten }) {
+  const tooLarge = err?.kind === 'too_large';
+  const offerNoAi = canRetryNoAi && !NO_AI_USELESS.has(err?.kind);
   root.replaceChildren(
     h(
       'div',
       { class: 'error-box', role: 'alert' },
-      h('p', { class: 'error-title', text: t('error.title') }),
+      h('p', { class: 'error-title', text: tooLarge ? t('error.tooLargeTitle') : t('error.title') }),
       h('p', { class: 'error-text', text: errorText(err) }),
       h(
         'div',
         { class: 'error-actions' },
-        canRetryNoAi
+        tooLarge
+          ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onShorten }, t('error.shorten'))
+          : null,
+        offerNoAi
           ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onRetryNoAi }, t('error.retryNoAi'))
           : null,
-        h('button', { type: 'button', class: 'btn btn-ghost', onclick: onRetry }, t('error.retry')),
+        tooLarge ? null : h('button', { type: 'button', class: 'btn btn-ghost', onclick: onRetry }, t('error.retry')),
       ),
-      canRetryNoAi ? h('p', { class: 'hint', text: t('error.noAiHint') }) : null,
+      offerNoAi ? h('p', { class: 'hint', text: t('error.noAiHint') }) : null,
     ),
   );
 }
@@ -174,7 +192,7 @@ export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi }) {
 // ------------------------------------------------------------------ answer
 
 export function renderAnswer(root, answer, ctx) {
-  const atTime = timeOf(ctx.request);
+  const when = whenOf(ctx.request);
   const byId = new Map(answer.cards.map((c) => [c.poi_id, c]));
   const noAi = answer.data_used?.generation === 'template';
 
@@ -195,11 +213,11 @@ export function renderAnswer(root, answer, ctx) {
 
   const body = answer.cards.length
     ? [
-        answer.route ? renderRoute(answer.route, byId, ctx) : null,
+        answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, atTime, ctx, answer)),
+          answer.cards.map((c) => renderCard(c, when, ctx)),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -230,18 +248,47 @@ function renderEmpty(ctx) {
   );
 }
 
-function renderRoute(route, byId, ctx) {
-  const rankOf = (id) => (id === 'origin' ? null : byId.get(id)?.rank);
-  const legs = route.legs.map((leg) => {
-    const rank = rankOf(leg.to_id);
-    return h(
+// Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
+function renderRoute(route, byId, ctx, originName) {
+  const items = [
+    h(
       'li',
-      {},
-      h('span', { class: 'leg-to', 'aria-hidden': 'true' }, rank ?? '•'),
-      h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${rank ?? ''}: ` }),
-      h('span', { class: 'leg-meta', text: `${formatDistance(leg.distance_m)} · ${leg.walk_min} ${t('unit.min')}` }),
+      { class: 'tl-point tl-origin' },
+      h('span', { class: 'tl-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'tl-name' }, h('strong', { text: t('route.start') }), originName ? ` · ${originName}` : null),
+    ),
+  ];
+  for (const leg of route.legs) {
+    items.push(
+      h('li', { class: 'tl-leg', text: t('route.leg', { dist: formatDistance(leg.distance_m), min: leg.walk_min }) }),
     );
-  });
+    const card = leg.to_id === 'origin' ? null : byId.get(leg.to_id);
+    if (card) {
+      items.push(
+        h(
+          'li',
+          { class: 'tl-point' },
+          h('span', { class: `tl-rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+          h(
+            'span',
+            { class: 'tl-name' },
+            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
+            h('strong', { text: cardTitle(card) }),
+            h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
+          ),
+        ),
+      );
+    } else {
+      items.push(
+        h(
+          'li',
+          { class: 'tl-point tl-origin' },
+          h('span', { class: 'tl-dot', 'aria-hidden': 'true' }),
+          h('span', { class: 'tl-name' }, h('strong', { text: t('route.back') })),
+        ),
+      );
+    }
+  }
   return h(
     'section',
     { class: 'route', 'aria-label': t('route.title') },
@@ -254,12 +301,7 @@ function renderRoute(route, byId, ctx) {
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
     ),
-    h(
-      'ol',
-      { class: 'legs' },
-      h('li', { class: 'leg-start' }, h('span', { class: 'leg-origin', 'aria-hidden': 'true' }), t('route.start')),
-      legs,
-    ),
+    h('ol', { class: 'timeline' }, items),
     route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
     h(
       'div',
@@ -270,8 +312,8 @@ function renderRoute(route, byId, ctx) {
   );
 }
 
-function renderCard(card, atTime, ctx) {
-  const badge = hoursBadge(card, atTime);
+function renderCard(card, when, ctx) {
+  const badge = hoursBadge(card, when);
   const poi = card.idea_source === 'poi_data';
   const pct = Math.round((card.data_confidence ?? 0) * 100);
   const site = card.website ? safeUrl(card.website) : null;

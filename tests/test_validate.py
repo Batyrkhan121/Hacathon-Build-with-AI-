@@ -358,8 +358,62 @@ def test_titles_unique_even_at_same_distance() -> None:
 )
 def test_title_distance_units(lang: str, near: str, far: str) -> None:
     pois = [make_poi("1", "playground", "Детская площадка"), make_poi("2", "cafe", "Мю")]
-    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250), cand(pois[1], distance=1250)]
-    cards = template_cards(cs[:2], intent(lang=lang), ctx())
+    cs = [cand(pois[0], distance=350), cand(pois[1], distance=1250)]
+    cards = template_cards(cs, intent(lang=lang), ctx())
     assert cards[0].title.endswith(near)
     twin = [cand(make_poi("3", "cafe", "Мю"), distance=1250), cs[1]]
     assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)
+
+
+@pytest.mark.parametrize(
+    ("lang", "note"),
+    [
+        ("ru", "нет данных о часах, проверьте перед визитом"),
+        ("kk", "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз"),
+        ("en", "no opening hours data, check before you go"),
+    ],
+)
+def test_unknown_hours_note_in_user_language(
+    cands: list[Candidate], lang: str, note: str
+) -> None:
+    cards = template_cards(cands, intent(lang=lang), ctx())
+    unknown = [c for c in cards if c.open_status == "unknown"]
+    assert unknown
+    assert all(c.open_note == note for c in unknown)
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3")])
+    finalized, _ = finalize(resp, cands, intent(lang=lang), ctx())
+    assert finalized[0].open_note == note
+
+
+@pytest.mark.parametrize(
+    ("lang", "note", "expected"),
+    [
+        (
+            "en",
+            "закроется через 45 мин · по данным OSM: ежедневно 10:00–24:00 · "
+            "в праздники часы могут отличаться",
+            "closes in 45 min · OSM hours: daily 10:00–24:00 · hours may differ on holidays",
+        ),
+        (
+            "en",
+            "по данным OSM: Пн–Пт 09:00–18:00; Сб 10:00–16:00; Вс выходной",
+            "OSM hours: Mon–Fri 09:00–18:00; Sat 10:00–16:00; Sun closed",
+        ),
+        ("en", "по данным OSM: круглосуточно", "OSM hours: 24/7"),
+        (
+            "kk",
+            "закроется через 1 ч 10 мин · по данным OSM: Пн, Ср, Пт 10:00–14:00",
+            "жабылуына 1 сағ 10 мин · OSM деректері бойынша: Дс, Ср, Жм 10:00–14:00",
+        ),
+        (
+            "kk",
+            "по данным OSM: ежедневно 08:00–22:00 · в праздники часы могут отличаться",
+            "OSM деректері бойынша: күн сайын 08:00–22:00 · мереке күндері уақыт өзгеруі мүмкін",
+        ),
+        ("ru", "по данным OSM: ежедневно 08:00–22:00", "по данным OSM: ежедневно 08:00–22:00"),
+    ],
+)
+def test_hours_note_follows_language(lang: str, note: str, expected: str) -> None:
+    hours = HoursVerdict(status="open", confidence="high", note=note)
+    card = template_cards([cand(make_poi("1", "cafe", "Мю"), hours)], intent(lang=lang), ctx())[0]
+    assert card.open_note == expected

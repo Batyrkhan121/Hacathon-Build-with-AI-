@@ -238,3 +238,21 @@ def test_freshest_snapshot_wins_and_dates_the_record() -> None:
     assert poi.name == "Новое имя" and poi.fetched_at == "2026-10-18"
     (old,) = normalize_payloads([stale])
     assert old.fetched_at == "2026-06-01"  # snapshot date, not the day we downloaded it
+
+
+def test_playground_anchor_needs_a_proper_name() -> None:
+    from pipeline.normalize import has_proper_name
+
+    assert not has_proper_name("Сквер") and not has_proper_name("Кафе 24")
+    assert not has_proper_name("Парк") and not has_proper_name("саябақ")
+    assert has_proper_name("Сквер Акжайык") and has_proper_name("Coffee Boom")
+    assert has_proper_name("Бухарест саябағы") and has_proper_name("Golpas")
+
+    square = normalize_element(node(60, {"leisure": "park", "name": "Сквер"}), DATE)
+    cafe = normalize_element(node(61, {"amenity": "cafe", "name": "Ласточка"},
+                                  lat=51.0894 + 0.0012), DATE)
+    pg = normalize_element(node(62, {"leisure": "playground"}, lat=51.0894 + 0.0003), DATE)
+    assert square and cafe and pg
+    out = {p.id: p for p in name_playgrounds([square, cafe, pg])}
+    # "Сквер" is 33 m away but generic; the cafe ~100 m away has a name of its own
+    assert out["osm:node/62"].name == "Детская площадка у Ласточка"

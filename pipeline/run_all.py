@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, etalon, fetch_osm, normalize, report
+from pipeline import build_index, etalon, fetch_osm, normalize, overrides, report
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -65,6 +65,9 @@ def run(
     # hand-checked reference places: compared with OSM first, the missing ones added
     pois, etalon_notes = etalon.run_on(pois)
     notes.extend(etalon_notes)
+    # hand corrections (data/manual/overrides.json), e.g. the EXPO sphere is a museum
+    pois, override_notes = overrides.apply_overrides(pois, overrides.load_overrides())
+    notes.extend(override_notes)
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 
