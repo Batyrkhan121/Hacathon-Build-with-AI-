@@ -45,6 +45,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -73,10 +74,16 @@ REDACTED_FIELDS = ("raw_query",)  # never written to the disk cache (callers re-
 EMBED_BATCH = 100
 EMBED_ATTEMPTS = 3
 EMBED_PAUSE_S = 1.0  # doubled after every failed attempt
-EMBED_TIMEOUT_MS = 15_000
+EMBED_TIMEOUT_MS = 15_000  # index build (embed_documents)
+# A live query must not wait for Gemini: one short attempt, then lexical search for a while
+# (the shared Gemini quota can be exhausted for hours).
+EMBED_QUERY_ATTEMPTS = 1
+EMBED_QUERY_TIMEOUT_MS = 5_000
+EMBED_COOLDOWN_S = NETWORK_COOLDOWN_S
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-_USER_TAG_RE = re.compile(r"<\s*/?\s*user_query\s*>", re.IGNORECASE)
+_INVISIBLE_RE = re.compile("[​-‏‪-‮⁠-⁤﻿]")
+_ANGLE_RE = re.compile("[<>〈〉〈〉⟨⟩＜＞﹤﹥]")
 
 
 @lru_cache(maxsize=16)
@@ -88,9 +95,12 @@ def load_prompt(name: str) -> str:
 def user_data_block(text: str) -> str:
     """The user's text as a delimited DATA block for a prompt.
 
-    Tags that could close the block early are removed, so the text cannot "escape" it.
+    No tag can be formed inside: NFKC folds look-alikes (fullwidth ＜ ＞ -> < >), invisible
+    characters (zero-width, bidi controls) are dropped, then every angle bracket becomes a
+    space. So «<</user_query>/user_query>» cannot leave even a false closing tag behind.
     """
-    clean = _USER_TAG_RE.sub(" ", text).strip()
+    clean = _INVISIBLE_RE.sub("", unicodedata.normalize("NFKC", text))
+    clean = re.sub(r"[ \t]{2,}", " ", _ANGLE_RE.sub(" ", clean)).strip()
     return f"<user_query>\n{clean}\n</user_query>"
 
 
@@ -106,6 +116,10 @@ class _ModelFailed(Exception):
         self.network = network
 
 
+class _CacheMiss(Exception):
+    """embed_query while cooling down: the vector is not in the disk cache."""
+
+
 class _HardFailure(Exception):
     """Credentials are rejected: no other model will work either."""
 
@@ -119,6 +133,7 @@ class LLMClient:
         self._lock = threading.Lock()
         self._local = threading.local()
         self._cooldown_until = 0.0
+        self._embed_cooldown_until = 0.0  # Gemini, separate from Claude
 
     # ------------------------------------------------------------------ state
 
@@ -318,13 +333,20 @@ class LLMClient:
 
     def embed_query(self, text: str) -> np.ndarray | None:
         """L2-normalised query vector, or None without GEMINI_API_KEY / on any failure
-        (retrieval goes lexical)."""
+        (retrieval goes lexical). One short attempt; after a failure only the disk cache is
+        used for EMBED_COOLDOWN_S, so a dead quota never slows a live request down."""
         if not self.settings.has_embeddings or not text.strip():
             return None
+        cooling = time.monotonic() < self._embed_cooldown_until
         try:
-            return self._embed([text], "RETRIEVAL_QUERY")[0]
+            return self._embed([text], "RETRIEVAL_QUERY", attempts=EMBED_QUERY_ATTEMPTS,
+                               timeout_ms=EMBED_QUERY_TIMEOUT_MS, cache_only=cooling)[0]
+        except _CacheMiss:
+            return None
         except Exception as exc:  # noqa: BLE001 - embeddings are optional, lexical works
-            log.warning("embed_query failed (%s), retrieval goes lexical", type(exc).__name__)
+            self._embed_cooldown_until = time.monotonic() + EMBED_COOLDOWN_S
+            log.warning("embed_query failed (%s): lexical search for the next %.0f s",
+                        type(exc).__name__, EMBED_COOLDOWN_S)
             return None
 
     def embed_documents(self, texts: list[str]) -> np.ndarray:
@@ -341,7 +363,8 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             raise LLMUnavailable(f"embedding failed: {type(exc).__name__}") from exc
 
-    def _embed(self, texts: list[str], task_type: str) -> np.ndarray:
+    def _embed(self, texts: list[str], task_type: str, *, attempts: int = EMBED_ATTEMPTS,
+               timeout_ms: int | None = None, cache_only: bool = False) -> np.ndarray:
         dim = self.settings.embed_dim
         out = np.zeros((len(texts), dim), dtype=np.float32)
         keys = [self._embed_key(t, task_type) for t in texts]
@@ -352,22 +375,27 @@ class LLMClient:
                 missing.append(i)
             else:
                 out[i] = vec
+        if missing and cache_only:
+            raise _CacheMiss
         for start in range(0, len(missing), EMBED_BATCH):
             idx = missing[start : start + EMBED_BATCH]
-            vectors = self._embed_batch([texts[i] for i in idx], task_type)
+            vectors = self._embed_batch([texts[i] for i in idx], task_type,
+                                        attempts=attempts, timeout_ms=timeout_ms)
             for i, vec in zip(idx, vectors, strict=True):
                 out[i] = vec
                 self._embed_cache_write(keys[i], vec)
         return out
 
-    def _embed_batch(self, texts: list[str], task_type: str) -> np.ndarray:
+    def _embed_batch(self, texts: list[str], task_type: str, *, attempts: int = EMBED_ATTEMPTS,
+                     timeout_ms: int | None = None) -> np.ndarray:
         from google.genai import types
 
         config = types.EmbedContentConfig(
-            task_type=task_type, output_dimensionality=self.settings.embed_dim
+            task_type=task_type, output_dimensionality=self.settings.embed_dim,
+            http_options=types.HttpOptions(timeout=timeout_ms) if timeout_ms else None,
         )
         pause = EMBED_PAUSE_S
-        for attempt in range(1, EMBED_ATTEMPTS + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 resp = self._get_genai().models.embed_content(
                     model=self.settings.embed_model, contents=texts, config=config
@@ -378,7 +406,7 @@ class LLMClient:
             except LLMUnavailable:
                 raise
             except Exception as exc:  # noqa: BLE001 - retried, then surfaced as LLMUnavailable
-                if attempt == EMBED_ATTEMPTS:
+                if attempt == attempts:
                     raise LLMUnavailable(f"Gemini embed failed: {type(exc).__name__}") from exc
                 log.warning("Gemini embed attempt %d failed (%s), retrying", attempt,
                             type(exc).__name__)

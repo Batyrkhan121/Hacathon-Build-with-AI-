@@ -408,6 +408,13 @@ def test_overrides_win() -> None:
     assert out.raw_query == "x"
 
 
+def test_indoor_only_false_lifts_only_the_indoor_limit() -> None:
+    outdoor = QueryIntent(raw_query="на свежем воздухе", indoor="outdoor")
+    assert apply_overrides(outdoor, UserOverrides(indoor_only=False)).indoor == "outdoor"
+    indoor = QueryIntent(raw_query="в тепле", indoor="indoor")
+    assert apply_overrides(indoor, UserOverrides(indoor_only=False)).indoor == "any"
+
+
 def test_override_indoor_only() -> None:
     out = apply_overrides(QueryIntent(raw_query="x", indoor="outdoor"),
                           UserOverrides(indoor_only=True))

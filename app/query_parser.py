@@ -292,6 +292,8 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
     if overrides.indoor_only is True:
         update["indoor"] = "indoor"
     elif overrides.indoor_only is False and intent.indoor == "indoor":
+        # False = "not only indoors": it lifts the indoor limit and nothing else; an explicit
+        # «на улице» from the text stays (the UI never sends False, only True or nothing).
         update["indoor"] = "any"
     if not update:
         return intent
