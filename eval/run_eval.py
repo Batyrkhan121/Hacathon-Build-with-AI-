@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import statistics
 import sys
@@ -73,6 +74,7 @@ class Result:
     generation: str | None = None
     search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
     search_line: str | None = None  # the «поиск: …» line from data_used.filters, verbatim
+    route_source: str | None = None  # MiniRoute.path_source: "graph" | "straight"; None = no route
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -138,6 +140,63 @@ def check_invariants(ans: Answer) -> list[str]:
             fails.append(f"{c.poi_id}: visit_min_low > visit_min_high")
     if ans.route is not None and not set(ans.route.stop_ids) <= set(ids):
         fails.append("маршрут ведёт в места не из карточек")
+    fails += check_graph_route(ans)
+    return fails
+
+
+# ------------------------------------------------------------- walking route (1.1.0)
+
+ROUTE_END_TOLERANCE_M = 50  # path ends vs start / last place; graph nodes are not the POI point
+WALK_M_PER_MIN = 75.0  # 4.5 km/h, the same speed as app.geo
+CROSSING_KINDS = {"signals", "marked", "unmarked"}
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(h)))
+
+
+def check_graph_route(ans: Answer) -> list[str]:
+    """Checks for a route along the OSM walk graph (path_source="graph"); straight routes and
+    answers without a route are not checked here (WALK_GRAPH=false keeps the old behaviour)."""
+    route = ans.route
+    if route is None or route.path_source != "graph":
+        return []
+    fails: list[str] = []
+    origin = ans.context.origin
+    points = {"origin": (origin.lat, origin.lon)}
+    points.update({c.poi_id: (c.geo.lat, c.geo.lon) for c in ans.cards})
+    if len(route.path) < 2:
+        return ["граф: в path меньше двух точек"]
+    first, last = route.path[0], route.path[-1]
+    d_start = haversine_m(first.lat, first.lon, *points["origin"])
+    if d_start > ROUTE_END_TOLERANCE_M:
+        fails.append(f"граф: path начинается в {d_start:.0f} м от старта")
+    end_id = route.legs[-1].to_id if route.legs else route.stop_ids[-1]
+    if end_id in points:  # the last leg may lead back to the start (loop walk)
+        d_end = haversine_m(last.lat, last.lon, *points[end_id])
+        if d_end > ROUTE_END_TOLERANCE_M:
+            fails.append(f"граф: path заканчивается в {d_end:.0f} м от {end_id}")
+    legs_m = sum(leg.distance_m for leg in route.legs)
+    if abs(legs_m - route.total_walk_m) > max(1, len(route.legs)):  # rounding per leg
+        fails.append(f"граф: сумма legs {legs_m} м ≠ total_walk_m {route.total_walk_m} м")
+    for leg in route.legs:
+        if leg.from_id not in points or leg.to_id not in points:
+            fails.append(f"граф: leg {leg.from_id}→{leg.to_id} ведёт не в карточку и не к старту")
+            continue
+        straight = haversine_m(*points[leg.from_id], *points[leg.to_id])
+        floor_min = math.ceil(straight / WALK_M_PER_MIN - 1e-9)
+        if leg.walk_min < floor_min:
+            fails.append(f"граф: leg {leg.from_id}→{leg.to_id} {leg.walk_min} мин "
+                         f"< по прямой {floor_min} мин")
+    if len(route.crossings) > 50:
+        fails.append(f"граф: переходов {len(route.crossings)} > 50")
+    bad_kinds = {x.kind for x in route.crossings} - CROSSING_KINDS
+    if bad_kinds:
+        fails.append(f"граф: неизвестный kind перехода {sorted(bad_kinds)}")
     return fails
 
 
@@ -291,6 +350,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
     assert ans is not None
     res.cards = len(ans.cards)
     res.generation = ans.data_used.generation
+    res.route_source = ans.route.path_source if ans.route is not None else None
     if exp.get("reject_ok"):
         if ans.cards or not ans.warnings:
             res.failures.append("ожидали 422 или 0 карточек с понятным предупреждением")
@@ -469,6 +529,16 @@ def search_mode(out: Outcome) -> str | None:
     return None
 
 
+ROUTE_LABEL = {"graph": "по графу", "straight": "прямые"}
+
+
+def route_summary(results: list[Result]) -> str:
+    graph = sum(r.route_source == "graph" for r in results)
+    straight = sum(r.route_source == "straight" for r in results)
+    none = sum(r.route_source is None for r in results)
+    return f"по графу тротуаров {graph}, прямыми отрезками {straight}, без маршрута {none}"
+
+
 def search_summary(results: list[Result]) -> str:
     vec = sum(r.search == "vector" for r in results)
     words = sum(r.search == "words" for r in results)
@@ -485,18 +555,21 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
         f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
         f"- **Итог: {passed}/{len(results)}**",
         f"- Поиск: {search_summary(results)}",
+        f"- Маршруты: {route_summary(results)}",
     ]
     lines += [f"- {n}" for n in notes]
     lines += [
         "",
-        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | latency, мс |",
-        "|---|---|---|---|---:|---|---|---:|",
+        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | маршрут "
+        "| latency, мс |",
+        "|---|---|---|---|---:|---|---|---|---:|",
     ]
     for r in results:
         why = "; ".join(r.failures).replace("|", "/") or "—"
         lines.append(
             f"| {r.id} | {r.title} | {'pass' if r.passed else 'FAIL'} | {why} | {r.cards} "
-            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} | {r.latency_ms} |"
+            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} "
+            f"| {ROUTE_LABEL.get(r.route_source or '', '—')} | {r.latency_ms} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -510,6 +583,7 @@ def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[st
         "total": len(results),
         "notes": notes,
         "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
+        "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
