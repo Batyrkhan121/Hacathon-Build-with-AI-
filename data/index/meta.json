@@ -1,11 +1,12 @@
 {
-  "model": "gemini-embedding-001",
+  "status": "ok",
+  "model": "google/gemini-embedding-001",
   "dim": 768,
-  "count": 1228,
-  "created_at": "2026-10-18T16:26:04+05:00",
-  "task_type": "RETRIEVAL_DOCUMENT",
+  "count": 1222,
+  "created_at": "2026-10-18T20:26:20+05:00",
+  "provider": "openrouter",
+  "task_type": "none (openrouter)",
   "doc_template": "{name}. {category_ru}. Теги: {tags}. {description}",
-  "status": "stale",
-  "stale_reason": "дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: 1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты; без вектора 140 текстов",
-  "stale_since": "2026-10-18T17:50:14+05:00"
+  "ids_sha256": "ee48673b7feacd33ff1ffe79033a967f2b66c4fda40e6f4337b45061693ac3de",
+  "docs_sha256": "a8826336020b6ac4a75dac739d9f5b45da4d83d17deb322bc3b41301e3af3af4"
 }
