@@ -251,6 +251,40 @@ function renderEmpty(ctx) {
   );
 }
 
+// Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
+// + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
+function renderGraphSummary(route, ctx) {
+  const walkMin = route.legs.reduce((sum, leg) => sum + (leg.walk_min || 0), 0);
+  const crossings = route.crossings || [];
+  const signals = crossings.filter((c) => c.kind === 'signals').length;
+  const base = crossings.length
+    ? t('route.graphSummary', {
+        dist: formatDistance(route.total_walk_m),
+        min: walkMin,
+        n: crossings.length,
+        s: signals,
+      })
+    : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
+  const steps = route.steps_count || 0;
+  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
+  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
+  const stepsText = steps
+    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
+    : t('route.noSteps');
+  return h(
+    'div',
+    { class: 'route-graph' },
+    h(
+      'p',
+      { class: 'route-graph-line' },
+      base,
+      ' · ',
+      h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
+    ),
+    h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
+  );
+}
+
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
 function renderRoute(route, byId, ctx, originName) {
   const items = [
@@ -305,6 +339,7 @@ function renderRoute(route, byId, ctx, originName) {
       }),
     ),
     h('ol', { class: 'timeline' }, items),
+    route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null,
     route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
     h(
       'div',
