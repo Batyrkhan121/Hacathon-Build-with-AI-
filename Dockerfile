@@ -34,7 +34,7 @@ USER 1000:1000
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import json, os, urllib.request; r = urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '7860') + '/api/health', timeout=3); d = json.load(r); raise SystemExit(0 if d.get('status') == 'ok' and d.get('poi_count', 0) > 0 else 1)"]
+    CMD ["python", "-c", "import json, os, urllib.request; r = urllib.request.urlopen('http://127.0.0.1:' + (os.environ.get('PORT') or '7860') + '/api/health', timeout=3); d = json.load(r); raise SystemExit(0 if d.get('status') == 'ok' and d.get('poi_count', 0) > 0 else 1)"]
 
 # exec forwards termination signals; one worker avoids duplicating in-memory data.
 CMD ["sh", "-c", "exec python -m uvicorn app.api:app --host 0.0.0.0 --port \"${PORT:-7860}\" --workers 1 --no-access-log"]
