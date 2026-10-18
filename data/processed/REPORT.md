@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 17:36 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 17:50 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -9,7 +9,7 @@
 - Ориентиры, добавленные как места (объект OSM + ручная разметка): 4.
 - Время выгрузки: 2026-10-18 14:04 … 2026-10-18 15:38 (UTC+5).
 - Возраст данных: самый старый кусок fixture скачан 2026-10-18 14:04 (3 ч назад); при сбое выгрузки берутся файлы с диска.
-- Контуры ТРЦ: скачаны 2026-10-18 16:40 (0 ч назад).
+- Контуры ТРЦ: скачаны 2026-10-18 16:40 (1 ч назад).
 - Зеркала Overpass: https://maps.mail.ru/osm/tools/overpass/api/interpreter (11), https://overpass.kumi.systems/api/interpreter (4).
 - Дата снимка OSM по зеркалам: maps.mail.ru: 2026-10-18; overpass.kumi.systems: 2026-06-01 … 2026-07-24. Пересекающиеся куски берутся из самого свежего снимка; `fetched_at` у записи — дата её снимка.
 - Все плитки города скачаны.
@@ -70,7 +70,7 @@
 - Wikidata: описания добавлены 1 местам из 16 с тегом; короткие и пустые по смыслу не взяты: 14.
 - Описания Claude (claude-sonnet-5-5, пометка llm_generated): 37 из 171 заметных мест без описания (attraction, cinema, entertainment, gallery, library, monument, museum, park, religious, theatre, viewpoint); кафе, бары, фастфуд, площадки и ТРЦ не описываются; модель не уверена (null): 134; отклонено проверкой (часы, цены, удобства, адреса, пересказ названия и тегов): 0. Новых запросов не было (нет ANTHROPIC_API_KEY или LLM_ENABLED=false): только из кэша.
 - Индекс не пересобирался (--skip-index).
-- Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00 — **устарел**: не пересобран (пересборка отложена (--skip-index), данные изменились); в poi.jsonl 1222 POI.
+- Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00 — **устарел**: не пересобран (дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: 1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты; без вектора 140 текстов); в poi.jsonl 1222 POI.
 
 ## Примеры записей
 ```json

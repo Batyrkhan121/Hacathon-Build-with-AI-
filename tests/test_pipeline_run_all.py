@@ -110,3 +110,18 @@ def test_skip_index_flags_a_mismatching_index(tmp_data: Path) -> None:
     meta = _json.loads((index / "meta.json").read_text(encoding="utf-8"))
     assert meta["status"] == "stale" and "--skip-index" in meta["stale_reason"]
     assert "Индекс не пересобирался (--skip-index)." in notes
+
+
+def test_skip_index_keeps_a_known_stale_reason(tmp_data: Path) -> None:
+    import json as _json
+
+    from pipeline.run_all import run
+
+    index = tmp_data / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(_json.dumps({
+        "status": "stale", "stale_reason": "дневная квота Gemini исчерпана", "count": 99,
+        "model": "m", "dim": 4}), encoding="utf-8")
+    run("zones", skip_fetch=True, skip_enrich=True, skip_index=True)
+    meta = _json.loads((index / "meta.json").read_text(encoding="utf-8"))
+    assert meta["stale_reason"] == "дневная квота Gemini исчерпана"

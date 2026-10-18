@@ -121,7 +121,8 @@ def run(
     if skip_index:
         # no embedding calls (e.g. the Gemini quota is saved for live queries); an index
         # that no longer matches poi.jsonl is flagged instead of being trusted silently
-        if "устарел" in build_index.index_status(settings.index_dir, pois):
+        status = build_index.index_status(settings.index_dir, pois)
+        if "устарел" in status and "не пересобран (" not in status:  # keep a known reason
             build_index.mark_stale(
                 settings.index_dir, "пересборка отложена (--skip-index), данные изменились"
             )
