@@ -37,7 +37,7 @@ from app import geo, hours, retrieval, route, validate, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
-from app.query_parser import apply_overrides, parse_query
+from app.query_parser import apply_overrides, mentions_flight, parse_query
 from app.schemas import (
     Answer,
     Candidate,
@@ -72,11 +72,14 @@ DISCLAIMERS: dict[str, str] = {
 }
 TOP_K = 8
 SPARSE_MIN = 3  # fewer candidates than this -> "few places nearby" warning
-# Tourist before a flight (EVAL request for S4 / E11): walk budget = budget - transfer - reserve.
+# Tourist before a flight (wave 3 rule): walk budget = time to departure - transfer - reserve.
+# Applies only when a flight / the airport is mentioned or the UI sent departure_in_min.
 AIRPORT_ID = "airport_nqz"
-AIRPORT_TRANSFER_MIN = 35  # city centre -> NQZ by taxi, approximate
-AIRPORT_RESERVE_MIN = 15
+AIRPORT_TRANSFER_MIN = 35  # city centre -> NQZ by taxi: an estimate, said so in the warning
+AIRPORT_RESERVE_MIN = 60  # check-in and security before departure
+MIN_WALK_LEFT_MIN = 15  # less than this left -> no cards, "leave now"
 TOURIST_MAX_CARDS = 2
+HUB_MAX_WALK_MIN = 15  # at a transport hub and for tourists: short walks, no radius widening
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
 MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
@@ -102,13 +105,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Под запрошенный тип мест рядом ничего нет в данных — показано, что есть "
                    "поблизости.",
         "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
-        "airport_deadline": "Выезжайте в аэропорт не позже {hhmm}.",
+        "airport_plan": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
+                        "{res} мин — на прогулку {w} мин. Выезжайте в аэропорт не позже {hhmm}.",
+        "airport_now": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
+                       "{res} мин — на прогулку времени не остаётся. Выезжайте в аэропорт "
+                       "сейчас.",
+        "summary_leave_now": "Времени на прогулку перед вылетом нет — выезжайте в аэропорт "
+                             "сейчас.",
         "airport_nothing": "Рядом с аэропортом почти ничего нет; ехать в город за {dur} до "
                            "вылета не советуем.",
         "airport_nothing_nodur": "Рядом с аэропортом почти ничего нет; ехать в город перед "
                                  "вылетом не советуем.",
         "airport_nothing_tail": "Ниже — что есть в пешей доступности.",
-        "f_budget_airport": "время на прогулку {v} мин (с учётом дороги в аэропорт)",
+        "f_budget_airport": "время на прогулку {v} мин ({b} − {tr} дорога − {res} запас)",
         "route_over": "Маршрут не укладывается в заданное время — начните с первой карточки.",
         "summary_1": "Подборка по открытым данным: 1 идея рядом.",
         "summary_n": "Подборка по открытым данным: {n} идеи рядом.",
@@ -142,13 +151,17 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Сұралған түрдегі орын жақын жерде деректерде жоқ — маңайдағы бар орындар "
                    "көрсетілді.",
         "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
-        "airport_deadline": "Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
+        "airport_plan": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
+                        "қор — серуенге {w} мин. Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
+        "airport_now": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
+                       "қор — серуенге уақыт қалмайды. Әуежайға қазір шығыңыз.",
+        "summary_leave_now": "Ұшар алдында серуенге уақыт жоқ — әуежайға қазір шығыңыз.",
         "airport_nothing": "Әуежай маңында ештеңе дерлік жоқ; ұшарға {dur} қалғанда қалаға "
                            "баруды ұсынбаймыз.",
         "airport_nothing_nodur": "Әуежай маңында ештеңе дерлік жоқ; ұшар алдында қалаға "
                                  "баруды ұсынбаймыз.",
         "airport_nothing_tail": "Төменде — жаяу жетуге болатын орындар.",
-        "f_budget_airport": "серуенге {v} мин (әуежайға жолды ескергенде)",
+        "f_budget_airport": "серуенге {v} мин ({b} − {tr} жол − {res} қор)",
         "route_over": "Маршрут берілген уақытқа сыймайды — бірінші карточкадан бастаңыз.",
         "summary_1": "Ашық деректер бойынша жақын жерде 1 ұсыныс.",
         "summary_n": "Ашық деректер бойынша жақын жерде {n} ұсыныс.",
@@ -178,13 +191,19 @@ TEXTS: dict[str, dict[str, str]] = {
                        "make your departure.",
         "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
         "sparse": "Few places nearby in the open data ({n}) — a short list.",
-        "airport_deadline": "Leave for the airport no later than {hhmm}.",
+        "airport_plan": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
+                        "{res}-min reserve leaves {w} min for a walk. Leave for the airport no "
+                        "later than {hhmm}.",
+        "airport_now": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
+                       "{res}-min reserve leaves no time for a walk. Leave for the airport now.",
+        "summary_leave_now": "There is no time for a walk before your flight — leave for the "
+                             "airport now.",
         "airport_nothing": "There is almost nothing near the airport; we don't recommend going "
                            "into the city {dur} before your flight.",
         "airport_nothing_nodur": "There is almost nothing near the airport; we don't recommend "
                                  "going into the city right before your flight.",
         "airport_nothing_tail": "Below is what is within walking distance.",
-        "f_budget_airport": "walk time {v} min (airport transfer included)",
+        "f_budget_airport": "walk time {v} min ({b} − {tr} transfer − {res} reserve)",
         "route_over": "The route does not fit your time — start with the first card.",
         "summary_1": "1 nearby idea picked from open data.",
         "summary_n": "{n} nearby ideas picked from open data.",
@@ -247,14 +266,23 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             name = lm.names.get(intent.lang) or next(iter(lm.names.values()), lm.id)
             warn.append(t["landmark_mismatch"].format(name=name))
 
-    # Tourist with a flight: plan only the time left after the transfer (not at the airport).
+    # Modes. `plan_intent` is what the search actually uses; `intent` stays what was asked.
     at_airport = landmark_id == AIRPORT_ID
-    walk_budget: int | None = None
-    plan_intent = intent
-    if intent.tourist and intent.time_budget_min and not at_airport:
+    at_hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
+    departure = getattr(req.overrides, "departure_in_min", None) if req.overrides else None
+    flight = intent.tourist and not at_airport and (
+        departure is not None or mentions_flight(req.query))
+    walk_budget: int | None = None  # minutes left for the walk before leaving for the airport
+    plan_update: dict[str, object] = {}
+    if flight and intent.time_budget_min:
         walk_budget = intent.time_budget_min - AIRPORT_TRANSFER_MIN - AIRPORT_RESERVE_MIN
-        plan_intent = intent.model_copy(
-            update={"time_budget_min": max(MIN_WALK_BUDGET_MIN, walk_budget)})
+        plan_update["time_budget_min"] = max(MIN_WALK_BUDGET_MIN, walk_budget)
+    short_walks = at_hub or intent.tourist
+    if short_walks:
+        plan_update["max_walk_min"] = min(intent.max_walk_min or HUB_MAX_WALK_MIN,
+                                          HUB_MAX_WALK_MIN)
+    plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
+    no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
     # 3. context
     wx = weather.get_weather(origin, local_time)
@@ -277,8 +305,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
     search_intent = plan_intent
-    candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
-    if not candidates and not failed:
+    if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
+        candidates, failed = [], False
+    else:
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+    if short_walks:  # "two cards beat a third one 48 minutes away"
+        candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
+    if not candidates and not failed and not no_time and not short_walks:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
@@ -286,9 +319,11 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     requested_found = len(candidates)  # places of the requested type, before relaxing
-    if not candidates and not failed and plan_intent.categories:
+    if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        if short_walks:
+            candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if candidates:
             warn.append(t["relaxed"])
     if 0 < len(candidates) < SPARSE_MIN:
@@ -329,17 +364,19 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 8. warnings, data used, answer
     if failed and not cards:
         warn.append(t["search_error"])
-    elif not cards:
+    elif not cards and not no_time:
         warn.append(t["nothing"])
-    hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
-    deadline = (local_time + timedelta(minutes=max(0, walk_budget))
-                if walk_budget is not None else None)
-    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route, at_hub=hub,
-                                  deadline=deadline))
+    if walk_budget is not None:
+        warn.append(_airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
+    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route, at_hub=at_hub,
+                                  flight=flight, deadline_given=walk_budget is not None))
     if summary is None:
         summary = _template_summary(t, len(cards))
-    if at_airport and intent.tourist and requested_found < 2:
+    if no_time:
+        summary = t["summary_leave_now"]
+    elif at_airport and intent.tourist and requested_found < 2:
         summary = _airport_summary(t, intent, has_cards=bool(cards))
+    summary = validate.sanitize_summary(summary, cards)  # "open now" never leaks via summary
 
     answer = Answer(
         request_id=request_id,
@@ -354,7 +391,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             time=_time_label(t, local_time, manual=req.at is not None),
             weather=wx.summary if wx is not None else t["weather_unknown"],
             filters=_filters(t, search_intent, ctx, req.use_llm,
-                             airport_budget=walk_budget is not None),
+                             airport=(intent.time_budget_min or 0) if walk_budget is not None
+                             else None),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -444,7 +482,8 @@ def _context_warnings(
     mini_route: MiniRoute | None,
     *,
     at_hub: bool = False,
-    deadline: datetime | None = None,
+    flight: bool = False,
+    deadline_given: bool = False,
 ) -> list[str]:
     out: list[str] = []
     unknown = sum(1 for c in cards if c.open_status == "unknown")
@@ -459,13 +498,24 @@ def _context_warnings(
         confirmed = sum(1 for c in cards if wheel.get(c.poi_id) == "yes")
         if confirmed < len(cards):  # OSM marks wheelchair for ~1% of places
             out.append(t["wheelchair"].format(k=confirmed, n=len(cards)))
-    if deadline is not None:
-        out.append(t["airport_deadline"].format(hhmm=f"{deadline:%H:%M}"))
-    elif intent.tourist and cards:
-        out.append(t["tourist_hub"] if at_hub else t["tourist"])
+    if intent.tourist and cards and not deadline_given:
+        if at_hub:
+            out.append(t["tourist_hub"])
+        elif flight:  # a tourist without a flight gets no airport advice
+            out.append(t["tourist"])
     if mini_route is not None and not mini_route.fits_budget:
         out.append(t["route_over"])
     return out
+
+
+def _airport_warning(t: dict[str, str], budget: int, walk_budget: int, local_time: datetime
+                     ) -> str:
+    """The calculation is shown, not just the result: «до вылета 120 − 35 − 60 = 25 мин»."""
+    fmt = {"b": budget, "tr": AIRPORT_TRANSFER_MIN, "res": AIRPORT_RESERVE_MIN}
+    if walk_budget < MIN_WALK_LEFT_MIN:
+        return t["airport_now"].format(**fmt)
+    leave_at = local_time + timedelta(minutes=walk_budget)
+    return t["airport_plan"].format(**fmt, w=walk_budget, hhmm=f"{leave_at:%H:%M}")
 
 
 def _airport_summary(t: dict[str, str], intent: QueryIntent, *, has_cards: bool) -> str:
@@ -508,11 +558,14 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
-             *, airport_budget: bool = False) -> list[str]:
+             *, airport: int | None = None) -> list[str]:
+    """`airport` = minutes to departure when the flight rule shaped the time budget."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
-    if intent.time_budget_min:
-        key = "f_budget_airport" if airport_budget else "f_budget"
-        out.append(t[key].format(v=intent.time_budget_min))
+    if intent.time_budget_min and airport is not None:
+        out.append(t["f_budget_airport"].format(v=intent.time_budget_min, b=airport,
+                                                tr=AIRPORT_TRANSFER_MIN, res=AIRPORT_RESERVE_MIN))
+    elif intent.time_budget_min:
+        out.append(t["f_budget"].format(v=intent.time_budget_min))
     if intent.max_walk_min:
         out.append(t["f_walk"].format(v=intent.max_walk_min))
     flags = (("f_kids", intent.with_kids), ("f_wheelchair", intent.wheelchair),
