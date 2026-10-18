@@ -79,6 +79,7 @@ INDOOR_CATEGORIES: frozenset[str] = frozenset(
 OUTDOOR_CATEGORIES: frozenset[str] = frozenset({"park", "playground", "viewpoint", "monument"})
 INDOOR_VALUES = frozenset({"aquarium", "sports_centre", "coworking_space"})
 OUTDOOR_VALUES = frozenset({"zoo", "theme_park"})
+INDOOR_TAG_VALUES = frozenset({"yes", "room", "area", "corridor"})
 KIDS_VALUES = frozenset({"playground", "zoo", "aquarium", "theme_park", "water_park"})
 LOCAL_CUISINES = frozenset({"kazakh", "central_asian", "uzbek", "uyghur"})
 HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "historic"})
@@ -212,7 +213,7 @@ def vocab_tags(tags: Mapping[str, str], category: Category, value: str) -> list[
     if value == "coworking_space":
         out |= {"work_friendly", "wifi"}
 
-    indoor = indoor_flag(category, value)
+    indoor = indoor_flag(category, value, tags)
     if indoor is True:
         out.add("indoor")
     elif indoor is False:
@@ -220,11 +221,15 @@ def vocab_tags(tags: Mapping[str, str], category: Category, value: str) -> list[
     return sorted(out & TAG_VOCAB)
 
 
-def indoor_flag(category: Category, value: str) -> bool | None:
+def indoor_flag(
+    category: Category, value: str, tags: Mapping[str, str] | None = None
+) -> bool | None:
     if value in INDOOR_VALUES or category in INDOOR_CATEGORIES:
         return True
     if value in OUTDOOR_VALUES or category in OUTDOOR_CATEGORIES:
         return False
+    if tags and tags.get("indoor") in INDOOR_TAG_VALUES:  # explicit OSM indoor mapping
+        return True
     return None
 
 
@@ -327,7 +332,7 @@ def normalize_element(el: Mapping, fetched_at: str) -> POI | None:
         website=website,
         wheelchair=wheelchair if wheelchair in {"yes", "limited", "no"} else "unknown",
         kids_friendly=True if kids else None,
-        indoor=indoor_flag(category, value),
+        indoor=indoor_flag(category, value, tags),
         popularity=popularity(tags, category),
         sources=["osm"],
         data_confidence=confidence,
@@ -519,6 +524,70 @@ def finalize(pois: Sequence[POI], landmarks: Sequence[Mapping]) -> list[POI]:
     return sorted(name_playgrounds([*pois, *extra]), key=lambda p: p.id)
 
 
+Edge = tuple[tuple[float, float], tuple[float, float]]
+Footprint = tuple[str, tuple[float, float, float, float], list[Edge]]
+
+
+def mall_footprints(payload: Mapping) -> list[Footprint]:
+    """(mall id, bbox s/w/n/e, boundary edges) from an `out geom` answer. Multipolygon
+    members are not joined into rings: the even-odd test below only needs the edges."""
+    out = []
+    for el in payload.get("elements", []):
+        lines = [el.get("geometry") or []] if el.get("type") == "way" else [
+            m.get("geometry") or [] for m in el.get("members", []) if m.get("type") == "way"
+        ]
+        edges: list[Edge] = [
+            ((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+            for line in lines
+            for a, b in zip(line, line[1:], strict=False)
+        ]
+        if not edges:
+            continue
+        lats = [pt[0] for e in edges for pt in e]
+        lons = [pt[1] for e in edges for pt in e]
+        bbox = (min(lats), min(lons), max(lats), max(lons))
+        out.append((f"osm:{el['type']}/{el['id']}", bbox, edges))
+    return out
+
+
+def inside(lat: float, lon: float, edges: Sequence[Edge]) -> bool:
+    """Even-odd ray casting along the latitude line (holes count as boundaries too)."""
+    crossings = 0
+    for (lat1, lon1), (lat2, lon2) in edges:
+        if (lat1 > lat) != (lat2 > lat):
+            lon_at = lon1 + (lat - lat1) * (lon2 - lon1) / (lat2 - lat1)
+            if lon < lon_at:
+                crossings += 1
+    return crossings % 2 == 1
+
+
+def mark_inside_malls(pois: Sequence[POI], outlines: Mapping | None) -> tuple[list[POI], int]:
+    """indoor=True for places whose indoor is unknown and whose point lies inside a mall
+    footprint from OSM (e.g. rides inside Khan Shatyr). Known values are never changed."""
+    if not outlines:
+        return list(pois), 0
+    malls = mall_footprints(outlines)
+    out: list[POI] = []
+    marked = 0
+    for p in pois:
+        if p.indoor is None and p.category != "mall":
+            lat, lon = p.geo.lat, p.geo.lon
+            if any(
+                s <= lat <= n and w <= lon <= e and inside(lat, lon, edges)
+                for _, (s, w, n, e), edges in malls
+            ):
+                tags = sorted({*p.tags, "indoor"} - {"outdoor"})
+                p = p.model_copy(update={"indoor": True, "tags": tags})
+                marked += 1
+        out.append(p)
+    return out, marked
+
+
+def load_outlines(raw_dir: Path) -> dict | None:
+    path = raw_dir / "osm_mall_outlines.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
 def load_landmarks(path: Path) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -561,6 +630,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     pois = normalize_payloads(load_payloads(paths))
     if args.area != "fixture":  # the T10 test fixture stays plain OSM around EXPO/Mega
         pois = finalize(pois, load_landmarks(settings.landmarks_path))
+        pois, _ = mark_inside_malls(pois, load_outlines(settings.data_dir / "raw"))
     write_jsonl(pois, out)
     print(f"{len(pois)} POI from {len(paths)} raw files -> {out}")
 

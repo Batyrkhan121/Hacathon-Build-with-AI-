@@ -290,6 +290,37 @@ def fetch_area(
     return result
 
 
+MALL_OUTLINES = "mall_outlines"
+
+
+def mall_outline_query(bbox: tuple[float, float, float, float] = ASTANA_BBOX) -> str:
+    s, w, n, e = bbox
+    return (
+        f"[out:json][timeout:120];\n(\n  way[\"shop\"=\"mall\"]({s},{w},{n},{e});\n"
+        f"  relation[\"shop\"=\"mall\"]({s},{w},{n},{e});\n);\nout geom;"
+    )
+
+
+def fetch_mall_outlines(
+    *, force: bool = False, raw_dir: Path | None = None, query_fn: Callable[..., dict] = run_query
+) -> Path | None:
+    """Mall footprints (`out geom`) -> data/raw/osm_mall_outlines.json, for "inside a mall"
+    (indoor) checks. Returns None when Overpass is down and nothing is cached."""
+    path = raw_path(MALL_OUTLINES, raw_dir)
+    if not force and is_fresh(path):
+        return path
+    try:
+        payload = query_fn(mall_outline_query(), check_status=True)
+    except OverpassError as exc:
+        log.error("mall outlines failed: %s", exc)
+        return path if path.exists() else None
+    payload.setdefault("qadam", {}).update(
+        {"chunk": MALL_OUTLINES, "fetched_at_unix": int(time.time())}
+    )
+    save_json(path, payload)
+    return path
+
+
 def deadline_today(hhmm: str) -> float:
     hh, mm = (int(x) for x in hhmm.split(":"))
     now = time.localtime()
