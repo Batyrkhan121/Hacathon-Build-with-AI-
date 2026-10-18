@@ -9,7 +9,13 @@ import pytest
 
 from app import geo
 from app.llm import LLMUnavailable
-from app.query_parser import apply_overrides, detect_lang, parse_query, parse_rules
+from app.query_parser import (
+    apply_overrides,
+    detect_lang,
+    mentions_flight,
+    parse_query,
+    parse_rules,
+)
 from app.schemas import TAG_VOCAB, Landmark, QueryIntent, UserOverrides
 
 
@@ -278,6 +284,49 @@ def test_merge_llm_wins_and_rules_fill_gaps(landmarks: dict[str, Landmark]) -> N
     assert i.with_kids  # rules flag survives
     assert i.landmark_mention == "expo"  # unknown LLM id rejected, rules id kept
     assert i.indoor == "indoor"
+
+
+def test_merge_budget_ignores_llm_walk_guess(landmarks: dict[str, Landmark]) -> None:
+    """S4: "2 часа ... поблизости" — the LLM says max_walk 15, the radius must come from 120."""
+    llm_out = QueryIntent(raw_query="", time_budget_min=120, max_walk_min=15, tourist=True)
+    i = parse_query("Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
+                    None, FakeLLM(llm_out), landmarks)
+    assert i.time_budget_min == 120 and i.max_walk_min is None
+
+
+def test_merge_budget_keeps_explicit_walk_limit(landmarks: dict[str, Landmark]) -> None:
+    llm_out = QueryIntent(raw_query="", time_budget_min=60, max_walk_min=12)
+    i = parse_query("кафе не дальше 10 минут пешком, есть час", None, FakeLLM(llm_out), landmarks)
+    assert i.max_walk_min == 10
+
+
+def test_merge_without_budget_keeps_llm_walk(landmarks: dict[str, Landmark]) -> None:
+    llm_out = QueryIntent(raw_query="", max_walk_min=15)
+    assert parse_query("кофе рядом", None, FakeLLM(llm_out), landmarks).max_walk_min == 15
+
+
+@pytest.mark.parametrize(
+    ("text", "flight"),
+    [("2 часа перед вылетом", True), ("у меня рейс в 18:00", True), ("я в аэропорту", True),
+     ("before my flight", True), ("near the airport", True), ("әуежайдамын, ұшаққа 2 сағат", True),
+     ("я турист, есть 2 часа", False), ("tourist with an hour", False)],
+)
+def test_mentions_flight(text: str, flight: bool) -> None:
+    assert mentions_flight(text) is flight
+
+
+_HAS_MODE_FIELDS = {"tourist", "night", "departure_in_min"} <= set(UserOverrides.model_fields)
+
+
+@pytest.mark.skipif(not _HAS_MODE_FIELDS, reason="UserOverrides mode fields not merged yet")
+def test_overrides_mode_switches() -> None:
+    base = QueryIntent(raw_query="x", time_budget_min=60)
+    out = apply_overrides(base, UserOverrides(tourist=True, night=True))
+    assert out.tourist and out.night and out.time_budget_min == 60
+    out = apply_overrides(base, UserOverrides(departure_in_min=150))
+    assert out.tourist and out.time_budget_min == 150
+    off = apply_overrides(QueryIntent(raw_query="x", night=True), UserOverrides(night=False))
+    assert off.night is False
 
 
 def test_merge_avoid_tags_win_over_must(landmarks: dict[str, Landmark]) -> None:

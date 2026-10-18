@@ -75,6 +75,8 @@ _WHEEL_RE = _rx(r"коляск|колясоч|инвалид|пандус|wheelc
 _NIGHT_RE = _rx(r"\bноч\w*|поздн\w*|после полуночи|\bтүн\w*|\bnight\w*|\blate\b|after midnight")
 _TOURIST_RE = _rx(r"турист|вылет|\bрейс\w*|аэропорт|самол[её]т|пересадк|транзит|tourist"
                   r"|\bflight|airport|layover|first time in|ұшақ|әуежай")
+_FLIGHT_RE = _rx(r"вылет|\bрейс\w*|аэропорт|самол[её]т|\bflight|airport|\bplane\b|ұшақ|әуежай"
+                 r"|ұшу\w*|ұшам|ұшамын")
 _INDOOR_RE = _rx(r"в помещени|внутри|в тепл|тепл\w* мест|под крыш|не на улиц|холодно|мороз"
                  r"|\bдожд|indoor|inside|warm place|somewhere warm|\bcold\b|\brain|жылы\b"
                  r"|ішінде|суық")
@@ -227,15 +229,30 @@ def parse_query(
     return _merge(rules, llm_intent, lang_hint, landmarks)
 
 
+def mentions_flight(text: str) -> bool:
+    """A flight / the airport is mentioned: the "leave for the airport" rule applies only then."""
+    return bool(_FLIGHT_RE.search(_normalise(text)))
+
+
 def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> QueryIntent:
-    """Explicit UI filters always win over the parsed intent."""
+    """Explicit UI filters always win over the parsed intent.
+
+    Mode switches (wave 3): `tourist`, `night` and `departure_in_min` (minutes to departure:
+    tourist mode with that time budget). Read with getattr so this works whether or not the
+    integrator's schema change has landed yet.
+    """
     if overrides is None:
         return intent
     update: dict[str, object] = {}
-    for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size"):
-        value = getattr(overrides, name)
+    for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size",
+                 "tourist", "night"):
+        value = getattr(overrides, name, None)
         if value is not None:
             update[name] = value
+    departure = getattr(overrides, "departure_in_min", None)
+    if departure is not None:
+        update["tourist"] = True
+        update["time_budget_min"] = _clamp(int(departure), 5, 600)
     if overrides.categories is not None:
         update["categories"] = _dedupe(list(overrides.categories))
     if overrides.indoor_only is True:
@@ -352,11 +369,19 @@ def _merge(
     landmark = (llm.landmark_mention if llm.landmark_mention in landmarks
                 else rules.landmark_mention)
 
+    budget = llm.time_budget_min or rules.time_budget_min
+    if budget:
+        # With a time budget the radius comes from it: only an explicit walking limit counts
+        # (the LLM tends to turn "поблизости" into 15 min even when a budget is given).
+        max_walk = _walk_minutes(_normalise(rules.raw_query))[0]
+    else:
+        max_walk = llm.max_walk_min or rules.max_walk_min
+
     return QueryIntent(
         raw_query=rules.raw_query,
         lang=lang,
-        time_budget_min=llm.time_budget_min or rules.time_budget_min,
-        max_walk_min=llm.max_walk_min or rules.max_walk_min,
+        time_budget_min=budget,
+        max_walk_min=max_walk,
         categories=_dedupe(llm_cats) or rules.categories,
         must_tags=[t for t in must if t not in avoid],
         avoid_tags=avoid,
