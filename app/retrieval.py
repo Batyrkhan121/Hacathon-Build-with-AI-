@@ -2,8 +2,8 @@
 
 Owner: CORE lane (task T22). Deterministic, no network. See docs/ARCHITECTURE.md §RAG.
 
-Starting weights (tune in Wave 3 by eval, keep them in WEIGHTS):
-  score = 0.45*relevance + 0.20*proximity + 0.15*open_score + 0.10*popularity
+Weights (tuned by eval in Wave 3, see eval/TUNING.md; keep them in WEIGHTS):
+  score = 0.55*relevance + 0.20*proximity + 0.10*open_score + 0.05*popularity
         + 0.05*data_confidence + 0.05*weather_fit
 relevance = cosine(query_vec, poi_vec) if embeddings else lexical overlap.
 With embeddings the cosine is blended with lexical overlap (SEMANTIC_SHARE) because exact
@@ -26,11 +26,13 @@ from app.store import Store
 
 log = logging.getLogger(__name__)
 
+# T70 step 1 (eval/TUNING.md): relevance 0.45 -> 0.55; open 0.15 -> 0.10 (72% of POI have no
+# hours, parks never do); popularity 0.10 -> 0.05 (a proxy for record completeness, not quality)
 WEIGHTS: dict[str, float] = {
-    "relevance": 0.45,
+    "relevance": 0.55,
     "proximity": 0.20,
-    "open": 0.15,
-    "popularity": 0.10,
+    "open": 0.10,
+    "popularity": 0.05,
     "confidence": 0.05,
     "weather": 0.05,
 }
@@ -47,6 +49,18 @@ MAX_REASONS = 4
 
 OPEN_SCORE: dict[tuple[str, str], float] = {("open", "high"): 1.0, ("open", "medium"): 0.8}
 UNKNOWN_OPEN_SCORE = 0.5
+# T70 step 4: at night a place that closes within the hour is a poor first pick (S5)
+NIGHT_MIN_OPEN_MIN = 60
+NIGHT_CLOSING_SOON_SCORE = 0.3
+# T70 step 5: a group of 3+ wants room and something to do together (no capacity data in OSM,
+# so it is a category / tag heuristic; it only re-orders, it never filters)
+GROUP_MIN = 3
+GROUP_BONUS = 0.05
+GROUP_FRIENDLY = frozenset(
+    {"restaurant", "bar", "nightlife", "mall", "cinema", "entertainment", "sport", "theatre"}
+    | {"park", "attraction"}
+)
+GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -155,6 +169,16 @@ SOURCE_LABELS: dict[str, str] = {
     "mock": "мок",
 }
 FACT_TAGS = frozenset({"coffee", "wifi", "power_outlets"})  # reasons that cite the source
+# T70 step 7: requested amenities the record says nothing about are named honestly
+MISSING_TAG_WORDS: dict[str, dict[str, str]] = {
+    "coffee": {"ru": "кофе", "kk": "кофе", "en": "coffee"},
+    "power_outlets": {"ru": "розетки", "kk": "розетка", "en": "power outlets"},
+    "wifi": {"ru": "Wi-Fi", "kk": "Wi-Fi", "en": "Wi-Fi"},
+    "quiet": {"ru": "тишина", "kk": "тыныштық", "en": "noise level"},
+    "work_friendly": {"ru": "место для работы", "kk": "жұмыс орны", "en": "space to work"},
+    "vegetarian": {"ru": "вегетарианское меню", "kk": "вегетариандық ас", "en": "vegetarian food"},
+    "local_cuisine": {"ru": "местная кухня", "kk": "ұлттық ас", "en": "local cuisine"},
+}
 REASONS: dict[str, dict[str, str]] = {
     "walk": {"ru": "≈{n} мин пешком", "kk": "≈{n} мин жаяу", "en": "≈{n} min walk"},
     "coffee": {"ru": "есть кофе ({src})", "kk": "кофе бар ({src})", "en": "coffee ({src})"},
@@ -207,10 +231,10 @@ REASONS: dict[str, dict[str, str]] = {
         "kk": "қызық сәулет",
         "en": "notable architecture",
     },
-    "history": {"ru": "про историю", "kk": "тарихи орын", "en": "history"},
-    "art": {"ru": "искусство", "kk": "өнер", "en": "art"},
-    "shopping": {"ru": "магазины", "kk": "дүкендер", "en": "shopping"},
-    "food": {"ru": "можно поесть", "kk": "тамақтануға болады", "en": "food"},
+    "history": {"ru": "про историю", "kk": "тарихи орын", "en": "history spot"},
+    "art": {"ru": "искусство", "kk": "өнер", "en": "art to see"},
+    "shopping": {"ru": "магазины", "kk": "дүкендер", "en": "shops inside"},
+    "food": {"ru": "можно поесть", "kk": "тамақтануға болады", "en": "serves food"},
     "indoor_weather": {
         "ru": "в помещении — укрытие от погоды",
         "kk": "ғимарат ішінде — ауа райынан пана",
@@ -226,6 +250,7 @@ REASONS: dict[str, dict[str, str]] = {
         "kk": "жабылуына ≈{n} мин",
         "en": "closes in ≈{n} min",
     },
+    "no_data": {"ru": "нет данных: {what}", "kk": "дерек жоқ: {what}", "en": "no data: {what}"},
     "hours_unknown": {
         "ru": "часы работы не указаны",
         "kk": "жұмыс уақыты көрсетілмеген",
@@ -261,6 +286,17 @@ def _doc_index(text: str) -> tuple[frozenset[str], frozenset[str], frozenset[str
 
 def _query_stems(intent: QueryIntent) -> frozenset[str]:
     return frozenset(t[:_STEM] for t in _tokens(intent.raw_query))
+
+
+def _landmark_stems(store: Store, intent: QueryIntent, ctx: SearchContext) -> frozenset[str]:
+    """Alias words of the landmark the user stands at: «я возле Mega Silk Way» says where the
+    user is, not what they look for, so these words must not make the mall a match."""
+    words: list[str] = []
+    for lm_id in {ctx.landmark_id, intent.landmark_mention} - {None}:
+        lm = store.landmarks.get(lm_id) if lm_id else None
+        if lm is not None:
+            words.extend(lm.aliases)
+    return frozenset(t[:_STEM] for t in _tokens(" ".join(words)))
 
 
 def _indexed_hit(stem: str, stems: frozenset[str], prefixes: frozenset[str]) -> bool:
@@ -410,6 +446,26 @@ def _weather_fit(poi: POI, ctx: SearchContext) -> float:
     return 0.7 if indoor else 1.0
 
 
+def _group_fit(poi: POI, intent: QueryIntent) -> float:
+    if poi.category in GROUP_FRIENDLY:
+        return GROUP_BONUS
+    unfriendly = poi.category == "library" or bool(GROUP_UNFRIENDLY_TAGS & set(poi.tags))
+    if unfriendly or (poi.category == "playground" and not intent.with_kids):
+        return -GROUP_BONUS
+    return 0.0
+
+
+def _open_score(verdict: HoursVerdict, intent: QueryIntent) -> float:
+    if (
+        intent.night
+        and verdict.status == "open"
+        and verdict.closes_in_min is not None
+        and verdict.closes_in_min < NIGHT_MIN_OPEN_MIN
+    ):
+        return NIGHT_CLOSING_SOON_SCORE
+    return OPEN_SCORE.get((verdict.status, verdict.confidence), UNKNOWN_OPEN_SCORE)
+
+
 def _score(
     poi: POI,
     intent: QueryIntent,
@@ -426,12 +482,15 @@ def _score(
     parts = {
         "relevance": relevance,
         "proximity": max(0.0, 1.0 - distance / ctx.radius_m),
-        "open": OPEN_SCORE.get((verdict.status, verdict.confidence), UNKNOWN_OPEN_SCORE),
+        "open": _open_score(verdict, intent),
         "popularity": poi.popularity,
         "confidence": poi.data_confidence,
         "weather": _weather_fit(poi, ctx),
     }
     score = sum(WEIGHTS[k] * v for k, v in parts.items())
+    if intent.group_size is not None and intent.group_size >= GROUP_MIN:
+        parts["group"] = _group_fit(poi, intent)
+        score += parts["group"]
     if intent.wheelchair and _access(poi) == "unknown":
         parts["penalty"] = WHEELCHAIR_UNKNOWN_PENALTY
         score += WHEELCHAIR_UNKNOWN_PENALTY
@@ -529,6 +588,11 @@ def explain(
         if key in REASONS and key not in ("indoor", "outdoor"):
             keys.append((key, {"src": src} if tag in FACT_TAGS else {}))
 
+    missing = [t for t in intent.must_tags if t in MISSING_TAG_WORDS and t not in poi.tags]
+    if missing:
+        words = (MISSING_TAG_WORDS[t] for t in missing)
+        what = ", ".join(w.get(lang, w["ru"]) for w in words)
+        keys.append(("no_data", {"what": what}))
     if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))
     if intent.wheelchair:
@@ -588,7 +652,7 @@ def retrieve(
     if k <= 0 or not store.pois:
         return []
     semantic = _semantic_scores(store, query_vec)
-    query_stems = _query_stems(intent)
+    query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
     pool: list[Candidate] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
