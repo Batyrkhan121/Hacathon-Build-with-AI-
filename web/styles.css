@@ -1138,11 +1138,129 @@ input[type="time"] {
   color: var(--ink);
 }
 
+.line-legend {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .line-swatch {
   flex: none;
   width: 26px;
   height: 0;
   border-top: 3px dotted var(--accent);
+}
+
+.legend-kinds {
+  display: grid;
+  gap: 4px;
+}
+
+.legend-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kind-short {
+  display: none;
+}
+
+/* Телефон: карта всего 42vh — виды переходов одной строкой с короткими подписями. */
+@media (max-width: 899px) {
+  .line-legend {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+  .legend-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .legend-kind {
+    gap: 4px;
+  }
+  .legend-kind .crossing-glyph {
+    width: 16px;
+    height: 16px;
+    font-size: 9px;
+  }
+  .kind-full {
+    display: none;
+  }
+  .kind-short {
+    display: inline;
+  }
+}
+
+.line-swatch.is-solid {
+  border-top: 4px solid var(--accent);
+  border-radius: 2px;
+}
+
+/* Переходы на пути: светофор (эмодзи), зебра (полосы), без разметки (пунктирный круг с «!»).
+   Один и тот же значок на карте и в легенде. */
+.crossing-glyph {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--closed-ink);
+}
+
+.crossing-glyph.is-signals {
+  font-size: 12px;
+}
+
+.crossing-glyph.is-marked {
+  border-radius: 4px;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 3px, #fff 3px 6px);
+}
+
+.crossing-glyph.is-unmarked {
+  border: 2px dashed var(--closed-ink);
+}
+
+/* Блок «По тротуарам…» под таймлайном маршрута. */
+.route-graph {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(10, 86, 106, 0.18);
+}
+
+.route-graph-line {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-steps.is-warn {
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.route-caveat {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--accent-strong);
 }
 
 /* --- loading */
