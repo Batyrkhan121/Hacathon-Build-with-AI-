@@ -313,8 +313,14 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
         return None, [f"не удалось поднять pipeline: {type(exc).__name__}: {exc}"]
     if llm is None and not no_llm:
         notes.append("LLM недоступна (нет ключа или LLM_ENABLED=0): ответы шаблонные")
-    notes.append(f"POI в Store: {len(store.pois)}; эмбеддинги: "
-                 f"{'есть' if store.embeddings is not None else 'нет, лексика'}")
+    if store.embeddings is None:
+        emb = "нет, лексика"
+    elif no_llm:
+        emb = "есть, но в режиме без ИИ не используются (лексика)"
+    else:
+        emb = "есть"
+    notes.append(f"POI в Store: {len(store.pois)}; эмбеддинги: {emb}")
+    notes += [f"Store: {w}" for w in store.warnings]
     deps = Deps(store=store, llm=llm, settings=settings)
 
     def run(req: RecommendRequest) -> Outcome:
@@ -658,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scenarios", type=Path, default=SCENARIOS_PATH)
     ap.add_argument("--smoke", action="store_true", help="run team queries, no grading")
     ap.add_argument("--queries", type=Path, default=QUERIES_PATH, help="CSV for --smoke")
+    ap.add_argument("--note", action="append", default=[], help="extra line for the report header")
     args = ap.parse_args(argv)
 
     notes: list[str] = []
@@ -672,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
         runner, notes = inprocess_runner(args.no_llm)
+    notes = notes + args.note
 
     if args.smoke:
         if not args.queries.is_file():

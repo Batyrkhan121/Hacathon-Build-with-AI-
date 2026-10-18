@@ -27,13 +27,14 @@ def test_scenarios_are_16_valid_requests() -> None:
 
 
 def test_mock_mode_writes_reports(tmp_path: Path) -> None:
-    code = run_eval.main(["--mock", "--out", str(tmp_path)])
+    code = run_eval.main(["--mock", "--out", str(tmp_path), "--note", "индекс устарел"])
     assert code == 0
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["mode"] == "mock"
     assert report["total"] == 16
     assert {r["id"] for r in report["results"]} >= {"S1", "E10"}
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "- индекс устарел" in md
     assert f"Итог: {report['passed']}/16" in md
     # the mock answer is a sane walk near EXPO: S1 must pass, kk/en scenarios must not
     by_id = {r["id"]: r for r in report["results"]}
