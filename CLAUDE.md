@@ -10,7 +10,7 @@
 - Контракт данных: app/schemas.py
 
 ## Стек
-- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, anthropic (Claude: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`), httpx, pytest, ruff. Эмбеддинги по желанию: google-genai (Gemini), только если задан `GEMINI_API_KEY`; без него retrieval лексический.
+- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, anthropic (Claude: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`), httpx, pytest, ruff. Эмбеддинги по желанию: google/gemini-embedding-001 через OpenRouter (`EMBED_PROVIDER=openrouter`, `OPENROUTER_API_KEY`), на нём собран data/index; без ключа retrieval лексический.
 - Фронтенд: папка web/, чистый HTML/CSS/JS. Leaflet 1.9.4 и h3-js 4.1.0 лежат локально в web/vendor (точные версии, sha256 в web/vendor/README.md), без CDN и без сборщика. FastAPI отдаёт web/ по адресу "/".
 - Данные: OpenStreetMap (Overpass) → data/processed/poi.jsonl → data/index/. Обогащение через Wikidata, описания через Claude (с пометкой).
 - 2GIS и Яндекс не парсить: их оферты запрещают хранить данные.

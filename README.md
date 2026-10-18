@@ -45,7 +45,7 @@ cp .env.example .env
 
 В `.env` впишите:
 - `ANTHROPIC_API_KEY` для текстов Claude (разбор запроса и «почему / что делать»);
-- `GEMINI_API_KEY` по желанию, для смыслового поиска по эмбеддингам. Без него поиск лексический.
+- `OPENROUTER_API_KEY` по желанию, для смыслового поиска по эмбеддингам (модель google/gemini-embedding-001 через OpenRouter). Без него поиск лексический. Индекс в `data/index` собран через OpenRouter, поэтому оставьте `EMBED_PROVIDER=openrouter`, как в `.env.example`.
 
 Потом запускайте так же, как во втором способе. Проверить окружение и ключи можно командой `.venv/Scripts/python scripts/check_env.py --llm`. Файл `.env` не коммитьте.
 
