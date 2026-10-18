@@ -147,24 +147,41 @@ def install_core_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeLLM:
-    """Duck-typed LLMClient: answers QueryIntent / DraftResponse, records calls."""
+    """Duck-typed LLMClient: answers QueryIntent / DraftResponse, records calls.
+
+    Like the real client: unavailable (cooldown / no key) -> LLMUnavailable at once, with the
+    reason in `last_error`; `parse_fail` breaks only the QueryIntent call."""
 
     def __init__(self, *, available: bool = True, fail: Exception | None = None,
-                 intent: QueryIntent | None = None, embed: np.ndarray | None = None) -> None:
+                 intent: QueryIntent | None = None, embed: np.ndarray | None = None,
+                 error_kind: str = "network", parse_fail: Exception | None = None,
+                 embed_status: str | None = None, enabled: bool = True) -> None:
         self.available = available
+        self.enabled = enabled
         self.fail = fail
+        self.parse_fail = parse_fail
         self.intent = intent
         self.embed = embed
+        self.error_kind = error_kind
+        self.embed_status = embed_status
         self.model_name = "fake-claude"
         self.last_model: str | None = None
+        self.last_error: str | None = None
+        self.last_embed_status: str | None = None
         self.calls: list[str] = []
         self.embedded: list[str] = []
 
     def generate_structured(self, *, system: str, prompt: str, schema: type, effort: str = "low"
                             ) -> Any:
         self.calls.append(schema.__name__)
-        if self.fail is not None:
-            raise self.fail
+        self.last_error = None
+        failure = self.parse_fail if schema is QueryIntent and self.parse_fail else self.fail
+        if not self.available:
+            failure = LLMUnavailable("cooling down")
+        if failure is not None:
+            if isinstance(failure, LLMUnavailable):
+                self.last_error = self.error_kind
+            raise failure
         self.last_model = "fake-claude"
         if schema is QueryIntent:
             return self.intent or QueryIntent(raw_query="x", parser="llm")
@@ -177,6 +194,8 @@ class FakeLLM:
 
     def embed_query(self, text: str) -> np.ndarray | None:
         self.embedded.append(text)
+        self.last_embed_status = self.embed_status or ("ok" if self.embed is not None
+                                                       else "error")
         return self.embed
 
 
@@ -240,15 +259,15 @@ class TestRecommend:
         deps.llm = FakeLLM(fail=LLMUnavailable("quota"))
         a = recommend(req(), deps)
         assert a.data_used.generation == "template" and a.data_used.parser == "rules"
-        assert "LLM недоступна — показаны карточки по данным." in a.warnings
+        assert "LLM недоступна (нет связи) — показаны карточки по данным." in a.warnings
         assert a.cards
 
-    def test_llm_unavailable_flag_skips_calls(self, deps: Deps) -> None:
+    def test_unavailable_llm_warns_once(self, deps: Deps) -> None:
         deps.llm = FakeLLM(available=False)
         a = recommend(req(), deps)
-        assert deps.llm.calls == []
         assert a.data_used.generation == "template"
-        assert a.warnings.count("LLM недоступна — показаны карточки по данным.") == 1
+        assert sum(w.startswith("LLM недоступна") for w in a.warnings) == 1
+        assert not any(w.startswith("Запрос разобран по правилам") for w in a.warnings)
 
     def test_no_llm_object(self, deps: Deps) -> None:
         deps.llm = None
@@ -342,7 +361,8 @@ class TestRecommend:
         monkeypatch.setattr(retrieval, "retrieve", boom)
         a = recommend(req(), deps)
         assert a.cards == []
-        assert "Поиск временно дал сбой — попробуйте ещё раз." in a.warnings
+        assert ("Поиск дал сбой на нашей стороне — повтор не поможет. Попробуйте другой запрос "
+                "или точку.") in a.warnings
 
     def test_template_crash_does_not_raise(self, deps: Deps,
                                            monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +467,8 @@ class TestRecommend:
         b = recommend(req(use_llm=False, lang="en"), deps)
         assert b.data_used.weather == "-3°C, wind 5 m/s"  # same numbers, answer language
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
-        assert recommend(req(use_llm=False), deps).data_used.weather == "погода неизвестна"
+        assert recommend(req(use_llm=False, at=None),
+                         deps).data_used.weather == "погода неизвестна"
 
     def test_query_vector_only_with_index_and_ai(self, deps: Deps) -> None:
         deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
@@ -471,11 +492,11 @@ class TestRecommend:
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
         assert semantic in recommend(req("кофе", lang=lang), deps).data_used.filters
-        deps.llm = FakeLLM(embed=None)  # embed_query failed (quota) -> lexical
+        deps.llm = FakeLLM(embed=None)  # embed_query failed -> lexical, with the reason
         filters = recommend(req("кофе", lang=lang), deps).data_used.filters
-        assert lexical in filters and semantic not in filters
+        assert any(f.startswith(lexical + " (") for f in filters) and semantic not in filters
         no_ai = recommend(req("кофе", lang=lang, use_llm=False), deps).data_used.filters
-        assert lexical in no_ai
+        assert lexical in no_ai  # the user chose it: no reason to explain
         deps.store.embeddings = None  # no index at all
         assert lexical in recommend(req("кофе", lang=lang), deps).data_used.filters
 
@@ -500,7 +521,7 @@ class TestRecommend:
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=vec)
         filters = recommend(req("кофе"), deps).data_used.filters
-        assert "поиск: по словам" in filters
+        assert "поиск: по словам (некорректный вектор запроса)" in filters
         assert seen and all(qv is None for qv in seen)
 
     def test_no_exact_match_hook(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -526,6 +547,98 @@ class TestRecommend:
 
         monkeypatch.setattr(retrieval, "no_exact_match", boom, raising=False)
         assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
+
+    # ------------------------------------------- silent-failure review (wave 3)
+
+    def test_llm_down_says_why(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(fail=LLMUnavailable("400"), error_kind="no_credit")
+        a = recommend(req(), deps)
+        assert "LLM недоступна (закончились кредиты API) — показаны карточки по данным." in (
+            a.warnings)
+        assert not any(w.startswith("Запрос разобран по правилам") for w in a.warnings)
+
+    def test_cooling_llm_is_still_asked_for_its_cache(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(available=False, error_kind="quota")
+        a = recommend(req(), deps)
+        assert deps.llm.calls  # the client answers from cache or fails fast by itself
+        assert "LLM недоступна (лимит запросов) — показаны карточки по данным." in a.warnings
+
+    def test_switched_off_llm_is_never_called(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(enabled=False)
+        a = recommend(req(), deps)
+        assert deps.llm.calls == [] and a.data_used.generation == "template"
+        assert "LLM недоступна (отключено в настройках) — показаны карточки по данным." in (
+            a.warnings)
+
+    def test_parse_fallback_is_visible(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(parse_fail=LLMUnavailable("timeout"), error_kind="timeout")
+        a = recommend(req(), deps)
+        assert a.data_used.parser == "rules" and a.data_used.generation == "llm"
+        assert "Запрос разобран по правилам: ИИ не ответил (таймаут)." in a.warnings
+        en = recommend(req("coffee", lang="en"), deps)
+        assert "The request was parsed by rules: the AI did not answer (timeout)." in (
+            en.warnings)
+
+    def test_finalize_bug_is_visible(self, deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                     caplog: pytest.LogCaptureFixture) -> None:
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(validate, "finalize", boom)
+        with caplog.at_level(logging.ERROR):
+            a = recommend(req(), deps)
+        assert a.cards and a.data_used.generation == "template"
+        assert "Тексты ИИ не прошли проверку — показаны карточки по данным." in a.warnings
+        assert any("finalize failed" in r.getMessage() and "Traceback" not in r.getMessage()
+                   and "line" in r.getMessage() for r in caplog.records)
+
+    def test_route_failures_are_visible(self, deps: Deps,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(route, "plan_walk", boom)
+        a = recommend(req("хочу прогуляться час", use_llm=False), deps)
+        assert a.cards  # plan_walk crash falls back to the candidates
+        assert "Маршрут построить не удалось — карточки показаны без маршрута." in a.warnings
+        monkeypatch.setattr(route, "plan_route", boom)
+        b = recommend(req("кафе или музей", use_llm=False), deps)
+        assert b.cards and b.route is None
+        assert "Маршрут построить не удалось — карточки показаны без маршрута." in b.warnings
+
+    def test_semantic_search_down_is_visible(self, deps: Deps) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status="daily_quota")
+        a = recommend(req(), deps)
+        assert ("Смысловой поиск недоступен (дневная квота Gemini) — поиск только по словам."
+                in a.warnings)
+        assert "поиск: по словам (дневная квота Gemini)" in a.data_used.filters
+        deps.llm = FakeLLM(embed=np.zeros(4, dtype=np.float32), embed_status="ok")
+        bad = recommend(req(), deps)
+        assert "поиск: по словам (некорректный вектор запроса)" in bad.data_used.filters
+
+    def test_no_gemini_key_is_a_reason_not_a_warning(self, deps: Deps) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status="no_key")
+        a = recommend(req(lang="en"), deps)
+        assert "search: by keywords (no Gemini key)" in a.data_used.filters
+        assert not any("Semantic search" in w for w in a.warnings)
+
+    def test_time_machine_weather_label(self, deps: Deps) -> None:
+        a = recommend(req(use_llm=False, at="2026-01-05T15:00:00+05:00"), deps)
+        assert a.data_used.weather == "погода не учтена: время задано вручную"
+        now = recommend(req(use_llm=False, at=None), deps)
+        assert now.data_used.weather == "погода неизвестна"
+
+    def test_hours_note_never_mixes_languages(self, deps: Deps) -> None:
+        from app.pipeline import _localize_hours
+
+        a = recommend(req(use_llm=False), deps)
+        moved = _localize_hours(a.cards, [], a.context.local_time, "en")  # no candidate
+        assert all(c.open_note == "check opening hours before you go" for c in moved)
+        assert _localize_hours(a.cards, [], a.context.local_time, "ru") == a.cards
 
     def test_logs_never_carry_query_or_cell(self, deps: Deps,
                                             caplog: pytest.LogCaptureFixture) -> None:

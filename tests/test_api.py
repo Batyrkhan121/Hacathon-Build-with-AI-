@@ -48,7 +48,50 @@ def test_health(client: TestClient) -> None:
 def test_health_llm_off(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
     deps.llm = FakeLLM(available=False)
     with TestClient(api.create_app(deps)) as c:
-        assert c.get("/api/health").json()["llm"] == "off"
+        assert c.get("/api/health").json()["llm"] == "off (cooldown)"  # with the reason
+
+
+def test_health_degraded_without_pois(landmarks: dict[str, Landmark], tmp_path: Path) -> None:
+    d = Deps(store=make_store([], landmarks, warnings=["poi.jsonl: 0 valid rows"]),
+             llm=FakeLLM(), settings=make_settings(tmp_path))
+    with TestClient(api.create_app(d)) as c:
+        h = c.get("/api/health")
+        assert h.status_code == 200
+        body_ = h.json()
+        assert body_["status"] == "degraded" and body_["poi_count"] == 0
+        assert "poi.jsonl: 0 valid rows" in body_["warnings"]
+        assert any("POI" in w for w in body_["warnings"])
+        meta = c.get("/api/meta").json()
+        assert meta["status"] == "degraded" and meta["warnings"]
+        r = c.post("/api/recommend", json=body())
+        assert r.status_code == 503 and "POI" in r.json()["detail"]
+
+
+def test_health_degraded_without_landmarks(synthetic_pois: list[POI], tmp_path: Path) -> None:
+    d = Deps(store=make_store(synthetic_pois, {}), llm=FakeLLM(),
+             settings=make_settings(tmp_path))
+    with TestClient(api.create_app(d)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded" and any("ориентир" in w for w in h["warnings"])
+
+
+def test_health_explains_index_and_llm(deps: Deps) -> None:
+    import dataclasses
+
+    import numpy as np
+
+    deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+    deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+    deps.llm = FakeLLM(available=False)
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["index"] == "ready (no key)"
+    assert h["llm"].startswith("off (")
+    deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+    deps.llm = FakeLLM()
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["index"] == "ready" and h["llm"] == "ok" and h["status"] == "ok"
 
 
 def test_landmarks(client: TestClient, landmarks: dict[str, Landmark]) -> None:
@@ -85,7 +128,7 @@ def test_recommend_llm_failure_still_200(deps: Deps, monkeypatch: pytest.MonkeyP
     with TestClient(api.create_app(deps)) as c:
         r = c.post("/api/recommend", json=body())
     assert r.status_code == 200
-    assert "LLM недоступна — показаны карточки по данным." in r.json()["warnings"]
+    assert "LLM недоступна (нет связи) — показаны карточки по данным." in r.json()["warnings"]
 
 
 def test_unknown_landmark_422(client: TestClient) -> None:

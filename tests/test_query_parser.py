@@ -250,13 +250,22 @@ def test_injection_text_is_just_parsed(landmarks: dict[str, Landmark]) -> None:
 
 
 class FakeLLM:
-    def __init__(self, result: QueryIntent | Exception, available: bool = True) -> None:
+    """Like LLMClient: an unavailable client (cooldown / no key) fails fast with
+    LLMUnavailable unless its disk cache answers (`cached`)."""
+
+    def __init__(self, result: QueryIntent | Exception, available: bool = True,
+                 cached: QueryIntent | None = None) -> None:
         self.result = result
         self.available = available
+        self.cached = cached
         self.calls: list[dict[str, Any]] = []
 
     def generate_structured(self, **kw: Any) -> QueryIntent:
         self.calls.append(kw)
+        if self.cached is not None:
+            return self.cached
+        if not self.available:
+            raise LLMUnavailable("cooling down")
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -266,10 +275,25 @@ def test_parse_query_without_llm_is_rules(landmarks: dict[str, Landmark]) -> Non
     assert parse_query("кофе", None, None, landmarks).parser == "rules"
 
 
-def test_parse_query_skips_unavailable_llm(landmarks: dict[str, Landmark]) -> None:
+def test_parse_query_unavailable_llm_answers_by_rules(landmarks: dict[str, Landmark]) -> None:
     fake = FakeLLM(QueryIntent(raw_query="x"), available=False)
     assert parse_query("кофе", None, fake, landmarks).parser == "rules"
-    assert fake.calls == []
+
+
+def test_parse_query_uses_the_cache_during_a_cooldown(landmarks: dict[str, Landmark]) -> None:
+    """Preset scenarios keep the LLM intent while the API is cooling down."""
+    cached = QueryIntent(raw_query="", categories=["museum"], parser="llm")
+    i = parse_query("музей", None, FakeLLM(LLMUnavailable("x"), available=False,
+                                          cached=cached), landmarks)
+    assert i.parser == "llm" and i.categories == ["museum"]
+
+
+def test_parse_query_bug_is_logged_as_error(landmarks: dict[str, Landmark],
+                                            caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO"):
+        assert parse_query("кофе", None, FakeLLM(KeyError("bug")), landmarks).parser == "rules"
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert errors and "KeyError" in errors[0].getMessage()
 
 
 def test_parse_query_llm_failure_falls_back(landmarks: dict[str, Landmark]) -> None:
