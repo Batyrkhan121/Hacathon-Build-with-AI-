@@ -590,3 +590,15 @@ def test_landmark_words_are_not_relevance() -> None:
     out = retrieve(store, q, ctx, None, k=2)
     assert out[0].poi.id == "test:poi/2"
     assert next(c for c in out if c.poi.id == "test:poi/1").score_parts["relevance"] == 0.0
+
+
+def test_night_prefers_places_open_longer() -> None:
+    late = datetime(2026, 10, 19, 23, 15, tzinfo=ASTANA_TZ)
+    soon = make_poi("1", "restaurant", 0.0010, opening_hours="Mo-Su 10:00-24:00", tags=["food"])
+    long = make_poi("2", "restaurant", 0.0012, opening_hours="Mo-Su 12:00-02:00", tags=["food"])
+    q = intent("поздно вечером поесть", night=True, must_tags=["food"])
+    out = retrieve(make_store([soon, long]), q, make_ctx(at=late), None, k=2)
+    assert out[0].poi.id == "test:poi/2"
+    closing = next(c for c in out if c.poi.id == "test:poi/1")
+    assert closing.hours.closes_in_min == 45
+    assert closing.score_parts["open"] < out[0].score_parts["open"]

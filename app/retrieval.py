@@ -49,6 +49,9 @@ MAX_REASONS = 4
 
 OPEN_SCORE: dict[tuple[str, str], float] = {("open", "high"): 1.0, ("open", "medium"): 0.8}
 UNKNOWN_OPEN_SCORE = 0.5
+# T70 step 4: at night a place that closes within the hour is a poor first pick (S5)
+NIGHT_MIN_OPEN_MIN = 60
+NIGHT_CLOSING_SOON_SCORE = 0.3
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -423,6 +426,17 @@ def _weather_fit(poi: POI, ctx: SearchContext) -> float:
     return 0.7 if indoor else 1.0
 
 
+def _open_score(verdict: HoursVerdict, intent: QueryIntent) -> float:
+    if (
+        intent.night
+        and verdict.status == "open"
+        and verdict.closes_in_min is not None
+        and verdict.closes_in_min < NIGHT_MIN_OPEN_MIN
+    ):
+        return NIGHT_CLOSING_SOON_SCORE
+    return OPEN_SCORE.get((verdict.status, verdict.confidence), UNKNOWN_OPEN_SCORE)
+
+
 def _score(
     poi: POI,
     intent: QueryIntent,
@@ -439,7 +453,7 @@ def _score(
     parts = {
         "relevance": relevance,
         "proximity": max(0.0, 1.0 - distance / ctx.radius_m),
-        "open": OPEN_SCORE.get((verdict.status, verdict.confidence), UNKNOWN_OPEN_SCORE),
+        "open": _open_score(verdict, intent),
         "popularity": poi.popularity,
         "confidence": poi.data_confidence,
         "weather": _weather_fit(poi, ctx),
