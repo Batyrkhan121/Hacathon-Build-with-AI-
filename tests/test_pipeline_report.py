@@ -35,3 +35,11 @@ def test_report_sections_and_numbers() -> None:
     assert "| Байтерек | 2 |" in text
     assert "https://m/i (1)" in text
     assert "```json" in text and '"id": "osm:node/' in text
+
+
+def test_report_zones_coverage_and_computed_conclusion() -> None:
+    pois = normalize_payload(PAYLOAD)
+    text = build_report(pois, [PAYLOAD], LANDMARKS)
+    assert "без плиток всего города" in text and "Все плитки" not in text
+    assert "больше всего данных рядом с «Байтерек» (2 POI" in text
+    assert "Часы работы известны у 33% мест" in text

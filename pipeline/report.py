@@ -58,10 +58,11 @@ def build_report(
     payloads: Sequence[Mapping],
     landmarks: Sequence[Mapping],
     *,
-    missing_chunks: Sequence[str] = (),
+    missing_chunks: Sequence[str] | None = None,
     notes: Sequence[str] = (),
     generated_at: datetime | None = None,
 ) -> str:
+    """`missing_chunks`: city tiles not on disk; None when the build is not the whole city."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
     when = (generated_at or datetime.now(ASTANA_TZ)).strftime("%Y-%m-%d %H:%M (UTC+5)")
@@ -87,7 +88,11 @@ def build_report(
     lines.append(
         "- Зеркала Overpass: " + ", ".join(f"{u} ({c})" for u, c in endpoints.most_common()) + "."
     )
-    if missing_chunks:
+    if missing_chunks is None:
+        lines.append(
+            "- Покрытие: только перечисленные куски (демо-зоны), без плиток всего города."
+        )
+    elif missing_chunks:
         lines.append(
             f"- **Не докачано ({len(missing_chunks)}):** {', '.join(missing_chunks)}. "
             "Overpass был нестабилен; повторный запуск `pipeline.fetch_osm --area astana` "
@@ -145,7 +150,8 @@ def build_report(
         "|---|---|---:|---:|---:|",
     ]
     food = {"cafe", "restaurant", "fast_food", "bar"}
-    for cell, items in sorted(cells.items(), key=lambda kv: -len(kv[1]))[:8]:
+    ranked = sorted(cells.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    for cell, items in ranked[:8]:
         lat, lon = h3.cell_to_latlng(cell)
         label = nearest_landmark(lat, lon, landmarks) or "—"
         lines.append(
@@ -153,12 +159,18 @@ def build_report(
             f"{pct(sum(1 for p in items if p.opening_hours), len(items))} | "
             f"{sum(1 for p in items if p.category in food)} |"
         )
-    lines += [
-        "",
-        "Вывод для слайда «ограничения»: данные плотные в центре левого берега и у EXPO, "
-        "на окраинах POI мало и почти нет часов работы — там рекомендации беднее, "
-        "а карточки чаще пишут «нет данных о часах, проверьте перед визитом».",
-    ]
+    if ranked:
+        top_cell, top_items = ranked[0]
+        top_label = nearest_landmark(*h3.cell_to_latlng(top_cell), landmarks)
+        where = f"рядом с «{top_label}»" if top_label else "в самой плотной ячейке"
+        with_hours = pct(sum(1 for p in pois if p.opening_hours), n)
+        lines += [
+            "",
+            f"Вывод для слайда «ограничения»: больше всего данных {where} "
+            f"({len(top_items)} POI на ≈5 км²); в {sparse} из {len(cells)} ячеек не больше "
+            f"{SPARSE_MAX} POI. Часы работы известны у {with_hours} мест — у остальных "
+            "карточка пишет «нет данных о часах, проверьте перед визитом».",
+        ]
 
     if notes:
         lines += ["", "## Обогащение и индекс", *(f"- {note}" for note in notes)]
@@ -186,7 +198,7 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
         pois = [POI.model_validate_json(line) for line in fh if line.strip()]
     payloads = load_payloads(raw_files(area, raw_dir))
     landmarks = json.loads(settings.landmarks_path.read_text(encoding="utf-8"))
-    missing = missing_astana_chunks(raw_dir) if area == "astana" else []
+    missing = missing_astana_chunks(raw_dir) if area == "astana" else None
     all_notes = [*notes, index_status(settings.index_dir, len(pois))]
     out = out or settings.poi_path.parent / "REPORT.md"
     text = build_report(pois, payloads, landmarks, missing_chunks=missing, notes=all_notes)
