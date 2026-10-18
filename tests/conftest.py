@@ -1,4 +1,5 @@
-"""Shared pytest fixtures. Owner: INTEGRATOR. Tests never touch the network."""
+"""Shared pytest fixtures. Owner: INTEGRATOR. Tests never touch the network
+(except ones marked @pytest.mark.network) and never see a real key."""
 
 from __future__ import annotations
 
@@ -18,19 +19,28 @@ FIXTURES = Path(__file__).parent / "fixtures"
 ASTANA_TZ = timezone(timedelta(hours=5))
 EXPO = (51.0894, 71.4161)  # synthetic POIs are placed around this point
 
-# Loaded from a developer's .env by app.config; no test may see them.
-LIVE_ENV = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPEN_ROUTER_KEY",
-            "EMBED_PROVIDER", "LLM_ENABLED")
+# Values a developer's .env may hold; every test gets these instead. Set, not deleted: a later
+# load_dotenv() never overrides a variable that exists, even an empty one.
+TEST_ENV = {
+    "ANTHROPIC_API_KEY": "test-key-not-real",  # has_llm stays true; a real call hits _no_network
+    "GEMINI_API_KEY": "",
+    "OPENROUTER_API_KEY": "",
+    "OPEN_ROUTER_KEY": "",  # read by app.config as a fallback for OPENROUTER_API_KEY
+    "EMBED_PROVIDER": "gemini",  # stub provider: no Gemini key -> no embeddings
+    "LLM_ENABLED": "true",
+}
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "network: the test may connect outside loopback")
 
 
 @pytest.fixture(autouse=True)
 def _no_live_keys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Same settings with or without a .env: a fake Claude key (has_llm is true, a real call is
-    stopped by _no_network), no embeddings keys, the default provider. A test that needs an
-    embeddings key sets a fake one itself."""
-    for name in LIVE_ENV:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    """Same settings with or without a .env, so no test can spend money or quota. A test that
+    needs an embeddings key sets a fake one itself."""
+    for name, value in TEST_ENV.items():
+        monkeypatch.setenv(name, value)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -42,9 +52,14 @@ def _is_loopback(address: object) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _no_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+                ) -> Iterator[None]:
     """A connect outside loopback is refused like a dead network (so code takes its fallback)
-    and fails the test at teardown, even when the code swallowed the error."""
+    and fails the test at teardown, even when the code swallowed the error.
+    @pytest.mark.network lifts the ban (keys stay empty all the same)."""
+    if request.node.get_closest_marker("network"):
+        yield
+        return
     attempts: list[str] = []
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
