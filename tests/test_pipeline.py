@@ -202,7 +202,8 @@ class FakeLLM:
 def make_settings(tmp_path: Path) -> Settings:
     # index_dir too: the real data/index/meta.json may say "stale" — tests must not care
     return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
-                               index_dir=tmp_path / "index", h3_res=9)
+                               index_dir=tmp_path / "index", h3_res=9,
+                               embed_provider="gemini", embed_model="gemini-embedding-001")
 
 
 def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> Store:
@@ -758,6 +759,24 @@ class TestRecommend:
                        for w in a.warnings)
         b = recommend(req(lang=lang, use_llm=False), deps)
         assert [f for f in b.data_used.filters if f.startswith(lexical)] == [lexical]
+
+    @pytest.mark.parametrize(
+        ("status", "lang", "reason"),
+        [("auth", "ru", "ключ OpenRouter недействителен"),
+         ("no_credit", "ru", "нет кредитов OpenRouter"),
+         ("quota", "ru", "лимит запросов OpenRouter"),
+         ("auth", "kk", "OpenRouter кілті жарамсыз"),
+         ("no_credit", "en", "no OpenRouter credits")],
+    )
+    def test_openrouter_failures_are_named(self, deps: Deps, status: str, lang: str,
+                                           reason: str) -> None:
+        deps.settings = dataclasses.replace(deps.settings, embed_provider="openrouter",
+                                            openrouter_api_key="or-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status=status)
+        a = recommend(req(lang=lang), deps)
+        assert any(f"({reason})" in f for f in a.data_used.filters)
+        assert any(f"({reason})" in w for w in a.warnings)
 
     @pytest.mark.parametrize(
         ("status", "ru_reason"),

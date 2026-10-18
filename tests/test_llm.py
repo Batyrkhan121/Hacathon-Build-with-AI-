@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -29,6 +30,9 @@ def make_settings(tmp_path: Path, **over: Any) -> Settings:
         claude_model="claude-sonnet-5-5",
         claude_fallback_model="claude-haiku-5-5",
         gemini_api_key=None,
+        openrouter_api_key=None,
+        embed_provider="gemini",  # whatever .env says (EMBED_PROVIDER may be openrouter)
+        embed_model="gemini-embedding-001",
         embed_dim=4,
         llm_enabled=True,
         llm_timeout_s=5.0,
@@ -547,6 +551,145 @@ def test_embed_documents_ignore_the_query_cooldown(tmp_path: Path, monkeypatch) 
     llm = make_embedder(tmp_path, fake)
     assert llm.embed_query("кофе") is None  # query cooldown starts
     assert llm.embed_documents(["a", "b"]).shape == (2, 4)  # index build keeps its retries
+
+
+# ---------------------------------------------------- embeddings via OpenRouter
+
+OR_KEY = "or-test-key-123"
+
+
+def openrouter(tmp_path: Path, handler: Any, dim: int = 768) -> LLMClient:
+    import httpx
+
+    llm = LLMClient(make_settings(tmp_path, embed_provider="openrouter", openrouter_api_key=OR_KEY,
+                                  gemini_api_key=None, embed_model="google/gemini-embedding-001",
+                                  embed_dim=dim))
+    llm._http = httpx.Client(transport=httpx.MockTransport(handler))
+    return llm
+
+
+def _vectors(n: int, size: int, *, reverse: bool = False) -> dict[str, Any]:
+    rows = [{"object": "embedding", "index": i,
+             "embedding": [float(i + 1)] + [0.5] * (size - 1)} for i in range(n)]
+    return {"object": "list", "data": rows[::-1] if reverse else rows}
+
+
+def test_openrouter_request_shape_and_768(tmp_path: Path) -> None:
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_vectors(1, 768))
+
+    llm = openrouter(tmp_path, handler)
+    vec = llm.embed_query("тихое кафе")
+    assert vec is not None and vec.shape == (768,) and llm.last_embed_status == "ok"
+    assert abs(float(np.linalg.norm(vec)) - 1.0) < 1e-5
+    (req,) = seen
+    assert str(req.url) == "https://openrouter.ai/api/v1/embeddings"
+    assert req.headers["authorization"] == f"Bearer {OR_KEY}"
+    body_ = json.loads(req.content)
+    assert body_ == {"model": "google/gemini-embedding-001", "input": ["тихое кафе"],
+                     "encoding_format": "float", "dimensions": 768,
+                     "provider": {"data_collection": "deny"}}  # no task_type
+    assert req.extensions["timeout"]["read"] == llm_mod.EMBED_QUERY_TIMEOUT_MS / 1000
+
+
+def test_openrouter_truncates_matryoshka_3072_to_768(tmp_path: Path) -> None:
+    import httpx
+
+    llm = openrouter(tmp_path, lambda r: httpx.Response(200, json=_vectors(1, 3072)))
+    vec = llm.embed_query("кофе")
+    assert vec is not None and vec.shape == (768,)
+    assert abs(float(np.linalg.norm(vec)) - 1.0) < 1e-5
+    raw = np.asarray([1.0] + [0.5] * 767, dtype=np.float32)
+    assert np.allclose(vec, raw / np.linalg.norm(raw))
+
+
+def test_openrouter_smaller_vector_is_unusable(tmp_path: Path) -> None:
+    import httpx
+
+    llm = openrouter(tmp_path, lambda r: httpx.Response(200, json=_vectors(1, 512)))
+    assert llm.embed_query("кофе") is None and llm.last_embed_status == "bad_vector"
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "cooldown"),
+    [(401, "auth", llm_mod.AUTH_COOLDOWN_S), (403, "auth", llm_mod.AUTH_COOLDOWN_S),
+     (402, "no_credit", llm_mod.CONFIG_COOLDOWN_S), (429, "quota", llm_mod.EMBED_COOLDOWN_S),
+     (503, "error", llm_mod.EMBED_COOLDOWN_S)],
+)
+def test_openrouter_http_errors(tmp_path: Path, caplog: pytest.LogCaptureFixture, code: int,
+                                status: str, cooldown: float) -> None:
+    import httpx
+
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(code, json={"error": {"code": code, "message": "User not found"}})
+
+    llm = openrouter(tmp_path, handler)
+    with caplog.at_level("DEBUG"):
+        assert llm.embed_query("кофе") is None
+    assert llm.last_embed_status == status and calls == [1]  # one attempt for a live query
+    left = llm._embed_cooldown_until - llm_mod.time.monotonic()
+    assert cooldown - 5 < left <= cooldown
+    assert OR_KEY not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_openrouter_timeout_is_network(tmp_path: Path) -> None:
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    llm = openrouter(tmp_path, handler)
+    assert llm.embed_query("кофе") is None and llm.last_embed_status == "network"
+
+
+def test_openrouter_documents_retry_transient_only(tmp_path: Path, monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(llm_mod.time, "sleep", lambda _s: None)
+    answers = [httpx.Response(429), httpx.Response(200, json=_vectors(3, 8, reverse=True))]
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return answers.pop(0)
+
+    out = openrouter(tmp_path, handler, dim=8).embed_documents(["a", "b", "c"])
+    assert out.shape == (3, 8) and len(calls) == 2  # 429 retried
+    assert out[0, 0] < out[1, 0] < out[2, 0]  # rows follow `index`, not the answer order
+    denied: list[int] = []
+
+    def no_auth(request: httpx.Request) -> httpx.Response:
+        denied.append(1)
+        return httpx.Response(401)
+
+    with pytest.raises(LLMUnavailable):
+        openrouter(tmp_path / "x", no_auth, dim=8).embed_documents(["a"])
+    assert denied == [1]  # a rejected key is not retried
+
+
+def test_gemini_and_openrouter_caches_do_not_mix(tmp_path: Path) -> None:
+    import httpx
+
+    gem = make_embedder(tmp_path, FakeGenai(dim=8), embed_dim=8)
+    v_gem = gem.embed_query("кофе")
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json=_vectors(1, 8))
+
+    v_or = openrouter(tmp_path, handler, dim=8).embed_query("кофе")
+    assert calls == [1]  # not served from the Gemini cache
+    assert v_gem is not None and v_or is not None and not np.allclose(v_gem, v_or)
+    assert len(list((tmp_path / "cache" / "embed").glob("*.npy"))) == 2
 
 
 # ---------------------------------------------------------- user text as data

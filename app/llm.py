@@ -81,6 +81,9 @@ EMBED_QUERY_ATTEMPTS = 1
 EMBED_QUERY_TIMEOUT_MS = 5_000
 EMBED_COOLDOWN_S = NETWORK_COOLDOWN_S
 EMBED_DAILY_COOLDOWN_S = 30 * 60  # free tier: the daily quota resets once a day
+# EMBED_PROVIDER=openrouter: the same Gemini model through OpenRouter's OpenAI-style API.
+OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
+_EMBED_NO_RETRY = frozenset({"auth", "no_credit", "bad_vector"})  # retrying cannot help
 CONFIG_COOLDOWN_S = 300.0  # no API credits / unknown model: nothing helps for a while
 _NETWORK_KINDS = frozenset({"timeout", "network", "quota", "server"})
 _CONFIG_KINDS = frozenset({"no_credit", "bad_model"})
@@ -123,6 +126,15 @@ class _ModelFailed(Exception):
         self.kind = kind
 
 
+class _EmbedFailure(Exception):
+    """An embedding call failed with a known kind: auth / no_credit / quota / network /
+    bad_vector / error (OpenRouter HTTP status or a vector of the wrong size)."""
+
+    def __init__(self, kind: str, detail: str = "") -> None:
+        super().__init__(f"{kind}: {detail}" if detail else kind)
+        self.kind = kind
+
+
 class _HardFailure(Exception):
     """Credentials are rejected: no other model will work either."""
 
@@ -133,6 +145,7 @@ class LLMClient:
         self.model_name = settings.claude_model
         self._client: Any = None  # anthropic.Anthropic, created lazily; tests inject a fake
         self._genai: Any = None  # google.genai.Client, created lazily; tests inject a fake
+        self._http: Any = None  # httpx.Client for OpenRouter, created lazily; tests inject one
         self._lock = threading.Lock()
         self._local = threading.local()
         self._cooldown_until = 0.0
@@ -404,7 +417,8 @@ class LLMClient:
                               timeout_ms=EMBED_QUERY_TIMEOUT_MS)[0]
         except Exception as exc:  # noqa: BLE001 - embeddings are optional, lexical works
             kind = _embed_error_kind(exc)
-            pause = EMBED_DAILY_COOLDOWN_S if kind == "daily_quota" else EMBED_COOLDOWN_S
+            pause = {"daily_quota": EMBED_DAILY_COOLDOWN_S, "auth": AUTH_COOLDOWN_S,
+                     "no_credit": CONFIG_COOLDOWN_S}.get(kind, EMBED_COOLDOWN_S)
             self._embed_cooldown_until = time.monotonic() + pause
             self._embed_cooldown_kind = kind
             self._local.embed = kind
@@ -451,6 +465,9 @@ class LLMClient:
 
     def _embed_batch(self, texts: list[str], task_type: str, *, attempts: int = EMBED_ATTEMPTS,
                      timeout_ms: int | None = None) -> np.ndarray:
+        if self.settings.embed_provider == "openrouter":
+            return self._openrouter_with_retries(texts, attempts=attempts,
+                                                 timeout_ms=timeout_ms or EMBED_TIMEOUT_MS)
         from google.genai import types
 
         config = types.EmbedContentConfig(
@@ -476,6 +493,86 @@ class LLMClient:
                 time.sleep(pause)
                 pause *= 2
         raise LLMUnavailable("Gemini embed failed")  # pragma: no cover - loop always returns
+
+    # -------------------------------------------------------------- OpenRouter
+
+    def _get_http(self) -> Any:
+        if self._http is None:
+            with self._lock:
+                if self._http is None:
+                    import httpx
+
+                    self._http = httpx.Client(timeout=EMBED_TIMEOUT_MS / 1000,
+                                              headers={"User-Agent": "QadamHackathon/0.1"})
+        return self._http
+
+    def _openrouter_with_retries(self, texts: list[str], *, attempts: int, timeout_ms: int
+                                 ) -> np.ndarray:
+        """Transient failures (429, 5xx, network) are retried with a growing pause; a rejected
+        key, no credits or a wrong vector size are not (retrying cannot help)."""
+        pause = EMBED_PAUSE_S
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._openrouter_batch(texts, timeout_ms)
+            except _EmbedFailure as exc:
+                if exc.kind in _EMBED_NO_RETRY or attempt == attempts:
+                    raise LLMUnavailable(f"OpenRouter embed failed: {exc.kind}") from exc
+                log.warning("OpenRouter embed attempt %d failed (%s), retrying", attempt,
+                            exc.kind)
+                time.sleep(pause)
+                pause *= 2
+        raise LLMUnavailable("OpenRouter embed failed")  # pragma: no cover
+
+    def _openrouter_batch(self, texts: list[str], timeout_ms: int) -> np.ndarray:
+        """POST /api/v1/embeddings. No task_type (OpenRouter has none). A longer vector is
+        truncated to embed_dim (Matryoshka) and re-normalised; a shorter one is unusable."""
+        import httpx
+
+        dim = self.settings.embed_dim
+        body = {"model": self.settings.embed_model, "input": texts, "encoding_format": "float",
+                "dimensions": dim, "provider": {"data_collection": "deny"}}
+        try:
+            resp = self._get_http().post(
+                OPENROUTER_EMBED_URL, json=body, timeout=timeout_ms / 1000,
+                headers={"Authorization": f"Bearer {self.settings.openrouter_api_key}"},
+            )
+        except httpx.TimeoutException as exc:
+            raise _EmbedFailure("network", "timeout") from exc
+        except httpx.HTTPError as exc:
+            raise _EmbedFailure("network", type(exc).__name__) from exc
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+        code = resp.status_code
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if code == 200 and isinstance(error, dict):  # an error inside a 200 answer
+            code = int(error.get("code") or 500) if str(error.get("code", "")).isdigit() else 500
+        if code in (401, 403):
+            raise _EmbedFailure("auth", f"HTTP {code}")
+        if code == 402:
+            raise _EmbedFailure("no_credit", "HTTP 402")
+        if code == 429:
+            raise _EmbedFailure("quota", "HTTP 429")
+        if code >= 400 or not isinstance(payload, dict):
+            raise _EmbedFailure("error", f"HTTP {code}")
+        rows = payload.get("data")
+        if not isinstance(rows, list) or len(rows) != len(texts):
+            raise _EmbedFailure("error", "unexpected answer shape")
+        try:
+            ordered = sorted(rows, key=lambda r: int(r.get("index", 0)))
+            arr = np.asarray([r["embedding"] for r in ordered], dtype=np.float32)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _EmbedFailure("error", "unexpected answer shape") from exc
+        if arr.ndim != 2 or arr.shape[0] != len(texts):
+            raise _EmbedFailure("error", f"shape {arr.shape}")
+        if arr.shape[1] < dim:
+            raise _EmbedFailure("bad_vector", f"dim {arr.shape[1]} < {dim}")
+        arr = arr[:, :dim]
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        if not np.all(np.isfinite(norms)) or np.any(norms == 0):
+            raise _EmbedFailure("bad_vector", "zero or not finite")
+        return arr / norms
 
     def _embed_key(self, text: str, task_type: str) -> str:
         raw = f"{self.settings.embed_model}|{self.settings.embed_dim}|{task_type}|{text}"
@@ -528,6 +625,9 @@ def _embed_error_kind(exc: BaseException) -> str:
     while cur is not None and len(chain) < 5:
         chain.append(cur)
         cur = cur.__cause__ or cur.__context__
+    for e in chain:  # OpenRouter (and size checks) already know the kind
+        if isinstance(e, _EmbedFailure):
+            return e.kind
     text = " ".join(str(e) for e in chain)
     if "RESOURCE_EXHAUSTED" in text and "PerDay" in text:
         return "daily_quota"
