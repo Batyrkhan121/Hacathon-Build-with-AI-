@@ -209,3 +209,40 @@ def test_system_prompt_says_parsed_request_wins() -> None:
     security = text[text.index("# Безопасность"):]
     assert "ЗАПРОС (разобран кодом) главнее" in security
     assert "КАНДИДАТОВ" in security and "тоже данные" in security
+
+
+# ------------------------------------- silent-failure review №2, item 5
+
+
+def test_description_is_cut_at_a_sentence_boundary() -> None:
+    from app.generate import MAX_DESCRIPTION_CHARS, clip_description
+
+    first = "Музей энергии будущего в сфере EXPO с интерактивными залами. " * 3
+    text = first.strip() + " " + "Второе длинное предложение про экспозицию. " * 10
+    clipped = clip_description(text)
+    assert len(clipped) <= MAX_DESCRIPTION_CHARS
+    assert clipped.endswith(".")  # whole sentences only
+    one = "слово " * 100
+    cut = clip_description(one.strip())
+    assert len(cut) <= MAX_DESCRIPTION_CHARS and cut.endswith("…")
+    assert cut[:-1].split()[-1] == "слово"  # never in the middle of a word
+    assert clip_description("Коротко.") == "Коротко."
+
+
+def test_missing_prompt_is_loud(monkeypatch: pytest.MonkeyPatch, caplog, cands) -> None:
+    import logging
+
+    import app.generate as gen
+    from app.llm import LLMUnavailable
+
+    def missing(name: str) -> str:
+        raise FileNotFoundError(name)
+
+    monkeypatch.setattr(gen, "load_prompt", missing)
+    with pytest.raises(FileNotFoundError):
+        gen.check_prompt()  # explicit error for app startup
+    with caplog.at_level(logging.ERROR, logger="app.generate"):
+        with pytest.raises(LLMUnavailable):
+            gen.draft_cards(QueryIntent(raw_query="кофе"), context(), cands, object())  # type: ignore[arg-type]
+    assert any("generate_cards" in r.getMessage() and r.levelno >= logging.ERROR
+               for r in caplog.records)
