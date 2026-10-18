@@ -17,7 +17,7 @@ argument-hint: "[ID задачи, например T41]"
 ## Библиотеки (CDN)
 - Leaflet 1.9.4: `https://unpkg.com/leaflet@1.9.4/dist/leaflet.css` и `.../leaflet.js`.
 - h3-js 4.1.0: `https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js` (глобальный объект `h3`). Проверь, что файл реально грузится.
-- Тайлы: CARTO Voyager `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`. Атрибуция обязательна: «© OpenStreetMap contributors © CARTO».
+- Тайлы: стандартные OSM `https://tile.openstreetmap.org/{z}/{x}/{y}.png` (CARTO basemaps с 2026 года отдают без ключа заглушку «API KEY REQUIRED»). Атрибуция обязательна: «© OpenStreetMap contributors». Сервер тайлов видит IP и участок карты, это записано в docs/ETHICS.md.
 
 ## Экран
 Слева панель (на мобильном снизу), справа карта.
