@@ -100,6 +100,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "hours_unknown_n": "Для {n} мест нет данных о часах работы — проверьте перед визитом.",
         "night": "Ночь: выбирайте освещённые людные места; обратно лучше на такси.",
         "kids_night": "Уже поздно для прогулки с ребёнком — лучше место в помещении рядом.",
+        "night_far": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
+                     "показаны ближайшие подтверждённые; лучше доехать на такси.",
         "group": "Для компании из {n} человек: столик в кафе лучше уточнить заранее.",
         "f_night_clock": "ночь (по времени)",
         "widened": "Рядом мало вариантов — радиус поиска расширен до {r} м.",
@@ -149,6 +151,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "night": "Түн: жарық әрі адамы көп жерлерді таңдаңыз; кері қарай таксимен қайтқан "
                  "дұрыс.",
         "kids_night": "Баламен серуендеуге кеш — жақын жердегі жабық орынды таңдаған дұрыс.",
+        "night_far": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
+                     "орындар көрсетілді; таксимен барған дұрыс.",
         "group": "{n} адамдық топқа: кафеде үстелді алдын ала нақтылаңыз.",
         "f_night_clock": "түн (уақыт бойынша)",
         "widened": "Жақын жерде нұсқа аз — іздеу радиусы {r} м-ге дейін ұлғайтылды.",
@@ -194,6 +198,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "hours_unknown_n": "No opening-hours data for {n} places — check before you go.",
         "night": "Night: choose well-lit, busy places; better take a taxi back.",
         "kids_night": "It is late for a walk with a child — an indoor place nearby is better.",
+        "night_far": "No surely-open place within a 15-minute walk tonight — showing the "
+                     "nearest confirmed ones; better take a taxi.",
         "group": "For a group of {n}: check table availability at cafes in advance.",
         "f_night_clock": "night (by the clock)",
         "widened": "Few options nearby — search radius widened to {r} m.",
@@ -360,7 +366,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if night_by_clock:
         plan_update["night"] = True
     careful = intent.with_kids or intent.wheelchair or intent.night or night_by_clock
-    if careful and intent.max_walk_min is None and "max_walk_min" not in plan_update:
+    careful_cap = careful and intent.max_walk_min is None and "max_walk_min" not in plan_update
+    if careful_cap:
         plan_update["max_walk_min"] = CAREFUL_MAX_WALK_MIN
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
@@ -401,12 +408,29 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
+    if plan_intent.night and not no_time:
+        # At night "surely open" beats "close": keep open / late_open / 24_7 places; if none
+        # is within the short-walk cap, look further (the taxi back is advised anyway).
+        sure = [c for c in candidates if _night_sure(c)]
+        if not sure and careful_cap and not short_walks and not failed:
+            far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
+            far_ctx = ctx.model_copy(update={"radius_m": min(
+                round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec)
+            sure = [c for c in more if _night_sure(c)]
+            if sure:
+                search_intent, ctx = far_intent, far_ctx
+                warn.append(t["night_far"])
+        if sure:
+            candidates = sure
     requested_found = len(candidates)  # places of the requested type, before relaxing
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
+        if plan_intent.night:
+            candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
     if 0 < len(candidates) < SPARSE_MIN:
@@ -511,6 +535,11 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _night_sure(c: Candidate) -> bool:
+    """Open now by the data, or marked as working late / round the clock."""
+    return c.hours.status == "open" or bool({"late_open", "24_7"} & set(c.poi.tags))
 
 
 def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:

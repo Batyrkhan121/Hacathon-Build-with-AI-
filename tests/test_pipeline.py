@@ -678,6 +678,17 @@ class TestRealCore:
         day = recommend(real_req("кофе", "khan_shatyr"), real_deps)
         assert not any("ночь" in f for f in day.data_used.filters)
 
+    def test_e2_deep_night_prefers_surely_open_places(self, real_deps: Deps) -> None:
+        """02:30: unknown-hours bars 10 min away lose to open/24_7 places further away."""
+        a = recommend(real_req("Сейчас глубокая ночь, куда можно пойти поесть или посидеть?",
+                               "khan_shatyr", at="2026-10-20T02:30:00+05:00", lang="ru"),
+                      real_deps)
+        assert a.cards
+        for card in a.cards:
+            assert card.open_status == "open" or {"late_open", "24_7"} & set(card.tags)
+        assert any("лучше доехать на такси" in w or "обратно лучше на такси" in w
+                   for w in a.warnings)
+
     def test_night_switched_off_in_ui(self, real_deps: Deps) -> None:
         from app.schemas import UserOverrides
 
