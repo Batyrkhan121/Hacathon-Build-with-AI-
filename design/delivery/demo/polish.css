@@ -38,6 +38,6 @@ body{background:#fff}.app{grid-template-columns:480px minmax(0,1fr);height:calc(
 @media(prefers-reduced-motion:reduce){.search-step{animation:none;opacity:1;transform:none}}
 
 /* Decorative walking rhythm along the approximate route, beneath numbered markers. */
-.route-step{border:0;background:none;pointer-events:none!important}.route-step>span{display:block;width:12px;height:23px;transform-origin:center}.route-step img{display:block;width:10px;height:21px;transform:scaleX(var(--step-side));opacity:.18;filter:drop-shadow(0 0 1px white);animation:qadam-route-step 3.6s ease-out infinite;animation-delay:var(--step-delay)}
-@keyframes qadam-route-step{0%{opacity:.18}8%,20%{opacity:1}42%,100%{opacity:.18}}
-@media(prefers-reduced-motion:reduce){.route-step img{animation:none;opacity:.65}}
+.route-step{border:0;background:none;pointer-events:none!important}.route-step>span{display:block;width:14px;height:28px;transform-origin:center}.route-step img{display:block;width:12px;height:25px;margin:1.5px 1px;transform:scaleX(var(--step-side));opacity:.45;filter:drop-shadow(0 0 1px white);animation:qadam-route-step 3.6s ease-out infinite;animation-delay:var(--step-delay)}
+@keyframes qadam-route-step{0%{opacity:.45;transform:scaleX(var(--step-side)) translateY(3px)}10%,24%{opacity:1;transform:scaleX(var(--step-side)) translateY(0)}46%,100%{opacity:.45;transform:scaleX(var(--step-side)) translateY(0)}}
+@media(prefers-reduced-motion:reduce){.route-step img{animation:none;opacity:.9}}

@@ -271,7 +271,7 @@ function drawRouteSteps() {
   const segments = points.slice(1).map((p, i) => ({ a: points[i], b: p, length: points[i].distanceTo(p) }));
   const total = segments.reduce((sum, s) => sum + s.length, 0);
   if (total < 64) return;
-  const spacing = Math.max(32, total / 120);
+  const spacing = Math.max(36, total / 120);
   let walked = 0, index = 0;
   for (const segment of segments) {
     if (segment.length < 1) continue;
@@ -285,8 +285,8 @@ function drawRouteSteps() {
       const offset = point.add(L.point(-dy * 1.5 * side, dx * 1.5 * side));
       const progress = (walked + d) / total;
       const icon = L.divIcon({
-        className: 'route-step', iconSize: [12, 23], iconAnchor: [6, 11.5],
-        html: `<span style="transform:rotate(${angle}deg)"><img src="../assets/search-sole.svg" alt="" style="--step-delay:${(progress * 2.4).toFixed(3)}s;--step-side:${side}" width="10" height="21"></span>`,
+        className: 'route-step', iconSize: [14, 28], iconAnchor: [7, 14],
+        html: `<span style="transform:rotate(${angle}deg)"><img src="../assets/search-sole.svg" alt="" style="--step-delay:${(progress * 2.4).toFixed(3)}s;--step-side:${side}" width="12" height="25"></span>`,
       });
       const marker = L.marker(map.unproject(offset), { icon, pane: 'routeSteps', interactive: false, keyboard: false }).addTo(stepLayer);
       marker.getElement()?.setAttribute('aria-hidden', 'true');
