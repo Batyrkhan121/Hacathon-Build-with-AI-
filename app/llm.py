@@ -42,9 +42,11 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -71,6 +73,24 @@ EMBED_BATCH = 100
 EMBED_ATTEMPTS = 3
 EMBED_PAUSE_S = 1.0  # doubled after every failed attempt
 EMBED_TIMEOUT_MS = 15_000
+
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+_USER_TAG_RE = re.compile(r"<\s*/?\s*user_query\s*>", re.IGNORECASE)
+
+
+@lru_cache(maxsize=16)
+def load_prompt(name: str) -> str:
+    """Text of prompts/<name>.md (utf-8)."""
+    return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+
+
+def user_data_block(text: str) -> str:
+    """The user's text as a delimited DATA block for a prompt.
+
+    Tags that could close the block early are removed, so the text cannot "escape" it.
+    """
+    clean = _USER_TAG_RE.sub(" ", text).strip()
+    return f"<user_query>\n{clean}\n</user_query>"
 
 
 class LLMUnavailable(RuntimeError):
