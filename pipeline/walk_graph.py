@@ -76,6 +76,8 @@ CAR_ROADS = frozenset(
     {"residential", "service", "unclassified", "tertiary", "secondary", "primary"}
 )
 KERB_LOW = frozenset({"lowered", "flush"})
+# foot=* overrides access=* for pedestrians: access=private + foot=yes is walkable
+FOOT_ALLOWED = frozenset({"yes", "designated", "permissive"})
 
 NODE_CROSSING, NODE_SIGNALS, NODE_KERB, NODE_UNMARKED = 1, 2, 4, 8
 EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING = 1, 2, 4, 8, 16
@@ -96,19 +98,35 @@ MAX_FILE_BYTES = 20 * 1024 * 1024  # contract limit; the task itself asked for <
 WALK_TIMEOUT_S = int(TIMEOUT_S) - 10
 LICENSE = "ODbL 1.0, © участники OpenStreetMap"
 CHUNK_PREFIX = "walk_tile_"
+# access=private ways open to pedestrians (foot=yes...), whole city in one small query; the
+# tile query has them too, this file fills in tiles fetched before that
+FOOT_OVERRIDE_CHUNK = "walk_foot_override"
 
 
 # ------------------------------------------------------------------------ fetch
 
 
+def _ways(highway_filter: str, bbox: str) -> list[str]:
+    return [
+        f'{highway_filter}["foot"!~"^no$"]["access"!~"^private$"]({bbox});',
+        f'{highway_filter}["access"="private"]["foot"~"^({"|".join(sorted(FOOT_ALLOWED))})$"]'
+        f"({bbox});",
+    ]
+
+
 def walk_query(bbox: str, timeout_s: int = WALK_TIMEOUT_S) -> str:
     """Walkable ways in a bbox with all their nodes (tags kept: crossings, signals, kerbs)."""
-    highways = "|".join(WALKABLE)
+    lines = _ways(f'way["highway"~"^({"|".join(WALKABLE)})$"]', bbox)
     return (
-        f"[out:json][timeout:{timeout_s}];\n"
-        f'way["highway"~"^({highways})$"]["foot"!~"^no$"]["access"!~"^private$"]({bbox});\n'
+        f"[out:json][timeout:{timeout_s}];\n(\n  " + "\n  ".join(lines) + "\n);\n"
         "out body;\n>;\nout body qt;"
     )
+
+
+def foot_override_query(bbox: str, timeout_s: int = WALK_TIMEOUT_S) -> str:
+    """Only the access=private ways that pedestrians may use (foot=yes/designated/permissive)."""
+    line = _ways(f'way["highway"~"^({"|".join(WALKABLE)})$"]', bbox)[1]
+    return f"[out:json][timeout:{timeout_s}];\n{line}\nout body;\n>;\nout body qt;"
 
 
 def walk_chunks() -> list[tuple[str, str]]:
@@ -128,7 +146,10 @@ def fetch_walk(
     failed: list[str] = []
     last_good: str | None = None
     requested = False
-    for name, bbox in walk_chunks():
+    s, w, n, e = ASTANA_BBOX
+    chunks = [(name, bbox, walk_query) for name, bbox in walk_chunks()]
+    chunks.append((FOOT_OVERRIDE_CHUNK, f"{s},{w},{n},{e}", foot_override_query))
+    for name, bbox, make_query in chunks:
         path = raw_path(name, raw_dir)
         if not force and is_fresh(path) and not is_partial_file(path):
             done.append(path)
@@ -138,7 +159,7 @@ def fetch_walk(
         requested = True
         started = time.time()
         try:
-            payload = query_fn(walk_query(bbox), endpoints=prefer(last_good, ENDPOINTS),
+            payload = query_fn(make_query(bbox), endpoints=prefer(last_good, ENDPOINTS),
                                check_status=True)
         except OverpassError as exc:
             log.error("walk chunk %s failed: %s", name, exc)
@@ -173,10 +194,11 @@ class WalkGraph:
 
 
 def walkable(tags: Mapping[str, str]) -> bool:
+    foot = tags.get("foot")
     return (
         tags.get("highway") in WALKABLE
-        and tags.get("foot") != "no"
-        and tags.get("access") != "private"
+        and foot != "no"
+        and (tags.get("access") != "private" or foot in FOOT_ALLOWED)
     )
 
 
@@ -532,7 +554,9 @@ def load_graph(path: Path) -> dict[str, np.ndarray]:
 
 
 def walk_files(raw_dir: Path) -> list[Path]:
-    return sorted(raw_dir.glob(f"osm_{CHUNK_PREFIX}*.json"))
+    """The city tiles plus the foot-override file, if fetched."""
+    extra = raw_dir / f"osm_{FOOT_OVERRIDE_CHUNK}.json"
+    return sorted(raw_dir.glob(f"osm_{CHUNK_PREFIX}*.json")) + ([extra] if extra.exists() else [])
 
 
 def coverage_meta(paths: Sequence[Path]) -> dict:
