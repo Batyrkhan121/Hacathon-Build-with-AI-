@@ -96,6 +96,8 @@ class EtalonOutcome:
     results: list[RowResult]
     added: list[POI] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (name, reason)
+    # (name, raw category) for rows whose category was not recognized and became "other"
+    unknown_categories: list[tuple[str, str]] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------- reading
@@ -269,6 +271,9 @@ def compare(rows: Sequence[Mapping[str, str]], pois: Sequence[POI]) -> list[RowR
 # ----------------------------------------------------------------- manual POIs
 
 
+OTHER_WORDS = frozenset({"other", "другое", "прочее"})
+
+
 def category_of(raw: str) -> Category:
     text = raw.strip().casefold()
     if text in {"cafe", "restaurant", "fast_food", "bar", "nightlife", "museum", "gallery",
@@ -338,8 +343,11 @@ def apply_etalon(
         made = manual_poi(res.row_no, row, fetched_at)
         if isinstance(made, str):
             outcome.skipped.append((row["name"], made))
-        else:
-            outcome.added.append(made)
+            continue
+        outcome.added.append(made)
+        raw_category = (row.get("category") or "").strip()
+        if made.category == "other" and raw_category.casefold() not in OTHER_WORDS:
+            outcome.unknown_categories.append((row["name"], raw_category or "—"))
     return sorted([*osm_pois, *outcome.added], key=lambda p: p.id), outcome
 
 
@@ -385,6 +393,12 @@ def render(outcome: EtalonOutcome) -> str:
         )
     if outcome.skipped:
         lines += ["", "Не добавлено:", *(f"- {name}: {why}" for name, why in outcome.skipped)]
+    if outcome.unknown_categories:
+        lines += [
+            "",
+            "Категория не распознана, записано other (проверьте опечатку в эталоне):",
+            *(f"- {name}: «{raw}»" for name, raw in outcome.unknown_categories),
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -405,6 +419,12 @@ def run_on(pois: Sequence[POI], path: Path | None = None) -> tuple[list[POI], li
         f"Из эталона добавлено вручную (manual:poi, сайт-источник в website): "
         f"{len(outcome.added)}; без координат или ссылки не добавлено: {len(outcome.skipped)}.",
     ]
+    if outcome.unknown_categories:
+        notes.append(
+            "Эталон: категория не распознана и записана как other у "
+            + ", ".join(f"{name} («{raw}»)" for name, raw in outcome.unknown_categories)
+            + " — проверьте опечатку."
+        )
     return out, notes
 
 

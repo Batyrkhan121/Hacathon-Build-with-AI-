@@ -160,6 +160,42 @@ def build_index(
     model: str | None = None,
     dim: int | None = None,
 ) -> IndexResult:
+    """Build the index, or leave the old one on disk marked `status: "stale"` (with the
+    reason) so the app never mistakes it for a fresh one."""
+    result = _build(pois, index_dir, embed=embed, cache_path=cache_path, model=model, dim=dim)
+    if result.status == "skipped":
+        mark_stale(index_dir, result.reason)
+    return result
+
+
+def mark_stale(index_dir: Path, reason: str) -> bool:
+    """Flag an existing index whose rebuild failed; True when there was one to flag."""
+    meta_path = index_dir / "meta.json"
+    if not meta_path.exists():
+        return False
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta.update(
+        status="stale",
+        stale_reason=reason,
+        stale_since=datetime.now(ASTANA_TZ).isoformat(timespec="seconds"),
+    )
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return True
+
+
+def ids_hash(pois: Sequence[POI]) -> str:
+    return hashlib.sha256("\n".join(p.id for p in pois).encode("utf-8")).hexdigest()
+
+
+def _build(
+    pois: Sequence[POI],
+    index_dir: Path,
+    *,
+    embed: EmbedFn | None,
+    cache_path: Path | None,
+    model: str | None,
+    dim: int | None,
+) -> IndexResult:
     settings = get_settings()
     model = model or settings.embed_model
     dim = dim or settings.embed_dim
@@ -196,7 +232,10 @@ def build_index(
     if matrix.shape[1] != dim:
         return IndexResult("skipped", f"размерность {matrix.shape[1]} ≠ EMBED_DIM={dim}")
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    matrix = matrix / np.where(norms == 0, 1.0, norms)
+    zero = [pois[i].id for i in np.flatnonzero(norms[:, 0] == 0)]
+    if zero:  # a broken embedder answer, not something to hide behind a 1.0 divisor
+        raise ValueError(f"нулевой вектор эмбеддинга у {len(zero)} POI: {', '.join(zero[:5])}")
+    matrix = matrix / norms
 
     index_dir.mkdir(parents=True, exist_ok=True)
     np.save(index_dir / "embeddings.npy", matrix.astype(np.float32))
@@ -204,12 +243,14 @@ def build_index(
         json.dumps([p.id for p in pois], ensure_ascii=False), encoding="utf-8"
     )
     meta = {
+        "status": "ok",
         "model": model,
         "dim": dim,
         "count": len(pois),
         "created_at": datetime.now(ASTANA_TZ).isoformat(timespec="seconds"),
         "task_type": TASK_TYPE,
         "doc_template": DOC_TEMPLATE,
+        "ids_sha256": ids_hash(pois),
         "docs_sha256": docs_hash(pois),
     }
     (index_dir / "meta.json").write_text(
@@ -233,8 +274,15 @@ def index_status(index_dir: Path, pois: Sequence[POI]) -> str:
             "Retrieval работает лексически по названиям, категориям и тегам."
         )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    if meta.get("count") != len(pois):
-        stale = f" — **устарел**: в poi.jsonl {len(pois)} POI"
+    if meta.get("status") == "stale":
+        stale = (
+            f" — **устарел**: не пересобран ({meta.get('stale_reason')}); "
+            f"в poi.jsonl {len(pois)} POI"
+        )
+    elif meta.get("count") != len(pois) or (
+        meta.get("ids_sha256") and meta["ids_sha256"] != ids_hash(pois)
+    ):
+        stale = f" — **устарел**: в poi.jsonl {len(pois)} POI, id не совпадают"
     elif meta.get("docs_sha256") != docs_hash(pois):
         stale = (
             " — **устарел**: тексты POI (описания) изменились после сборки индекса; "

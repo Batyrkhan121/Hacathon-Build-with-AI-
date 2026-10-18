@@ -23,3 +23,15 @@ def test_apply_moves_mapped_landmark_and_keeps_unmapped() -> None:
     assert landmarks[0]["verified"] is True
     assert report["baiterek"] is not None and report["baiterek"] < 10
     assert report["unknown_place"] is None and landmarks[1]["verified"] is False
+
+
+def test_large_drift_is_not_applied() -> None:
+    from pipeline.verify_landmarks import MAX_DRIFT_M
+
+    payload = {"elements": [{"type": "way", "id": 230401645,
+                             "center": {"lat": 51.15, "lon": 71.43045}}]}  # ~2.4 km off
+    landmarks = [{"id": "baiterek", "geo": {"lat": 51.1283, "lon": 71.4305}, "verified": False}]
+    report = dict(apply(landmarks, osm_centers(payload)))
+    assert report["baiterek"] is not None and report["baiterek"] > MAX_DRIFT_M
+    assert landmarks[0]["geo"] == {"lat": 51.1283, "lon": 71.4305}
+    assert landmarks[0]["verified"] is False

@@ -19,6 +19,9 @@ from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import element_point, haversine_m
 
 COORD_DIGITS = 5
+# beyond this the OSM object is probably the wrong one (or was moved): do not apply it
+# blindly; the airport moved 685 m to its terminal on purpose and stays under the limit
+MAX_DRIFT_M = 1000.0
 
 
 def lookup_query(refs: Sequence[str]) -> str:
@@ -42,7 +45,8 @@ def osm_centers(payload: Mapping) -> dict[str, tuple[float, float]]:
 def apply(
     landmarks: list[dict], centers: Mapping[str, tuple[float, float]]
 ) -> list[tuple[str, float | None]]:
-    """Move each mapped landmark to its OSM centre; returns (id, drift in metres or None)."""
+    """Move each mapped landmark to its OSM centre; returns (id, drift in metres or None).
+    A drift above MAX_DRIFT_M is reported but not applied, and `verified` is not set."""
     report: list[tuple[str, float | None]] = []
     for lm in landmarks:
         ref = LANDMARK_OSM.get(lm["id"])
@@ -51,6 +55,9 @@ def apply(
             continue
         lat, lon = centers[ref]
         drift = haversine_m(lm["geo"]["lat"], lm["geo"]["lon"], lat, lon)
+        if drift > MAX_DRIFT_M:
+            report.append((lm["id"], drift))
+            continue
         lm["geo"] = {"lat": round(lat, COORD_DIGITS), "lon": round(lon, COORD_DIGITS)}
         lm["verified"] = True
         report.append((lm["id"], drift))
@@ -65,7 +72,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     landmarks = json.loads(path.read_text(encoding="utf-8"))
     centers = osm_centers(run_query(lookup_query(list(LANDMARK_OSM.values()))))
     for lm_id, drift in apply(landmarks, centers):
-        status = "not mapped / not found" if drift is None else f"drift {drift:.0f} m"
+        if drift is None:
+            status = "not mapped / not found"
+        elif drift > MAX_DRIFT_M:
+            status = f"drift {drift:.0f} m > {MAX_DRIFT_M:.0f} m: NOT applied, check LANDMARK_OSM"
+        else:
+            status = f"drift {drift:.0f} m"
         print(f"{lm_id:15s} {status}")
     if args.write:
         text = json.dumps(landmarks, ensure_ascii=False, indent=2) + "\n"
