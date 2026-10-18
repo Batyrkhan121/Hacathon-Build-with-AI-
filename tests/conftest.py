@@ -28,6 +28,7 @@ TEST_ENV = {
     "OPEN_ROUTER_KEY": "",  # read by app.config as a fallback for OPENROUTER_API_KEY
     "EMBED_PROVIDER": "gemini",  # stub provider: no Gemini key -> no embeddings
     "LLM_ENABLED": "true",
+    "WALK_GRAPH": "false",  # straight segments unless a test sets a graph itself
 }
 
 

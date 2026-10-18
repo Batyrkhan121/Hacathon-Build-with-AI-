@@ -60,7 +60,8 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 | `hours.py` | CORE | часы работы OSM → статус | `evaluate_hours`, `now_astana`, `ASTANA_TZ` |
 | `store.py` | CORE | загрузка POI, индекса, ориентиров | `Store`, `load_store`, `load_pois`, `load_landmarks` |
 | `retrieval.py` | CORE | фильтры, скоринг, MMR | `retrieve`, `lexical_relevance`, `WEIGHTS` |
-| `route.py` | CORE | мини-маршрут | `plan_route` |
+| `route.py` | CORE → FEATURES (волна 5) | мини-маршрут: по пешеходному графу, иначе прямые отрезки | `plan_route` |
+| `walkgraph.py` | FEATURES (волна 5) | загрузка пешеходного графа, привязка к узлам, кратчайший путь (heapq) | — |
 | `validate.py` | CORE | защита от ошибок LLM, шаблонные карточки | `finalize`, `template_cards` |
 | `llm.py` | LLM | Claude: JSON по схеме, кэш; эмбеддинги Gemini (опционально) | `LLMClient.generate_structured`, `embed_query`, `embed_documents` |
 | `query_parser.py` | LLM | текст → намерение | `parse_query`, `parse_rules`, `apply_overrides`, `detect_lang` |
@@ -68,7 +69,7 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 | `generate.py` | LLM | черновики карточек | `draft_cards` (+ `prompts/*.md`) |
 | `pipeline.py` | LLM | оркестрация и запасные пути | `recommend(req, Deps)` |
 | `api.py` | LLM | HTTP и статика | `create_app(deps)`, `app` |
-| `pipeline/*` | DATA | OSM → POI → индекс | `run_all` |
+| `pipeline/*` | DATA | OSM → POI → индекс; пешеходный граф (`pipeline/walk_graph.py`) | `run_all` |
 | `web/*` | WEB | интерфейс | — |
 | `eval/*` | EVAL | сценарии, отчёт | `run_eval` |
 
@@ -76,6 +77,21 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 - `data/processed/poi.jsonl`: по одному `POI` на строку, UTF-8. Коммитится в git, чтобы во всех worktree были одни данные.
 - `data/index/embeddings.npy` (float32, N×D, L2-норма), `ids.json` (тот же порядок), `meta.json` (`model`, `dim`, `count`, `created_at`, `doc_template`).
 - `data/landmarks.json`: список `Landmark`. Координаты приблизительные, пока у записи `verified: false` (их сверяет DATA).
+- Пешеходный граф (волна 5, контракт DATA → FEATURES). Строит `pipeline/walk_graph.py` из OSM (тротуары, дорожки, переходы), читает `app/walkgraph.py`. Новых зависимостей нет: только numpy и heapq.
+  - `data/processed/walk_graph.npz` (`numpy.savez_compressed`). Номер узла — номер строки в массивах узлов.
+
+    | Массив | Тип | Смысл |
+    |---|---|---|
+    | `node_lat`, `node_lon` | float32 | координаты узла |
+    | `node_flags` | uint8 | биты: 1 переход, 2 светофор, 4 занижённый бордюр, 8 переход без разметки |
+    | `edge_u`, `edge_v` | int32 | концы ребра (номера узлов); граф неориентированный, каждое ребро один раз, `u != v` |
+    | `edge_len_m` | float32 | длина ребра по линии OSM, метры |
+    | `edge_flags` | uint8 | биты: 1 лестница, 2 освещено, 4 пешеходная дорожка, 8 крупная дорога, 16 отрезок перехода |
+
+  - `data/processed/walk_graph_meta.json`: `osm_snapshot` (дата снимка OSM), `bbox` `[юг, запад, север, восток]`, `nodes`, `edges`, `crossings`, `signals`, `largest_component_share` (доля узлов в крупнейшей компоненте, 0..1), `poi_nodes` (`{poi_id: номер узла}`), `landmark_nodes` (`{landmark_id: номер узла}`), `created_at`. Данные — производная OSM под ODbL.
+  - Время по графу: `walk_min = ceil(длина пути / 75)`, минимум 1 (те же 4,5 км/ч, но без множителя 1,3). Вид перехода в `RouteCrossing.kind`: бит 2 → `signals`, иначе бит 8 → `unmarked`, иначе бит 1 → `marked`.
+  - `MiniRoute` 1.1.0: `path_source` (`graph` | `straight`), `crossings` (до 50), `steps_count` (число отрезков-лестниц). При `graph` в `path` и `legs` путь и время по графу.
+  - Флаг `WALK_GRAPH` (по умолчанию включён) работает, если файл есть (`settings.walk_graph_ready`). Флаг выключен, файла нет или любая ошибка загрузки и поиска → прежние прямые отрезки и `path_source=straight`.
 - `data/raw/`, `data/cache/`: не коммитятся.
 - API:
   - `GET /api/health`;

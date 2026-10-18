@@ -58,7 +58,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 | EVAL | `eval/**`, `tests/test_eval*.py`, `docs/{CONCEPT,RAG,SCENARIOS,ETHICS,PITCH,VIDEO}.md` |
 | ИНТЕГРАТОР | `app/schemas.py`, `app/config.py`, `app/__init__.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_contract.py`, `tests/fixtures/poi_synthetic.jsonl`, `.gitignore`, `.env.example`, `.worktreeinclude`, `CLAUDE.md`, `README.md`, `docs/{TASK,ARCHITECTURE,PLAN,PROMPTS}.md`, `requirements.txt`, `pyproject.toml`, `.claude/**`, `scripts/check_env.py`, `web/mock/answer_sample.json`, `Dockerfile` |
 
-В волне 3 действует другая таблица владения: см. docs/PLAN.md, раздел «Волна 3».
+В волнах 3 и 5 действуют свои таблицы владения: см. docs/PLAN.md, разделы «Волна 3» и «Волна 5».
 
 ### Протокол воркера
 1. Выполни `git branch --show-current`: ты должен быть НЕ на main. Создай `.venv` (см. «Команды»).
