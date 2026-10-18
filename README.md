@@ -50,11 +50,18 @@ cp .env.example .env
 Потом запускайте так же, как во втором способе. Проверить окружение и ключи можно командой `.venv/Scripts/python scripts/check_env.py --llm`. Файл `.env` не коммитьте.
 
 ## Документы
-- [Кейс](docs/TASK.md)
-- [Архитектура](docs/ARCHITECTURE.md)
-- [План](docs/PLAN.md)
-- [Промпты для Claude Code](docs/PROMPTS.md)
-- Ещё появятся: концепция, RAG, сценарии и ограничения, этика и приватность, данные.
+Для сдачи:
+- [Концепция](docs/CONCEPT.md): проблема, аудитория, сценарии.
+- [Как устроен RAG](docs/RAG.md): шаги от запроса до карточек и запасной путь без LLM.
+- [Сценарии и ограничения](docs/SCENARIOS.md): 16 сценариев eval и результаты прогонов.
+- [Этика и приватность](docs/ETHICS.md): персональные данные, кому уходят данные, лицензии.
+- [Данные](docs/DATA.md): источники, автоматический сбор, индекс эмбеддингов.
+- [Питч](docs/PITCH.md) и [сценарий видео](docs/VIDEO.md).
+
+Для команды:
+- [Кейс](docs/TASK.md), [архитектура](docs/ARCHITECTURE.md), [план](docs/PLAN.md).
+- [Docker и хостинг](docs/DEPLOY.md).
+- [Промпты для Claude Code](docs/PROMPTS.md).
 
 ## Данные
 © участники OpenStreetMap (ODbL), Wikidata (CC0). Погода: Open-Meteo.
