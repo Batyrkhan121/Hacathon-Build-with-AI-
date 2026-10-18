@@ -41,11 +41,12 @@
   - По желанию GitHub Action, обновление по кнопке или раз в неделю.
 
 ### CORE (`/rag-retrieval` + `/ecc:tdd-workflow`)
-- [ ] **T20 geo.py + тесты** (haversine, минуты пешком, H3, ориентиры по алиасам, радиус).
-- [ ] **T21 hours.py + ≥ 15 кейсов** (24/7, дни, перерывы, через полночь, off, непонятный формат → unknown).
-- [ ] **T22 store.py + retrieval.py + тесты** (фильтры, cosine или лексика, WEIGHTS, MMR, `matched`).
-- [ ] **T23 route.py + тесты** (ближайший сосед, бюджет, честная note).
-- [ ] **T24 validate.py + тесты** (чужие id, факты из Candidate, запрещённые фразы, шаблонные карточки).
+- [x] **T20 geo.py + тесты** (haversine, минуты пешком, H3, ориентиры по алиасам, радиус).
+- [x] **T21 hours.py + ≥ 15 кейсов** (24/7, дни, перерывы, через полночь, off, непонятный формат → unknown).
+- [x] **T22 store.py + retrieval.py + тесты** (фильтры, cosine или лексика, WEIGHTS, MMR, `matched`).
+- [x] **T23 route.py + тесты** (ближайший сосед, бюджет, честная note).
+- [x] **T24 validate.py + тесты** (чужие id, факты из Candidate, запрещённые фразы, шаблонные карточки).
+  - Заметка (T20–T24): влито, pytest 3,3 с. Долги CORE: validate не проверяет числа и адреса в свободном тексте why/what_to_do; docstring evaluate_hours упоминает open/medium, код всегда даёт open/high; idea_source из черновика LLM не проверяется.
 
 ### LLM (`/rag-retrieval` + `/ecc:fastapi-patterns`)
 - [ ] **T30 llm.py + scripts/check_llm.py** (Claude: structured output, повторы, запасная модель, refusal-fallback, кэш; эмбеддинги Gemini по желанию; тесты с фейком).
