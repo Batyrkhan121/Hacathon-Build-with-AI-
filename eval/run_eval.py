@@ -302,16 +302,33 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
     return run, notes
 
 
-def url_runner(base_url: str, timeout_s: float = 60.0) -> Runner:
+def url_runner(
+    base_url: str, no_llm: bool = False, timeout_s: float = 60.0, client: Any = None
+) -> tuple[Runner | None, list[str]]:
+    """Live API. Probes GET /api/health first: an unreachable server fails fast with one note
+    instead of 16 timeouts. `client` is an httpx.Client (tests pass a MockTransport)."""
     import httpx
 
-    endpoint = base_url.rstrip("/") + "/api/recommend"
+    http = client or httpx.Client(timeout=timeout_s)
+    base = base_url.rstrip("/")
+    try:
+        health = http.get(f"{base}/api/health")
+        health.raise_for_status()
+        info = health.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        return None, [f"API {base} недоступен: {type(exc).__name__}"]
+    notes = [
+        f"API: status={info.get('status')}, POI={info.get('poi_count')}, "
+        f"index={info.get('index')}, llm={info.get('llm')}"
+    ]
+    if info.get("llm") == "off" and not no_llm:
+        notes.append("LLM на сервере выключена: ответы шаблонные")
 
     def run(req: RecommendRequest) -> Outcome:
         body = req.model_dump(mode="json", exclude_none=True)
         t0 = time.perf_counter()
         try:
-            resp = httpx.post(endpoint, json=body, timeout=timeout_s)
+            resp = http.post(f"{base}/api/recommend", json=body)
         except httpx.HTTPError as exc:
             return Outcome(error=f"сеть: {type(exc).__name__}", latency_ms=_ms(t0))
         ms = _ms(t0)
@@ -324,7 +341,7 @@ def url_runner(base_url: str, timeout_s: float = 60.0) -> Runner:
         except (ValueError, ValidationError) as exc:
             return Outcome(error=f"ответ не по схеме Answer: {str(exc)[:200]}", latency_ms=ms)
 
-    return run
+    return run, notes
 
 
 def _ms(t0: float) -> int:
@@ -412,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("МОК: один и тот же ответ на все запросы — проверяет сам eval, не систему")
     elif args.url:
         mode = f"url {args.url}" + (" --no-llm" if args.no_llm else "")
-        runner = url_runner(args.url)
+        runner, notes = url_runner(args.url, no_llm=args.no_llm)
     else:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
         runner, notes = inprocess_runner(args.no_llm)

@@ -126,3 +126,49 @@ def test_inprocess_runner_maps_errors(monkeypatch: pytest.MonkeyPatch, mock_answ
     assert results["E3"].passed
     assert results["S1"].passed, results["S1"].failures
     assert any("RuntimeError" in f for f in results["S4"].failures)
+
+
+def test_url_runner_against_fake_api(mock_answer: Answer) -> None:
+    """--url mode on an httpx MockTransport: health probe, 200, 422, 500, broken JSON."""
+    import httpx
+
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "poi_count": 531,
+                                             "index": "lexical", "llm": "off"})
+        body = json.loads(request.content)
+        sent.append(body)
+        lid = body["location"].get("landmark_id")
+        if lid == "kok_tobe_almaty":
+            return httpx.Response(422, json={"detail": "unknown landmark"})
+        if lid == "baiterek":
+            return httpx.Response(500)
+        if lid == "airport_nqz":
+            return httpx.Response(200, json={"not": "an answer"})
+        return httpx.Response(200, content=mock_answer.model_dump_json())
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    runner, notes = run_eval.url_runner("http://test", no_llm=True, client=client)
+    assert runner is not None
+    assert any("POI=531" in n for n in notes)
+    results = {r.id: r for r in run_eval.run_all(run_eval.load_scenarios(), runner, no_llm=True)}
+    assert all(b["use_llm"] is False for b in sent)
+    assert all("lat" not in json.dumps(b["location"]) for b in sent)
+    assert results["E3"].passed
+    assert results["S1"].passed, results["S1"].failures
+    assert "HTTP 500" in results["S4"].failures[0]
+    assert "не по схеме" in results["E11"].failures[0]
+
+
+def test_url_runner_unreachable_fails_fast() -> None:
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    runner, notes = run_eval.url_runner("http://down", client=client)
+    assert runner is None
+    assert "недоступен" in notes[0]
