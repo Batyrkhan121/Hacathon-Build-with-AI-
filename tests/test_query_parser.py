@@ -161,6 +161,22 @@ def test_time_budget(text: str, minutes: int | None, landmarks: dict[str, Landma
     assert rules(text, landmarks).time_budget_min == minutes
 
 
+@pytest.mark.parametrize(
+    ("text", "minutes"),
+    [("I'm near EXPO with one free hour. What's worth seeing nearby?", 60),
+     ("we have two spare hours", 120), ("three hours before the show", 180),
+     ("есть пару свободных часов", 120), ("бір сағатқа серуендегім келеді", 60)],
+)
+def test_time_budget_words(text: str, minutes: int, landmarks: dict[str, Landmark]) -> None:
+    assert rules(text, landmarks).time_budget_min == minutes
+
+
+def test_free_hour_is_not_free_entry(landmarks: dict[str, Landmark]) -> None:
+    assert "free" not in rules("one free hour near EXPO", landmarks).must_tags
+    assert "free" in rules("free museums nearby", landmarks).must_tags
+    assert "free" in rules("бесплатно и рядом", landmarks).must_tags
+
+
 def test_explicit_walk_limit_is_not_a_budget(landmarks: dict[str, Landmark]) -> None:
     i = rules("кафе не дальше 10 минут пешком, есть час", landmarks)
     assert i.max_walk_min == 10

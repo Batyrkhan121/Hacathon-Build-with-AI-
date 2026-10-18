@@ -114,7 +114,8 @@ def fake_finalize(draft: DraftResponse, candidates: list[Candidate], intent: Que
 
 
 def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | None,
-                    visit_min: dict[str, int], max_stops: int = 3) -> MiniRoute | None:
+                    visit_min: dict[str, int], max_stops: int = 3, *, loop: bool = False,
+                    note: str | None = None) -> MiniRoute | None:
     if not stops:
         return None
     legs, prev, prev_id = [], origin, "origin"
@@ -127,7 +128,7 @@ def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | 
                      total_walk_m=sum(leg.distance_m for leg in legs), total_min=total,
                      fits_budget=budget_min is None or total <= budget_min,
                      path=[origin] + [s.poi.geo for s in stops[:max_stops]],
-                     note="Маршрут приблизительный: прямые отрезки × 1,3")
+                     note=note or "Маршрут приблизительный: прямые отрезки × 1,3")
 
 
 def install_core_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -625,3 +626,51 @@ class TestRealData:
             real_deps)
         assert 0 < len(a.cards) < 3
         assert any("Рядом мало мест в открытых данных" in w for w in a.warnings)
+
+
+# ------------------------------------- real CORE + real data (wave 3, deterministic)
+
+
+def real_req(query: str, landmark: str, **kw: Any) -> RecommendRequest:
+    body: dict[str, Any] = {"query": query, "location": {"landmark_id": landmark},
+                            "at": "2026-10-19T15:00:00+05:00", "use_llm": False}
+    body.update(kw)
+    return RecommendRequest.model_validate(body)
+
+
+@pytest.fixture
+def no_weather(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+
+
+@pytest.mark.usefixtures("no_weather")
+class TestRealCore:
+    def test_s1_walk_is_a_loop_within_budget(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
+                               "что посоветуете?", "mega_silk_way"), real_deps)
+        assert 1 <= len(a.cards) <= 3
+        r = a.route
+        assert r is not None, a.warnings
+        assert r.legs[-1].to_id == "origin" and r.path[0] == r.path[-1]
+        assert r.fits_budget and r.total_min <= 60
+        assert set(r.stop_ids) <= {c.poi_id for c in a.cards}
+        assert "с возвращением к старту" in r.note
+
+    def test_walk_with_kids_note_asks_for_extra_time(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
+        if a.route is not None:
+            assert "С ребёнком закладывайте больше времени." in a.route.note
+
+    def test_no_route_at_a_transport_hub(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть "
+                               "рядом?", "airport_nqz", lang="ru"), real_deps)
+        assert a.cards and a.route is None
+        assert all(c.walk_min <= 15 for c in a.cards)
+
+    def test_tourist_route_is_one_way(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я турист, у меня 3 часа до вылета, хочу прогуляться",
+                               "baiterek"), real_deps)
+        assert len(a.cards) <= 2
+        if a.route is not None:
+            assert a.route.legs[-1].to_id != "origin"
+            assert "без обратной дороги" in a.route.note

@@ -12,6 +12,8 @@ recommend():
  6. draft_cards (LLM) -> finalize                  app.generate + app.validate (CORE)
     LLMUnavailable / use_llm=False -> template_cards
  7. plan_route for >= 2 cards when want_route      app.route (CORE)
+    (T71: "прогулка на N минут" = walk tag + budget -> route.plan_walk picks <= 3 stops that
+    fit the budget as a loop BEFORE the cards are written; the route closes on the start)
  8. DataUsed + warnings + disclaimer -> Answer
 Every step degrades gracefully; never raise to the API except for invalid input.
 
@@ -329,6 +331,15 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
 
+    # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
+    walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
+                 and not intent.tourist and not plan_intent.night)
+    gen_candidates = candidates
+    if walk_loop and req.want_route and len(candidates) >= 2:
+        picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0)
+        if len(picked) >= 2:
+            gen_candidates = picked
+
     # 6. cards
     cards: list[Card] = []
     generation = "template"
@@ -336,8 +347,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     gen_model: str | None = None
     if candidates and llm is not None:
         try:
-            draft = draft_cards(search_intent, ctx, candidates, llm)
-            cards, fin_warnings = validate.finalize(draft, candidates, search_intent, ctx)
+            draft = draft_cards(search_intent, ctx, gen_candidates, llm)
+            cards, fin_warnings = validate.finalize(draft, gen_candidates, search_intent, ctx)
             warn.extend(fin_warnings)
             draft_ids = {d.poi_id for d in draft.cards}
             if any(c.poi_id in draft_ids for c in cards):
@@ -352,14 +363,18 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             cards = []
     if candidates and not cards:
         try:
-            cards = validate.template_cards(candidates, search_intent, ctx)
+            cards = validate.template_cards(gen_candidates, search_intent, ctx)
         except Exception as exc:  # noqa: BLE001
             log.error("request %s: template_cards failed (%s)", request_id, type(exc).__name__)
             failed = True
     cards = cards[: TOURIST_MAX_CARDS if walk_budget is not None else 3]
 
     # 7. route
-    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route, request_id)
+    note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
+                            wheelchair=intent.wheelchair)
+    # At a transport hub people pick one place to wait: a tour of three cafes makes no sense.
+    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route and not at_hub,
+                        request_id, loop=walk_loop, note=note)
 
     # 8. warnings, data used, answer
     if failed and not cards:
@@ -460,6 +475,9 @@ def _route(
     intent: QueryIntent,
     want_route: bool,
     request_id: str,
+    *,
+    loop: bool = False,
+    note: str | None = None,
 ) -> MiniRoute | None:
     if not want_route or len(cards) < 2:
         return None
@@ -467,7 +485,8 @@ def _route(
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
     try:
         return route.plan_route(
-            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards}
+            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards},
+            loop=loop, note=note,
         )
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)", request_id, type(exc).__name__)

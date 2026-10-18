@@ -53,11 +53,13 @@ _WORD_BUDGETS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"полтора\s+час|час\w*[\s-]+полтора|one and a half hours?|an hour and a half"
                 r"|бір жарым сағат"), 90),
     (re.compile(r"полчаса|пол\s+часа|half an hour|half-hour|жарты сағат"), 30),
-    (re.compile(r"пар[уаы]\s+час|пар[уаы]-тройк\w*\s+час|couple (?:of )?hours|бір-екі сағат"
-                r"|екі сағат"), 120),
+    (re.compile(r"пар[уаы]\s+(?:свободных\s+)?час|пар[уаы]-тройк\w*\s+час"
+                r"|couple (?:of )?(?:free |spare )?hours|\btwo (?:free |spare )?hours\b"
+                r"|бір-екі сағат|екі сағат"), 120),
+    (re.compile(r"\bthree (?:free |spare )?hours\b|үш сағат"), 180),
     (re.compile(r"полдня|half a day|жарты күн"), 240),
     (re.compile(r"весь день|all day|күні бойы"), 480),
-    (re.compile(r"\bчас\b|\bчасок\b|\ban hour\b|\bone hour\b|бір сағат"), 60),
+    (re.compile(r"\bчас\b|\bчасок\b|\b(?:an|one) (?:free |spare )?hour\b|бір сағат"), 60),
 )
 _NEAR_RE = re.compile(r"недалеко|\bрядом\b|поблизости|\bблизко\b|nearby|near me|close by"
                       r"|close to me|жақын")
@@ -93,7 +95,9 @@ _TAG_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("interactive", _rx(r"интерактив|interactive|hands-on|потрогать|своими руками")),
     ("view", _rx(r"\bвид\b|\bвидом\b|панорам|смотров|\bviews?\b|skyline|көрініс")),
     ("photo_spot", _rx(r"фото|сфотограф|инстаграм|instagram|photo|сурет")),
-    ("free", _rx(r"бесплатн|без денег|\bfree\b|тегін")),
+    # "free hour / free time" is about time, not price
+    ("free", _rx(r"бесплатн|без денег|\bfree\b(?!\s+(?:hours?|time|afternoon|evening|morning"
+                 r"|day))|for free|тегін")),
     ("architecture", _rx(r"архитектур|architecture|сәулет")),
     ("history", _rx(r"истори|history|historic|тарих")),
     ("art", _rx(r"искусств|\bарт\b|\bart\b|картин|өнер|галере|gallery")),
