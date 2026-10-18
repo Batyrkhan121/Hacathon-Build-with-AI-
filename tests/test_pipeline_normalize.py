@@ -10,8 +10,10 @@ from pipeline.normalize import (
     hours_flags,
     normalize_element,
     normalize_payload,
+    normalize_payloads,
     osm_kind,
     popularity,
+    raw_files,
 )
 
 DATE = "2026-10-18"
@@ -157,3 +159,20 @@ def test_dedupe_short_names_need_exact_match() -> None:
     b = normalize_element(node(21, {"amenity": "cafe", "name": "Cocoa"}), DATE)
     assert a is not None and b is not None
     assert len(dedupe([a, b])) == 2
+
+
+def test_overlapping_chunks_take_each_element_once(tmp_path) -> None:
+    chunk_a = {"qadam": {"fetched_at_unix": 1792314269},
+               "elements": [node(30, {"amenity": "cafe", "name": "A"})]}
+    chunk_b = {"qadam": {"fetched_at_unix": 1792400000},
+               "elements": [node(30, {"amenity": "cafe", "name": "A"}),
+                            node(31, {"amenity": "cafe", "name": "B"}, lat=51.2)]}
+    pois = normalize_payloads([chunk_a, chunk_b])
+    assert [p.id for p in pois] == ["osm:node/30", "osm:node/31"]
+    assert pois[0].fetched_at == "2026-10-18"
+
+    for name in ("osm_astana_tile_0.json", "osm_zone_x.json", "osm_fixture.json", "other.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    assert [p.name for p in raw_files("zones", tmp_path)] == ["osm_zone_x.json"]
+    assert [p.name for p in raw_files("astana", tmp_path)] == [
+        "osm_astana_tile_0.json", "osm_zone_x.json", "osm_fixture.json"]

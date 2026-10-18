@@ -2,6 +2,7 @@
 
     python -m pipeline.normalize --area fixture --out tests/fixtures/poi_sample.jsonl
     python -m pipeline.normalize --area astana          # -> data/processed/poi.jsonl
+    python -m pipeline.normalize --area zones           # demo zones only
 
 Rules are documented in .claude/skills/poi-data-pipeline/SKILL.md (later in docs/DATA.md).
 A tag from TAG_VOCAB is set only when OSM data supports it, never by guess.
@@ -356,10 +357,40 @@ def fetched_date(payload: Mapping) -> str:
     return datetime.now(ASTANA_TZ).date().isoformat()
 
 
-def normalize_payload(payload: Mapping) -> list[POI]:
-    date = fetched_date(payload)
-    pois = [p for el in payload.get("elements", []) if (p := normalize_element(el, date))]
+def normalize_payloads(payloads: Iterable[Mapping]) -> list[POI]:
+    """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
+    taken once (the first chunk wins), then near-duplicates are merged by `dedupe`."""
+    seen: set[str] = set()
+    pois: list[POI] = []
+    for payload in payloads:
+        date = fetched_date(payload)
+        for el in payload.get("elements", []):
+            key = f"{el.get('type')}/{el.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            if poi := normalize_element(el, date):
+                pois.append(poi)
     return dedupe(pois)
+
+
+def normalize_payload(payload: Mapping) -> list[POI]:
+    return normalize_payloads([payload])
+
+
+def raw_files(area: str, raw_dir: Path) -> list[Path]:
+    """Raw chunk files feeding an area: `astana` takes every chunk on disk (tiles, zones,
+    fixture) so a partly downloaded city still has the demo zones."""
+    patterns = {
+        "fixture": ["osm_fixture.json"],
+        "zones": ["osm_zone_*.json"],
+        "astana": ["osm_astana_tile_*.json", "osm_zone_*.json", "osm_fixture.json"],
+    }[area]
+    return [p for pattern in patterns for p in sorted(raw_dir.glob(pattern))]
+
+
+def load_payloads(paths: Iterable[Path]) -> list[dict]:
+    return [json.loads(p.read_text(encoding="utf-8")) for p in paths]
 
 
 def write_jsonl(pois: Sequence[POI], path: Path) -> None:
@@ -373,17 +404,18 @@ def write_jsonl(pois: Sequence[POI], path: Path) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    from pipeline.fetch_osm import raw_path
-
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--area", choices=["astana", "fixture"], default="astana")
+    parser.add_argument("--area", choices=["astana", "zones", "fixture"], default="astana")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
-    out = args.out or get_settings().poi_path
-    payload = json.loads(raw_path(args.area).read_text(encoding="utf-8"))
-    pois = normalize_payload(payload)
+    settings = get_settings()
+    out = args.out or settings.poi_path
+    paths = raw_files(args.area, settings.data_dir / "raw")
+    if not paths:
+        raise SystemExit(f"no raw files for area {args.area!r}: run pipeline.fetch_osm first")
+    pois = normalize_payloads(load_payloads(paths))
     write_jsonl(pois, out)
-    print(f"{len(pois)} POI -> {out}")
+    print(f"{len(pois)} POI from {len(paths)} raw files -> {out}")
 
 
 if __name__ == "__main__":
