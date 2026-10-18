@@ -18,6 +18,11 @@ const advancedSummary=document.createElement('summary');advanced.append(advanced
 for(const el of [...$('ask').querySelectorAll('fieldset')])advanced.append(el);
 document.querySelector('.query-row').insertBefore(advanced,$('submit'));
 const done=view.h('button',{type:'button',class:'btn btn-ghost parameters-done',onclick:()=>{advanced.open=false;advancedSummary.focus();}});advanced.append(done);
+const mobileConditions=view.h('div',{class:'mobile-conditions'});
+for(const [kind,ic,selector] of [['where','map-pin','#landmark'],['duration','clock','#budget-chips button[aria-pressed="true"]'],['when','clock','#time-input']]){
+ const button=view.h('button',{type:'button',class:'condition-control condition-'+kind,onclick:()=>{advanced.open=true;const target=document.querySelector(selector);target?.scrollIntoView({block:'center',behavior:'smooth'});target?.focus({preventScroll:true});}},icon(ic),view.h('span',{},view.h('small'),view.h('strong')),view.h('span',{class:'control-chevron','aria-hidden':'true',text:'›'}));mobileConditions.append(button);
+}
+advanced.before(mobileConditions);
 const mapWrap=document.querySelector('.map-wrap'),app=document.querySelector('.app');
 const spec=document.createElement('div');spec.id='spec';spec.hidden=true;document.body.append(spec);
 const ifSmall=()=>innerWidth<1000;
@@ -45,6 +50,8 @@ function syncChrome(){
  hero.querySelector('.eyebrow').textContent=ux('eyebrow');hero.querySelector('h2').textContent=ux('hero');hero.querySelector('.home-intro').textContent=ux('intro');
  $('presets-title').textContent=ux('presets');$('query').placeholder=ux('placeholder');$('submit').querySelector('span').textContent=ux('submit');
  $('mock-pill').textContent=ux('demo');$('mock-pill').title=ux('mockHint');privacy.querySelector('span').textContent=ux('privacy');
+ const conditionValues={where:[t('where.legend'),locationName()],duration:[ux('durationLabel'),t('budget.'+state.budget)],when:[t('when.legend'),(state.day?t('when.tomorrow')+' · ':'')+(state.time||t('when.now'))]};
+ for(const [kind,[label,value]] of Object.entries(conditionValues)){const control=mobileConditions.querySelector('.condition-'+kind);control.querySelector('small').textContent=label;control.querySelector('strong').textContent=value;}
  done.textContent=ux('apply');editCancel.textContent=ux('cancelEdit');editCancel.hidden=!state.editing;
  toolbar.querySelector('strong').textContent=$('query').value||t(`preset.${state.scenario}.query`);toolbar.querySelector('small').textContent=conditionText();toolbar.querySelector('.edit-label').textContent=ux('edit');toolbar.setAttribute('aria-label',ux('editQuery'));
  mapBack.lastElementChild.textContent=state.answer?ux('back'):ux('editQuery');mapLabel.querySelector('span').textContent=ux('mapTitle');mapLabel.querySelector('small').textContent=locationName();

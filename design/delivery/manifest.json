@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18T16:27:11.176Z",
+  "generatedAt": "2026-10-18T17:52:59.681Z",
   "frames": [
     {
       "file": "screens/01-home.png",
@@ -13,7 +13,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 931,
+        "bodyHeight": 949,
         "firstCard": null
       }
     },
@@ -419,7 +419,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1756,
+        "bodyHeight": 1773,
         "firstCard": null
       }
     },
@@ -435,7 +435,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1756,
+        "bodyHeight": 1773,
         "firstCard": null
       }
     },
@@ -499,7 +499,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 970,
+        "bodyHeight": 988,
         "firstCard": null
       }
     },
