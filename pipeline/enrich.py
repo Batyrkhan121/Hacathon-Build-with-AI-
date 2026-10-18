@@ -1,13 +1,15 @@
-"""Descriptions for POIs that have none: OSM description -> Wikidata -> Claude (top-N).
+"""Descriptions for POIs that have none: OSM description -> Wikidata -> Claude (notable).
 
-    python -m pipeline.enrich [--limit 150]
+    python -m pipeline.enrich [--limit N]
 
 - Wikidata: `wbgetentities` for POIs whose OSM record has a `wikidata` tag, 50 ids per
   request, ru -> kk -> en. description_source="wikidata", "wikidata" joins `sources`.
-- Claude: the top-N POIs by popularity still without a description get one neutral
-  sentence in Russian written ONLY from name, category and tags (no prices, hours,
-  events or ratings). description_source="llm_generated" — the UI shows it as generated.
-  `sources` is not touched: a generated sentence is not a source of facts.
+- Claude: notable places (museums, galleries, theatres, cinemas, libraries, parks,
+  viewpoints, attractions, monuments, religious places, malls, entertainment) still without
+  a description get one neutral sentence in Russian written ONLY from name, category and
+  tags (no prices, hours, events or ratings). Cafes, bars, fast food and playgrounds get
+  none, and old generated text on them is removed. description_source="llm_generated" —
+  the UI shows it as generated; `sources` is not touched (not a source of facts).
 Both steps cache in data/cache/ and are skipped (with a note for REPORT.md) when there is
 no network or no ANTHROPIC_API_KEY. data_confidence is not changed by enrichment.
 """
@@ -38,14 +40,23 @@ log = logging.getLogger(__name__)
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 WIKIDATA_BATCH = 50
 WIKIDATA_LANGS = ("ru", "kk", "en")
-DEFAULT_LIMIT = 150
+# places worth a sentence; cafes, bars, fast food and playgrounds speak for themselves
+NOTABLE_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "museum", "gallery", "theatre", "cinema", "library", "park", "viewpoint",
+        "attraction", "monument", "religious", "mall", "entertainment",
+    }
+)
 LLM_BATCH = 25
 LLM_MAX_CHARS = 220
 PROMPT_VERSION = "v1"
-# a generated sentence must not invent facts the card shows from data
+# a generated sentence must not invent facts the card shows from data: clock times,
+# prices, ratings, reviews, opening hours, discounts. Words, not stems: "центр" or
+# "Астана Жұлдызы" (a star) are fine.
 FORBIDDEN = re.compile(
-    r"\d{1,2}[:.]\d{2}|₸|тенге|\bцен|рейтинг|отзыв|звёзд|звезд|круглосуточ|часы работы|"
-    r"открыт[оа]? (?:с|до|ежедневно)|скидк|акци[яи]",
+    r"\d{1,2}[:.]\d{2}|₸|тенге|\bцен(?:а|ы|е|у|ой|ам|ами|ах)?\b|\bстоимост|\bрейтинг|"
+    r"\bотзыв|\d\s*зв[её]зд|круглосуточ|часы работы|режим работы|"
+    r"открыт[оа]? (?:с|до|ежедневно)|\bскидк|\bакци(?:я|и|ей|ю)\b",
     re.IGNORECASE,
 )
 
@@ -214,55 +225,78 @@ def claude_describer() -> Describer:
     return describe
 
 
+def strip_generated(pois: list[POI]) -> tuple[list[POI], int]:
+    """Generated text only where it helps: drop llm_generated descriptions of places
+    outside NOTABLE_CATEGORIES (cafes, bars, fast food, playgrounds...)."""
+    out: list[POI] = []
+    removed = 0
+    for p in pois:
+        if p.description_source == "llm_generated" and p.category not in NOTABLE_CATEGORIES:
+            p = p.model_copy(update={"description": None, "description_source": None})
+            removed += 1
+        out.append(p)
+    return out, removed
+
+
 def llm_step(
     pois: list[POI],
-    limit: int,
+    limit: int | None,
     cache_path: Path,
     model: str,
     describe: Describer | None = None,
 ) -> tuple[list[POI], str]:
+    """Describe notable places (NOTABLE_CATEGORIES) that still have no description,
+    most popular first; `limit` caps how many (None = all of them)."""
+    pois, removed = strip_generated(pois)
     settings = get_settings()
     if describe is None:
         if not settings.has_llm:
             return pois, "Описания Claude пропущены: нет ANTHROPIC_API_KEY (или LLM_ENABLED=false)."
         describe = claude_describer()
     cache: dict[str, str] = load_json(cache_path)
-    targets = sorted(
-        (p for p in pois if not p.description), key=lambda p: (-p.popularity, p.id)
-    )[:limit]
+    notable = sorted(
+        (p for p in pois if not p.description and p.category in NOTABLE_CATEGORIES),
+        key=lambda p: (-p.popularity, p.id),
+    )
+    targets = notable[:limit] if limit else notable
     items = {p.id: llm_input(p) for p in targets}
     keys = {pid: llm_key(item, model) for pid, item in items.items()}
-    todo = [items[pid] for pid in items if keys[pid] not in cache]
-    rejected = 0
+    # the cache keeps Claude's raw answer and the check runs on every build, so a fixed
+    # check never needs a paid re-ask; "" (an old rejected entry) counts as not asked
+    todo = [items[pid] for pid in items if not cache.get(keys[pid])]
     note = ""
     try:
         for start in range(0, len(todo), LLM_BATCH):
             batch = todo[start : start + LLM_BATCH]
             sent = {it["poi_id"] for it in batch}
             for d in describe(batch):
-                if d.poi_id not in sent:  # never accept text for an id we did not send
-                    continue
-                text = clean_sentence(d.text)
-                if text is None:
-                    rejected += 1
-                    continue
-                cache[keys[d.poi_id]] = text
+                if d.poi_id in sent:  # never accept text for an id we did not send
+                    cache[keys[d.poi_id]] = d.text
             save_json(cache_path, cache)
     except Exception as exc:  # API / network: keep what is done, the demo must not fail
         note = f" Остановлено на ошибке {type(exc).__name__}: часть мест без описаний."
         log.warning("claude descriptions stopped: %s", exc)
 
     out: list[POI] = []
-    added = 0
+    added = rejected = 0
     for p in pois:
-        text = cache.get(keys[p.id]) if p.id in keys else None
-        if text and not p.description:
-            p = p.model_copy(update={"description": text, "description_source": "llm_generated"})
-            added += 1
+        raw = cache.get(keys[p.id]) if p.id in keys else None
+        if raw and not p.description:
+            text = clean_sentence(raw)
+            if text is None:
+                rejected += 1
+            else:
+                p = p.model_copy(
+                    update={"description": text, "description_source": "llm_generated"}
+                )
+                added += 1
         out.append(p)
+    scope = f"топ-{limit} из {len(notable)}" if limit and limit < len(notable) else len(notable)
     return out, (
-        f"Описания Claude ({model}, пометка llm_generated): {added} из топ-{limit} "
-        f"по popularity; отклонено проверкой: {rejected}.{note}"
+        f"Описания Claude ({model}, пометка llm_generated): {added} из {scope} заметных мест "
+        f"без описания ({', '.join(sorted(NOTABLE_CATEGORIES))}); кафе, бары, фастфуд и "
+        f"площадки не описываются (убрано старых: {removed}); отклонено проверкой "
+        f"на часы, цены и рейтинги: {rejected}.{note}"
     )
 
 
@@ -282,8 +316,7 @@ def run(limit: int | None = None, area: str = "astana") -> list[str]:
             qids.setdefault(f"osm:{LANDMARK_OSM[lm_id]}", qid)
     pois, wiki_note = wikidata_step(pois, qids, settings.cache_dir / "wikidata.json")
     pois, llm_note = llm_step(
-        pois, limit or DEFAULT_LIMIT, settings.cache_dir / "descriptions.json",
-        settings.claude_model,
+        pois, limit, settings.cache_dir / "descriptions.json", settings.claude_model
     )
     write_jsonl(pois, settings.poi_path)
     return [wiki_note, llm_note]
@@ -291,7 +324,7 @@ def run(limit: int | None = None, area: str = "astana") -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    parser.add_argument("--limit", type=int, default=None, help="cap; default: all notable")
     parser.add_argument("--area", choices=["astana", "zones", "fixture"], default="astana")
     args = parser.parse_args(argv)
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")

@@ -68,7 +68,7 @@ def test_failure_skips_without_raising(tmp_path: Path) -> None:
                       cache_path=tmp_path / "c.npz", model="fake", dim=4)
     assert res.status == "skipped" and "quota" in res.reason
     assert not (tmp_path / "index" / "meta.json").exists()
-    assert "не построен" in index_status(tmp_path / "index", 1)
+    assert "не построен" in index_status(tmp_path / "index", [make_poi(1)])
 
 
 def test_no_key_skips(tmp_path: Path, monkeypatch) -> None:
@@ -77,3 +77,31 @@ def test_no_key_skips(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(config.Settings, "has_embeddings", property(lambda self: False))
     res = build_index([make_poi(1)], tmp_path / "index")
     assert res.status == "skipped" and "GEMINI_API_KEY" in res.reason
+
+
+def test_status_flags_index_built_from_old_texts(tmp_path: Path) -> None:
+    pois = [make_poi(i) for i in range(2)]
+    build_index(pois, tmp_path / "index", embed=fake_embedder([]),
+                cache_path=tmp_path / "c.npz", model="fake", dim=4)
+    assert "устарел" not in index_status(tmp_path / "index", pois)
+    changed = [pois[0].model_copy(update={"description": "Новое описание."}), pois[1]]
+    assert "тексты POI (описания) изменились" in index_status(tmp_path / "index", changed)
+    assert "в poi.jsonl 1 POI" in index_status(tmp_path / "index", pois[:1])
+
+
+def test_daily_quota_is_not_retried_and_reported_briefly(tmp_path: Path) -> None:
+    from pipeline.build_index import with_retries
+
+    calls: list[int] = []
+
+    def exhausted(batch: list[str]) -> list[list[float]]:
+        calls.append(1)
+        raise RuntimeError("429 RESOURCE_EXHAUSTED {'quotaId': "
+                           "'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier'}")
+
+    res = build_index([make_poi(1)], tmp_path / "index",
+                      embed=with_retries(exhausted, sleep=lambda s: None),
+                      cache_path=tmp_path / "c.npz", model="fake", dim=4)
+    assert calls == [1]
+    assert res.status == "skipped" and "дневная квота Gemini" in res.reason
+    assert "без вектора 1 текстов" in res.reason and "{" not in res.reason

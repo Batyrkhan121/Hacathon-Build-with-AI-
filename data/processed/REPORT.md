@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 16:26 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 16:36 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -39,7 +39,7 @@
 - `wheelchair` указан: 5%.
 - адрес: 14%; сайт или телефон: 19%.
 - тег `wikidata` в OSM: 1% (15).
-- описание: нет — 88% (1077), llm_generated — 11% (134), wikidata — 1% (16), osm — 0% (1).
+- описание: нет — 82% (1001), llm_generated — 17% (210), wikidata — 1% (16), osm — 0% (1).
 - название на 2+ языках: 10%.
 - средний `data_confidence`: 0.39
 - `rating` пуст у всех записей: настоящих рейтингов в открытых данных нет. `popularity` — документированный прокси (wiki-ссылки, полнота тегов, тип, бренд).
@@ -63,14 +63,15 @@
 ## Обогащение и индекс
 - Ручные правки (data/manual/overrides.json): 1 мест.
 - Wikidata: описания добавлены 16 местам (из 17 с тегом).
-- Описания Claude (claude-sonnet-5-5, пометка llm_generated): 134 из топ-150 по popularity; отклонено проверкой: 16.
-- Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00.
+- Описания Claude (claude-sonnet-5-5, пометка llm_generated): 210 из 213 заметных мест без описания (attraction, cinema, entertainment, gallery, library, mall, monument, museum, park, religious, theatre, viewpoint); кафе, бары, фастфуд и площадки не описываются (убрано старых: 0); отклонено проверкой на часы, цены и рейтинги: 3.
+- Индекс пропущен: эмбеддинги не получены (ClientError): 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage.
+- Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00 — **устарел**: тексты POI (описания) изменились после сборки индекса; id и порядок совпадают, векторы части мест считаны по старым текстам.
 
 ## Примеры записей
 ```json
 {"id": "osm:way/460703779", "name": "Хан Шатыр", "name_i18n": {"ru": "Хан Шатыр", "en": "Khan Shatyr"}, "category": "mall", "tags": ["indoor", "late_open", "shopping", "wheelchair"], "geo": {"lat": 51.1325089, "lon": 71.4038726}, "h3_r9": "8921538228fffff", "description": "торгово-развлекательный центр в столице Казахстана", "description_source": "wikidata", "address": "Тұран даңғылы, 37", "opening_hours": "Mo-Su,PH 10:00-23:00", "wheelchair": "yes", "indoor": true, "popularity": 0.6, "sources": ["osm", "wikidata"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
 {"id": "osm:way/762780007", "name": "Abu Dhabi Plaza", "name_i18n": {}, "category": "mall", "tags": ["indoor", "shopping"], "geo": {"lat": 51.1219718, "lon": 71.4279322}, "h3_r9": "89215380483ffff", "description": "многофункциональный комплекс", "description_source": "wikidata", "address": "Сығанақ көшесі, 60/5", "opening_hours": "Mo-Su 10:00-22:00", "phone": "+7 7172 621616", "website": "https://abudhabiplaza.info/", "wheelchair": "unknown", "indoor": true, "popularity": 0.6, "sources": ["osm", "wikidata"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
-{"id": "osm:node/11162304905", "name": "Атлас", "name_i18n": {"ru": "Атлас", "en": "Atlas"}, "category": "restaurant", "tags": ["coffee", "food", "indoor", "late_open", "vegetarian", "wifi"], "geo": {"lat": 51.131615, "lon": 71.4275325}, "h3_r9": "89215382353ffff", "description": "Атлас — ресторан с кофе и вегетарианскими блюдами, есть Wi-Fi, работает допоздна.", "description_source": "llm_generated", "address": "Қонаев көшесі, 29", "opening_hours": "Su-Sa 10:00-02:00", "phone": "+7 (771) 231-36-14", "website": "https://atlasrestobar.taplink.ws/", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:node/11162304905", "name": "Атлас", "name_i18n": {"ru": "Атлас", "en": "Atlas"}, "category": "restaurant", "tags": ["coffee", "food", "indoor", "late_open", "vegetarian", "wifi"], "geo": {"lat": 51.131615, "lon": 71.4275325}, "h3_r9": "89215382353ffff", "address": "Қонаев көшесі, 29", "opening_hours": "Su-Sa 10:00-02:00", "phone": "+7 (771) 231-36-14", "website": "https://atlasrestobar.taplink.ws/", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
 {"id": "osm:way/241241552", "name": "Библиотека ЕНУ", "name_i18n": {"ru": "Библиотека ЕНУ", "kk": "ЕҰУ Кітапханасы"}, "category": "library", "tags": ["indoor", "wifi"], "geo": {"lat": 51.1604358, "lon": 71.4652674}, "h3_r9": "89215382e97ffff", "description": "Библиотека ЕНУ — библиотека в помещении с Wi-Fi.", "description_source": "llm_generated", "address": "Пушкин көшесі, 11", "opening_hours": "Mo-Fr 09:00-19:00; Sa 09:00-14:00; Su off", "website": "https://library.enu.kz", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
-{"id": "osm:node/6698615689", "name": "Restobar D51", "name_i18n": {"ru": "Restobar D51", "en": "Restobar D51"}, "category": "bar", "tags": ["indoor", "late_open", "night", "wifi"], "geo": {"lat": 51.1476868, "lon": 71.4156581}, "h3_r9": "89215382077ffff", "description": "Restobar D51 — ночной бар в помещении с Wi-Fi, работающий допоздна.", "description_source": "llm_generated", "address": "Қорғалжын тас жолы, 2", "opening_hours": "Mo-Su 16:00-04:00", "phone": "+77775552060", "wheelchair": "unknown", "indoor": true, "popularity": 0.13, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:node/6698615689", "name": "Restobar D51", "name_i18n": {"ru": "Restobar D51", "en": "Restobar D51"}, "category": "bar", "tags": ["indoor", "late_open", "night", "wifi"], "geo": {"lat": 51.1476868, "lon": 71.4156581}, "h3_r9": "89215382077ffff", "address": "Қорғалжын тас жолы, 2", "opening_hours": "Mo-Su 16:00-04:00", "phone": "+77775552060", "wheelchair": "unknown", "indoor": true, "popularity": 0.13, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
 ```
