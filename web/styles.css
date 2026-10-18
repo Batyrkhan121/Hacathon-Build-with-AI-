@@ -1480,14 +1480,15 @@ input[type="time"] {
   transform: scale(0.97);
 }
 
-/* Ответ появляется мягко: прозрачность и сдвиг на 4 px, без «прыжка». */
+/* Ответ появляется мягко: сдвиг на 4 px и лёгкая прозрачность. Начальная прозрачность 0,7, не 0:
+   если браузер поставит анимацию на паузу (фоновая вкладка, запись экрана), текст останется читаемым. */
 .answer {
-  animation: answer-in 0.22s ease-out both;
+  animation: answer-in 0.22s ease-out;
 }
 
 @keyframes answer-in {
   from {
-    opacity: 0;
+    opacity: 0.7;
     transform: translateY(4px);
   }
 }
