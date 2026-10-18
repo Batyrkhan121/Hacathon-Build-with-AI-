@@ -32,8 +32,8 @@ from pipeline.normalize import (
     raw_files,
 )
 
-# a landmark POI = the OSM object of a landmark, added by normalize.finalize (sources
-# osm + manual); an override also adds "manual", so sources alone are not enough
+# a landmark POI = the OSM object of a landmark that our selectors did not fetch, so
+# normalize.finalize added it; "manual" in sources is not a marker (overrides add it too)
 LANDMARK_POI_IDS = frozenset(f"osm:{ref}" for ref in LANDMARK_OSM.values())
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
@@ -104,7 +104,7 @@ def build_report(
         f"- Добавлено вручную: {sum(1 for p in pois if p.id.startswith('manual:'))} "
         "(места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).",
         "- Ориентиры, добавленные как места (объект OSM + ручная разметка): "
-        f"{sum(1 for p in pois if p.id in LANDMARK_POI_IDS and 'manual' in p.sources)}.",
+        f"{sum(1 for p in pois if p.id in LANDMARK_POI_IDS and p.id not in tags_by_id)}.",
     ]
     if stamps:
         lo = datetime.fromtimestamp(min(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
