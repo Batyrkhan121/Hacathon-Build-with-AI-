@@ -2,7 +2,8 @@
 
 Endpoints (contract):
   GET  /api/health     -> {"status": "ok", "poi_count": int, "index": "ready|lexical",
-                           "llm": "ok|off"}
+                           "llm": "ok|off"}; HTTP 503 when poi_count == 0 (same body,
+                           status "degraded"), any other degraded state is 200
   GET  /api/landmarks  -> list[Landmark]
   GET  /api/meta       -> {"snapshot_date", "poi_count", "by_category": {...}, "sources": [...]}
   POST /api/recommend  RecommendRequest -> Answer   (422 on invalid input / unknown landmark)
@@ -302,7 +303,8 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                   len(exc.errors()))
         return JSONResponse(status_code=500, content={"detail": INTERNAL_ERROR})
 
-    @app.get("/api/health", tags=["api"], summary="Состояние сервиса")
+    @app.get("/api/health", tags=["api"], summary="Состояние сервиса",
+             responses={503: {"description": "Нет POI (poi_count 0) или данные не загрузились"}})
     async def health(request: Request) -> JSONResponse:
         d: Deps | None = request.app.state.deps
         if d is None:
@@ -312,7 +314,10 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                          "llm": "off", "schema_version": SCHEMA_VERSION},
             )
         problems = [*_store_problems(d), *request.app.state.prompt_problems]
-        return JSONResponse({
+        # no POI = every recommendation is 503: a hosting platform's HTTP check sees only the
+        # code, so an empty server must fail it. Other degraded states still answer cards: 200
+        code = status.HTTP_503_SERVICE_UNAVAILABLE if not d.store.pois else status.HTTP_200_OK
+        return JSONResponse(status_code=code, content={
             "status": _status(d, problems),
             "poi_count": len(d.store.pois),
             "index": _index_state(d),
