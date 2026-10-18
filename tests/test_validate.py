@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pytest
@@ -590,3 +591,31 @@ def test_poi_id_with_spaces_is_accepted(cands: list[Candidate]) -> None:
                                intent(), ctx())
     assert [c.poi_id for c in cards] == ["test:poi/1"]
     assert not any("не из списка" in w for w in warnings)
+
+
+# ------------------------------------- silent-failure review №2: warnings follow lang
+
+
+@pytest.mark.parametrize("lang", ["kk", "en"])
+def test_finalize_warnings_follow_language(cands: list[Candidate], lang: str) -> None:
+    resp = DraftResponse(
+        summary="",
+        cards=[
+            draft("test:poi/999"),
+            draft("test:poi/3", why="Открыто сейчас. Цены от 2500 тенге. Тихо."),
+            draft("test:poi/3"),
+        ],
+    )
+    _, warnings = finalize(resp, cands, intent(lang=lang), ctx())
+    assert len(warnings) == 4  # foreign, duplicate, open claim, unverifiable fact
+    for w in warnings:
+        if lang == "en":
+            assert not re.search("[а-яё]", w.lower()), w
+        else:
+            assert re.search("[әғқңөұүһі]", w.lower()), w
+        assert not has_open_claim(w)
+    _, empty = finalize(DraftResponse(summary="", cards=[]), [], intent(lang=lang), ctx())
+    _, fallback = finalize(DraftResponse(summary="", cards=[draft("x:1/1")]), cands,
+                           intent(lang=lang), ctx())
+    for w in [*empty, *fallback]:
+        assert (not re.search("[а-яё]", w.lower())) if lang == "en" else re.search("[әқң]", w)

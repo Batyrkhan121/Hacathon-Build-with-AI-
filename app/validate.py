@@ -51,6 +51,36 @@ MAX_TODO_CHARS = 360
 MAX_WHY_SENTENCES = 2
 MAX_CARDS = 3
 MAX_SUMMARY_CHARS = 200
+# finalize() warnings are shown to the user, so they follow intent.lang (product rule 6)
+FINALIZE_WARNINGS: dict[str, dict[str, str]] = {
+    "ru": {
+        "no_candidates": "Рядом не нашлось подходящих мест по заданным условиям",
+        "foreign": "Отброшено карточек ИИ с местами не из списка кандидатов: {n}",
+        "duplicates": "Отброшено повторных карточек ИИ: {n}",
+        "claims": "Убрано утверждение о текущей работе места: часы не подтверждены",
+        "facts": "Убраны непроверяемые детали из текста ИИ: "
+        "цены, телефоны, адреса или числа не из данных",
+        "fallback": "ИИ не дал подходящих карточек, показаны карточки по данным",
+    },
+    "kk": {
+        "no_candidates": "Берілген шарттар бойынша жақын жерде лайықты орын табылмады",
+        "foreign": "Тізімде жоқ орындары бар ЖИ карточкалары алынып тасталды: {n}",
+        "duplicates": "Қайталанған ЖИ карточкалары алынып тасталды: {n}",
+        "claims": "Жұмыс уақыты туралы расталмаған тұжырым алынып тасталды",
+        "facts": "ЖИ мәтінінен тексерілмейтін мәліметтер алынып тасталды: "
+        "бағалар, телефондар, мекенжайлар немесе деректерде жоқ сандар",
+        "fallback": "ЖИ лайықты карточка бермеді, деректер бойынша карточкалар көрсетілді",
+    },
+    "en": {
+        "no_candidates": "No suitable places nearby for these conditions",
+        "foreign": "Dropped AI cards with places outside the candidate list: {n}",
+        "duplicates": "Dropped repeated AI cards: {n}",
+        "claims": "Removed an unconfirmed statement about opening hours",
+        "facts": "Removed unverifiable details from the AI text: "
+        "prices, phones, addresses or numbers not in the data",
+        "fallback": "The AI gave no usable cards, showing cards built from the data",
+    },
+}
 UNKNOWN_HOURS_NOTE = unknown_note("ru")  # texts in ru/kk/en live in app.hours
 
 _CLAIM_RE = re.compile(
@@ -552,7 +582,7 @@ def finalize(
     - if fewer than 1 valid card remains -> return template_cards(...) and a warning.
     """
     if not candidates:
-        return [], ["Рядом не нашлось подходящих мест по заданным условиям"]
+        return [], [FINALIZE_WARNINGS.get(intent.lang, FINALIZE_WARNINGS["ru"])["no_candidates"]]
 
     by_id = {c.poi.id: c for c in candidates}
     cards: list[Card] = []
@@ -598,20 +628,18 @@ def finalize(
             )
         )
 
+    text = FINALIZE_WARNINGS.get(intent.lang, FINALIZE_WARNINGS["ru"])
     warnings: list[str] = []
     if foreign:
-        warnings.append(f"Отброшено карточек ИИ с местами не из списка кандидатов: {foreign}")
+        warnings.append(text["foreign"].format(n=foreign))
     if duplicates:
-        warnings.append(f"Отброшено повторных карточек ИИ: {duplicates}")
+        warnings.append(text["duplicates"].format(n=duplicates))
     if stripped:
-        warnings.append("Убрано утверждение о текущей работе места: часы не подтверждены")
+        warnings.append(text["claims"])
     if facts_cut:
-        warnings.append(
-            "Убраны непроверяемые детали из текста ИИ: "
-            "цены, телефоны, адреса или числа не из данных"
-        )
+        warnings.append(text["facts"])
     if not cards:
-        warnings.append("ИИ не дал подходящих карточек, показаны карточки по данным")
+        warnings.append(text["fallback"])
         return template_cards(candidates, intent, ctx), warnings
     return _distinct_titles(cards, [by_id[c.poi_id] for c in cards], intent.lang), warnings
 
