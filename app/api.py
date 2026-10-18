@@ -193,8 +193,10 @@ def _store_problems(d: Deps) -> list[str]:
         out.append("нет POI: data/processed/poi.jsonl пуст или не прочитан")
     if not d.store.landmarks:
         out.append("нет ориентиров: data/landmarks.json пуст или не прочитан")
-    if index_status(d.settings) == "stale" and not any("устарел" in w
-                                                        for w in d.store.warnings):
+    # «устарел» only about vectors in use: an index of another model / a broken one is not
+    # used at all, and the line below about it is the news (Store does the same)
+    if (index_status(d.settings) == "stale" and d.store.embeddings is not None
+            and not any("устарел" in w for w in d.store.warnings)):
         out.append("индекс эмбеддингов устарел (meta.json: status=stale)")
     problem = index_problem(d.settings, d.store)
     if problem == "index_mismatch":

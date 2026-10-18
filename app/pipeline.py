@@ -376,7 +376,8 @@ LLM_REASONS: dict[str, dict[str, str]] = {
            "invalid_output": "invalid model output", "bad_request": "request error",
            "bug": "internal error"},
 }
-# Reasons in brackets are for failures only. An empty GEMINI_API_KEY is a deliberate choice
+# Reasons in brackets are for failures only. An empty embeddings key (OPENROUTER_API_KEY /
+# GEMINI_API_KEY, by EMBED_PROVIDER) is a deliberate choice
 # (video takes run with it), so "no_key" has no text: plain «поиск: по словам», no warning.
 # {p} = the embeddings provider as the user would name it: Gemini or OpenRouter.
 EMBED_REASONS: dict[str, dict[str, str]] = {

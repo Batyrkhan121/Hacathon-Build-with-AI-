@@ -393,10 +393,17 @@ class LLMClient:
                     )
         return self._genai
 
+    @property
+    def _embed_key_name(self) -> str:
+        """The key EMBED_PROVIDER needs: OPENROUTER_API_KEY or GEMINI_API_KEY."""
+        return ("OPENROUTER_API_KEY" if self.settings.embed_provider == "openrouter"
+                else "GEMINI_API_KEY")
+
     def embed_query(self, text: str) -> np.ndarray | None:
-        """L2-normalised query vector, or None without GEMINI_API_KEY / on any failure
-        (retrieval goes lexical). One short attempt; after a failure only the disk cache is
-        used for EMBED_COOLDOWN_S, so a dead quota never slows a live request down."""
+        """L2-normalised query vector, or None without the provider's key (OPENROUTER_API_KEY
+        / GEMINI_API_KEY, by EMBED_PROVIDER) / on any failure (retrieval goes lexical).
+        One short attempt; after a failure only the disk cache is used for EMBED_COOLDOWN_S,
+        so a dead quota never slows a live request down."""
         if not self.settings.has_embeddings:
             self._local.embed = "no_key"
             return None
@@ -430,9 +437,10 @@ class LLMClient:
 
     def embed_documents(self, texts: list[str]) -> np.ndarray:
         """(len(texts), embed_dim) float32, L2-normalised. Batches internally.
-        Raise LLMUnavailable without GEMINI_API_KEY (build_index then skips the index)."""
+        Raise LLMUnavailable without the provider's key (build_index then skips the index)."""
         if not self.settings.has_embeddings:
-            raise LLMUnavailable("GEMINI_API_KEY is not set: no embeddings, retrieval is lexical")
+            raise LLMUnavailable(f"{self._embed_key_name} is not set: no embeddings, "
+                                 "retrieval is lexical")
         if not texts:
             return np.zeros((0, self.settings.embed_dim), dtype=np.float32)
         try:
