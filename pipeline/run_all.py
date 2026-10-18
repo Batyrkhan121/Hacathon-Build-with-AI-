@@ -1,0 +1,110 @@
+"""The whole data pipeline in one idempotent command.
+
+    python -m pipeline.run_all                        # Astana: fetch -> normalize -> ... -> report
+    python -m pipeline.run_all --area zones           # demo zones only (fast)
+    python -m pipeline.run_all --skip-fetch           # rebuild from data/raw/ without network
+    python -m pipeline.run_all --deadline 16:30       # retry missing tiles until then
+
+Steps: fetch (Overpass, cached chunks) -> normalize (data/processed/poi.jsonl) -> enrich
+(Wikidata + Claude descriptions, when pipeline.enrich exists and keys are set) -> build_index
+(Gemini embeddings, only with GEMINI_API_KEY) -> report (data/processed/REPORT.md).
+A failed network step never stops the run: the next steps work with what is on disk.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import logging
+import time
+from collections.abc import Sequence
+
+from app.config import get_settings
+from app.schemas import POI
+from pipeline import build_index, fetch_osm, normalize, report
+
+log = logging.getLogger("pipeline.run_all")
+
+
+def load_pois() -> list[POI]:
+    with get_settings().poi_path.open(encoding="utf-8") as fh:
+        return [POI.model_validate_json(line) for line in fh if line.strip()]
+
+
+def run(
+    area: str = "astana",
+    *,
+    skip_fetch: bool = False,
+    skip_enrich: bool = False,
+    limit: int | None = None,
+    deadline: str | None = None,
+    force: bool = False,
+) -> list[str]:
+    """Returns the notes that went into REPORT.md."""
+    settings = get_settings()
+    notes: list[str] = []
+    started = time.time()
+
+    if not skip_fetch:
+        if deadline:
+            res = fetch_osm.fetch_until(area, fetch_osm.deadline_today(deadline), force=force)
+        else:
+            res = fetch_osm.fetch_area(area, force=force)
+        log.info("fetch: %d chunks ready (%d cached), %d failed",
+                 len(res.done), len(res.cached), len(res.failed))
+        if res.failed:
+            notes.append(f"Выгрузка: не скачано {len(res.failed)} кусков, взяты данные с диска.")
+
+    paths = normalize.raw_files(area, settings.data_dir / "raw")
+    if not paths:
+        raise SystemExit(f"no raw OSM data for area {area!r}; Overpass unavailable?")
+    pois = normalize.normalize_payloads(normalize.load_payloads(paths))
+    normalize.write_jsonl(pois, settings.poi_path)
+    log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
+
+    if skip_enrich:
+        notes.append("Обогащение описаниями пропущено (--skip-enrich).")
+    else:
+        try:
+            enrich = importlib.import_module("pipeline.enrich")
+        except ModuleNotFoundError:
+            notes.append("Обогащение описаниями ещё не подключено (pipeline/enrich.py).")
+        else:
+            notes.extend(enrich.run(limit=limit))
+            pois = load_pois()
+
+    idx = build_index.build_index(pois, settings.index_dir)
+    log.info("index: %s (%s)", idx.status, idx.reason)
+    if idx.status == "skipped":
+        notes.append(f"Индекс пропущен: {idx.reason}.")
+
+    out = report.write_report(area, notes=notes)
+    log.info("report -> %s; total %.0f s", out, time.time() - started)
+    return notes
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--area", choices=["astana", "zones", "fixture"], default="astana")
+    parser.add_argument("--skip-fetch", action="store_true", help="use data/raw/ only")
+    parser.add_argument("--skip-enrich", action="store_true", help="no Wikidata / Claude")
+    parser.add_argument("--limit", type=int, default=None, help="top-N POI for LLM descriptions")
+    parser.add_argument("--deadline", default=None, help="HH:MM: stop retrying tiles after it")
+    parser.add_argument("--force", action="store_true", help="ignore the 24 h raw cache")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    notes = run(
+        args.area,
+        skip_fetch=args.skip_fetch,
+        skip_enrich=args.skip_enrich,
+        limit=args.limit,
+        deadline=args.deadline,
+        force=args.force,
+    )
+    for note in notes:
+        print("NOTE", note)
+
+
+if __name__ == "__main__":
+    main()
