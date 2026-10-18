@@ -185,9 +185,37 @@ def test_plan_walk_prefers_a_walk_stop_over_more_stops() -> None:
 
 def test_plan_walk_never_stops_where_you_already_stand() -> None:
     here = placed("here", 0.0, category="monument", score=0.99)
-    assert here.distance_m < 50
-    picked = plan_walk(ORIGIN, [here, placed("near", 0.003, score=0.4)], 60)
+    across = placed("across", 0.0013, category="cafe", score=0.98)  # ≈90 m: still "here"
+    assert here.distance_m < 100 and across.distance_m < 100
+    picked = plan_walk(ORIGIN, [here, across, placed("near", 0.003, score=0.4)], 60)
     assert [c.poi.id for c in picked] == ["test:poi/near"]
+
+
+def test_plan_walk_anchor_best_ranked_place_that_fits_alone() -> None:
+    """The best-ranked stop (A, 600 m) fits alone -> it is in the walk, even though the pair
+    B+C on the other side has a higher total score and also fits."""
+    a = placed("a", 0.0085, score=0.9)
+    b = placed("b", -0.0043, score=0.8)
+    c = placed("c", -0.0050, category="monument", score=0.7)
+    picked = plan_walk(ORIGIN, [a, b, c], 60)
+    assert "test:poi/a" in {x.poi.id for x in picked}
+
+
+def test_plan_walk_anchor_then_more_stops_then_score() -> None:
+    a = placed("a", 0.0043, score=0.9)
+    near_a = [placed("x1", 0.0050, category="monument", score=0.3),
+              placed("x2", 0.0057, category="cafe", score=0.2),
+              placed("x3", 0.0050 + 0.0001, category="viewpoint", score=0.6)]
+    picked = plan_walk(ORIGIN, [a, *near_a], 90)
+    ids = {x.poi.id for x in picked}
+    assert "test:poi/a" in ids and len(picked) == 3  # more stops first
+    assert "test:poi/x3" in ids  # then the higher total score
+
+
+def test_plan_walk_without_a_fitting_anchor_falls_back() -> None:
+    far = placed("far", 0.03, score=0.95)  # does not fit alone in 40 min
+    picked = plan_walk(ORIGIN, [far, placed("p", 0.003, score=0.5)], 40)
+    assert [x.poi.id for x in picked] == ["test:poi/p"]
 
 
 def test_plan_walk_score_beats_stop_count_among_walk_stops() -> None:
@@ -203,24 +231,26 @@ def test_plan_walk_without_walk_stops_still_works() -> None:
 
 
 def test_plan_walk_skips_fast_food_and_bars_unless_asked() -> None:
-    cands = [placed("burger", 0.001, category="fast_food", score=0.99),
-             placed("pub", 0.0015, category="bar", score=0.98),
+    cands = [placed("burger", 0.0016, category="fast_food", score=0.99),
+             placed("pub", 0.0018, category="bar", score=0.98),
              placed("park", 0.002, score=0.5), placed("monument", 0.003, category="monument")]
     picked = {c.poi.category for c in plan_walk(ORIGIN, cands, 90)}
     assert picked and not picked & {"fast_food", "bar"}
     asked = {c.poi.category for c in plan_walk(ORIGIN, cands, 90,
                                                wanted_categories={"fast_food"})}
     assert "fast_food" in asked and "bar" not in asked
+    dinner = placed("dinner", 0.0025, category="restaurant", score=0.99)
+    assert "restaurant" not in {c.poi.category for c in plan_walk(ORIGIN, [dinner, *cands], 90)}
 
 
 def test_plan_walk_respects_budget_and_diversity() -> None:
-    same = [placed(f"p{i}", 0.001 * (i + 1), name="Детская площадка", category="playground")
+    same = [placed(f"p{i}", 0.0015 * (i + 1), name="Детская площадка", category="playground")
             for i in range(3)]
-    cafes = [placed(f"c{i}", -0.001 * (i + 1), category="cafe") for i in range(3)]
+    cafes = [placed(f"c{i}", -0.0015 * (i + 1), category="cafe") for i in range(3)]
     picked = plan_walk(ORIGIN, same + cafes, 120)
     names = [c.poi.name for c in picked]
     assert names.count("Детская площадка") <= 1
     assert sum(c.poi.category == "cafe" for c in picked) <= 2
     assert plan_walk(ORIGIN, [placed("far", 0.05)], 30) == []  # nothing fits
-    small = plan_walk(ORIGIN, [placed("a", 0.001), placed("b", 0.0012, category="cafe")], 25)
+    small = plan_walk(ORIGIN, [placed("a", 0.0015), placed("b", 0.0017, category="cafe")], 25)
     assert len(small) == 1  # 20-min park + way there and back fits, two stops do not

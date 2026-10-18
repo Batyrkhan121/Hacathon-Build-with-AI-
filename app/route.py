@@ -26,9 +26,10 @@ DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
 MAX_ROUTE_STOPS = 3  # MiniRoute.stop_ids allows at most 3
 WALK_POOL = 8  # plan_walk looks at the best N candidates
 MAX_SAME_CATEGORY = 2
-# Not a stop for a walk unless asked for explicitly (S1: a walk is not a fast-food crawl).
-NOT_WALK_STOPS = frozenset({"fast_food", "bar", "nightlife"})
-AT_ORIGIN_M = 50  # closer than this = the place the person already stands at (P1: the mall)
+# Not a stop for a walk unless asked for explicitly (S1: a walk is not a fast-food crawl, and
+# a sit-down restaurant does not fit a 30–60 minute walk either).
+NOT_WALK_STOPS = frozenset({"fast_food", "bar", "nightlife", "restaurant"})
+AT_ORIGIN_M = 100  # closer than this = where the person already is (P1: the mall, its café)
 # A walk should have at least one place to walk to (P1: NU Park, not «mall + coffee»).
 WALK_STOP_CATEGORIES = frozenset({"park", "viewpoint", "monument", "attraction", "religious"})
 WALK_STOP_TAGS = frozenset({"walk", "outdoor", "view", "water"})
@@ -172,32 +173,50 @@ def plan_walk(
 ) -> list[Candidate]:
     """Up to `max_stops` candidates that fit `budget_min` together, in visiting order.
 
-    Choice, in order: a set with at least one walk stop (park, viewpoint, monument, sight,
-    outdoor / waterside place) beats one without; then the higher total score; only then more
-    stops; then the shorter walk. So one good park beats «mall at 0 m + coffee» (P1).
-    Never a stop: the place the person stands at (< AT_ORIGIN_M), fast food / bars /
-    nightlife unless in `wanted_categories`. At most MAX_SAME_CATEGORY of one category and no
-    two places with the same name. [] when not even one stop fits.
+    Anchor: if the best-ranked eligible candidate fits alone, it must be in the walk; among
+    such sets more stops win, then the higher total score, then the shorter walk (P1: NU Park
+    is in the loop, the mall you stand at is not). Without a fitting anchor: a set with a walk
+    stop (park, viewpoint, monument, sight, outdoor / waterside) beats one without, then the
+    total score, then more stops, then the shorter walk.
+    Never a stop: places closer than AT_ORIGIN_M (where the person already is), fast food /
+    bars / nightlife unless in `wanted_categories`. At most MAX_SAME_CATEGORY of one category
+    and no two places with the same name. [] when not even one stop fits.
     """
-    skip = NOT_WALK_STOPS - set(wanted_categories)
-    pool = [c for c in candidates
-            if c.poi.category not in skip and c.distance_m >= AT_ORIGIN_M][:WALK_POOL]
+    pool = [c for c in candidates if walk_eligible(c, wanted_categories)][:WALK_POOL]
     visits = {c.poi.id: walk_visit_minutes(c) for c in pool}
-    best_key: tuple[bool, float, int, int] | None = None
+
+    def fit(combo: tuple[Candidate, ...]) -> tuple[list[Candidate], int] | None:
+        ordered = _best_order(origin, list(combo), loop)
+        total = _total_min(_legs(origin, ordered, loop), ordered, visits)
+        return (ordered, total) if total <= budget_min else None
+
+    anchor = pool[0] if pool and fit((pool[0],)) is not None else None
+    best_key: tuple[float, ...] | None = None
     best: list[Candidate] = []
     for size in range(1, min(max_stops, MAX_ROUTE_STOPS, len(pool)) + 1):
         for combo in combinations(pool, size):
-            if not _diverse(combo):
+            if (anchor is not None and anchor not in combo) or not _diverse(combo):
                 continue
-            ordered = _best_order(origin, list(combo), loop)
-            total = _total_min(_legs(origin, ordered, loop), ordered, visits)
-            if total > budget_min:
+            fitted = fit(combo)
+            if fitted is None:
                 continue
-            key = (any(is_walk_stop(c) for c in combo), round(sum(c.score for c in combo), 6),
-                   size, -total)
+            ordered, total = fitted
+            score = round(sum(c.score for c in combo), 6)
+            if anchor is not None:
+                key: tuple[float, ...] = (size, score, -total)
+            else:
+                key = (any(is_walk_stop(c) for c in combo), score, size, -total)
             if best_key is None or key > best_key:
                 best_key, best = key, ordered
     return best
+
+
+def walk_eligible(cand: Candidate, wanted_categories: frozenset[str] | set[str] = frozenset()
+                  ) -> bool:
+    """May be a stop (or an alternative card) of a walk: not where the person already is, not
+    fast food / bar / nightlife / restaurant unless that category was asked for."""
+    skip = NOT_WALK_STOPS - set(wanted_categories)
+    return cand.poi.category not in skip and cand.distance_m >= AT_ORIGIN_M
 
 
 def is_walk_stop(cand: Candidate) -> bool:

@@ -459,6 +459,26 @@ class TestRecommend:
         recommend(req("кофе", use_llm=False), deps)
         assert deps.llm.embedded == ["кофе"]
 
+    @pytest.mark.parametrize(
+        ("lang", "semantic", "lexical"),
+        [("ru", "поиск: по смыслу и по словам", "поиск: по словам"),
+         ("kk", "іздеу: мағынасы мен сөздері бойынша", "іздеу: сөздері бойынша"),
+         ("en", "search: by meaning and keywords", "search: by keywords")],
+    )
+    def test_search_mode_is_shown(self, deps: Deps, lang: str, semantic: str,
+                                  lexical: str) -> None:
+        """Gemini quota can run out silently: the panel says which search actually ran."""
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        assert semantic in recommend(req("кофе", lang=lang), deps).data_used.filters
+        deps.llm = FakeLLM(embed=None)  # embed_query failed (quota) -> lexical
+        filters = recommend(req("кофе", lang=lang), deps).data_used.filters
+        assert lexical in filters and semantic not in filters
+        no_ai = recommend(req("кофе", lang=lang, use_llm=False), deps).data_used.filters
+        assert lexical in no_ai
+        deps.store.embeddings = None  # no index at all
+        assert lexical in recommend(req("кофе", lang=lang), deps).data_used.filters
+
     def test_logs_never_carry_query_or_cell(self, deps: Deps,
                                             caplog: pytest.LogCaptureFixture) -> None:
         cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
@@ -670,8 +690,15 @@ class TestRealCore:
         a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
                                "что посоветуете?", "mega_silk_way"), real_deps)
         assert a.cards[0].category in {"park", "viewpoint", "monument", "attraction"}
-        assert all(c.distance_m >= 50 for c in a.cards)  # not the mall you stand at
-        assert a.route is not None and a.route.fits_budget and a.route.total_min <= 60
+        assert all(c.distance_m >= 100 for c in a.cards)  # not the mall you stand at
+        r = a.route
+        assert r is not None and r.fits_budget and r.total_min <= 60
+        names = {c.poi_id: c.title for c in a.cards}
+        in_route = [names.get(pid, "") for pid in r.stop_ids]
+        assert "NU Park" in in_route or a.cards[0].title == "NU Park"
+        assert not any("Mega Silk Way" in n for n in in_route)
+        # S1: alternatives of a walk are walk stops too (no restaurant / fast food / bar)
+        assert not {c.category for c in a.cards} & {"restaurant", "fast_food", "bar"}
 
     def test_walk_with_kids_note_asks_for_extra_time(self, real_deps: Deps) -> None:
         a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
