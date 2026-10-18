@@ -9,6 +9,7 @@
 #   lang                           Answer.lang и алфавит текстов (ru / kk / en)
 #   route                          required | optional | none
 #   route_fits_budget              route.fits_budget == true
+#   route_source                   route.path_source: graph (по тротуарам) | straight
 #   labels_required                у карточек есть facts_sources и open_note
 #   forbid_open_claim_without_high «открыто сейчас» только при open + high
 #   warnings_required              Answer.warnings не пуст
@@ -112,6 +113,7 @@
     lang: ru
   expected_type: "места, работающие ночью, с предупреждением о безопасности и честной уверенностью"
   expect:
+    route_source: graph
     min_cards: 1
     max_cards: 3
     intent: {night: true}
@@ -217,6 +219,7 @@
     at: "2026-10-19T15:00:00+05:00"
   expected_type: "lang=en, cards in English"
   expect:
+    route_source: graph
     min_cards: 1
     max_cards: 3
     max_walk_min: 20

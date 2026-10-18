@@ -218,7 +218,7 @@ def _check_lang(ans: Answer, want: str) -> list[str]:
     return fails
 
 
-def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
+def check_expect(ans: Answer, exp: dict[str, Any], graph_on: bool = True) -> list[str]:
     """Scenario-specific checks; keys are documented in eval/scenarios.yaml."""
     fails: list[str] = []
     n = len(ans.cards)
@@ -246,6 +246,11 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         fails.append("нет маршрута")
     if route == "none" and ans.route is not None:
         fails.append("маршрут не ожидался")
+    if "route_source" in exp and (graph_on or exp["route_source"] != "graph"):
+        # graph: the route must follow the walk graph (1.1.0); skipped when the run has no graph
+        got = ans.route.path_source if ans.route is not None else None
+        if got != exp["route_source"]:
+            fails.append(f"маршрут {got or 'нет'}, ожидали {exp['route_source']}")
     if exp.get("route_fits_budget") and ans.route is not None and not ans.route.fits_budget:
         fails.append(f"маршрут не укладывается в бюджет ({ans.route.total_min} мин)")
 
@@ -334,7 +339,7 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
     return fails
 
 
-def grade(scn: dict[str, Any], out: Outcome) -> Result:
+def grade(scn: dict[str, Any], out: Outcome, graph_on: bool = True) -> Result:
     exp = scn.get("expect") or {}
     res = Result(
         id=scn["id"],
@@ -363,7 +368,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
             res.failures.append("ожидали 422 или 0 карточек с понятным предупреждением")
     else:
         res.failures += check_invariants(ans)
-        res.failures += check_expect(ans, exp)
+        res.failures += check_expect(ans, exp, graph_on)
     res.passed = not res.failures
     return res
 
@@ -494,7 +499,7 @@ def _ms(t0: float) -> int:
 
 
 def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = False) -> list[Result]:
-    results = []
+    outcomes: list[Outcome] = []
     for scn in scenarios:
         data = dict(scn["request"])
         if no_llm:
@@ -502,10 +507,21 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
         try:
             req = RecommendRequest.model_validate(data)
         except ValidationError as exc:
-            results.append(grade(scn, Outcome(error=f"сценарий не по схеме: {exc}")))
+            outcomes.append(Outcome(error=f"сценарий не по схеме: {exc}"))
             continue
-        results.append(grade(scn, runner(req)))
-    return results
+        outcomes.append(runner(req))
+    graph_on = graph_used(outcomes)
+    return [grade(scn, out, graph_on) for scn, out in zip(scenarios, outcomes, strict=True)]
+
+
+def graph_used(outcomes: list[Outcome]) -> bool:
+    """Is the walk graph live in this run? The API does not report it, so: at least one answer
+    has a graph route. With WALK_GRAPH=false or no graph file, route_source=graph is skipped."""
+    return any(
+        o.answer is not None and o.answer.route is not None
+        and o.answer.route.path_source == "graph"
+        for o in outcomes
+    )
 
 
 SEARCH_LABEL = {"vector": "по смыслу", "words": "по словам"}
@@ -865,6 +881,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         results = run_all(scenarios, runner, no_llm=args.no_llm)
 
+    wants_graph = [
+        s["id"] for s in scenarios if (s.get("expect") or {}).get("route_source") == "graph"
+    ]
+    if wants_graph and not any(r.route_source == "graph" for r in results):
+        notes.append("граф тротуаров в этом прогоне не используется (WALK_GRAPH=false или "
+                     "нет файла графа): ожидание route_source=graph пропущено для "
+                     + ", ".join(wants_graph))
     write_report(args.out, mode, results, notes)
     passed = sum(r.passed for r in results)
     for r in results:
