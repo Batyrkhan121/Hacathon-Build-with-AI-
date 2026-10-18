@@ -47,7 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from app import generate
 from app.config import ROOT, get_settings
 from app.llm import LLMClient, load_prompt
-from app.pipeline import Deps, InvalidRequest, index_status, recommend
+from app.pipeline import Deps, InvalidRequest, index_meta, index_problem, index_status, recommend
 from app.schemas import SCHEMA_VERSION, Answer, Landmark, RecommendRequest
 from app.store import load_store
 
@@ -196,6 +196,17 @@ def _store_problems(d: Deps) -> list[str]:
     if index_status(d.settings) == "stale" and not any("устарел" in w
                                                         for w in d.store.warnings):
         out.append("индекс эмбеддингов устарел (meta.json: status=stale)")
+    problem = index_problem(d.settings, d.store)
+    if problem == "index_mismatch":
+        meta = index_meta(d.settings) or {}
+        text = (f"индекс построен для {meta.get('model')}/{meta.get('dim')}, а в настройках "
+                f"{d.settings.embed_model}/{d.settings.embed_dim}: поиск только по словам")
+        if not any(d.settings.embed_model in w for w in d.store.warnings):
+            out.append(text)
+        else:
+            out.append("индекс не подходит к модели запросов: поиск только по словам")
+    elif problem == "index_missing":
+        out.append("индекс эмбеддингов не загружен: поиск только по словам")
     return out
 
 
@@ -221,7 +232,9 @@ def check_prompts() -> list[str]:
 
 def _index_state(d: Deps) -> str:
     if d.store.embeddings is None:
-        return "lexical"
+        problem = index_problem(d.settings, d.store)
+        return {"index_mismatch": "lexical (index mismatch)",
+                "index_missing": "lexical (index missing)"}.get(problem or "", "lexical")
     return "ready" if d.settings.has_embeddings else "ready (no key)"
 
 
