@@ -148,6 +148,13 @@ def check_invariants(ans: Answer) -> list[str]:
 
 ROUTE_END_TOLERANCE_M = 50  # path ends vs start / last place; graph nodes are not the POI point
 WALK_M_PER_MIN = 75.0  # 4.5 km/h, the same speed as app.geo
+STRAIGHT_TOLERANCE_M = 3.0  # the route may measure length with a flat approximation, eval with
+# haversine: near a multiple of 75 m a nearly straight leg would fail by a rounding hair
+
+
+def min_walk_minutes(straight_m: float) -> int:
+    """Lower bound for a graph leg: walking the straight line, minus the tolerance."""
+    return math.ceil(max(0.0, straight_m - STRAIGHT_TOLERANCE_M) / WALK_M_PER_MIN - 1e-9)
 CROSSING_KINDS = {"signals", "marked", "unmarked"}
 
 
@@ -188,7 +195,7 @@ def check_graph_route(ans: Answer) -> list[str]:
             fails.append(f"граф: leg {leg.from_id}→{leg.to_id} ведёт не в карточку и не к старту")
             continue
         straight = haversine_m(*points[leg.from_id], *points[leg.to_id])
-        floor_min = math.ceil(straight / WALK_M_PER_MIN - 1e-9)
+        floor_min = min_walk_minutes(straight)
         if leg.walk_min < floor_min:
             fails.append(f"граф: leg {leg.from_id}→{leg.to_id} {leg.walk_min} мин "
                          f"< по прямой {floor_min} мин")
