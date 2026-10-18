@@ -2,7 +2,8 @@
 //   POST api/recommend  RecommendRequest -> Answer
 //   GET  api/landmarks  -> list[Landmark]
 // В теле запроса никогда нет координат: только location.h3_cell или location.landmark_id.
-// Режим мока: ?mock=1 (ещё ?mock=empty, ?mock=error, ?mock=slow для проверки состояний).
+// Режим мока: ?mock=1 (ещё ?mock=empty, ?mock=error, ?mock=slow для проверки состояний;
+// ?mock=route — ответ с маршрутом по графу OSM: path_source=graph, переходы, лестницы).
 
 export const TIMEOUT_MS = 25000;
 
@@ -107,7 +108,8 @@ function looksLikeAnswer(a) {
 async function mockRecommend(body, signal) {
   await sleep(MOCK === 'slow' ? 3000 : 650, signal);
   if (MOCK === 'error' && body.use_llm) throw new ApiError('mock');
-  const answer = await getJson('mock/answer_sample.json', signal);
+  const file = MOCK === 'route' ? 'mock/answer_route.json' : 'mock/answer_sample.json';
+  const answer = await getJson(file, signal);
   if (MOCK === 'empty') {
     answer.cards = [];
     answer.route = null;
