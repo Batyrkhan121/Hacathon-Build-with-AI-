@@ -318,8 +318,8 @@ def _plan_on_graph_unsafe(
     while True:
         ordered = _best_order(origin, kept, loop)
         legs = _graph_legs(graph, origin, ordered, loop, mode, origin_landmark, deadline)
-        if legs is None:
-            return None
+        if legs is None or all(leg.straight for leg in legs):
+            return None  # no leg follows the graph: the plain straight route, with its note
         total = _graph_total(legs, ordered, visit_min)
         if budget_min is None or total <= budget_min or len(kept) == 1:
             return _graph_route(origin, ordered, legs, loop, total, budget_min, note)

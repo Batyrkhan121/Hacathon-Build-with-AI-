@@ -154,16 +154,26 @@ def test_wheelchair_never_takes_stairs(tmp_path: Path) -> None:
     assert chair.length_m == pytest.approx(100, abs=1)
 
 
-def test_night_prefers_lit_ways(tmp_path: Path) -> None:
-    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "L1": (0, 15, 0), "L2": (100, 15, 0)}
-    edges = [("A", "B", FOOTWAY),  # unlit 100 m: day 80 s, night 120 s
-             ("A", "L1", FOOTWAY | LIT), ("L1", "L2", FOOTWAY | LIT), ("L2", "B", FOOTWAY | LIT)]
-    g = graph(tmp_path, nodes, edges)  # lit: 130 m = 104 s
+def test_night_prefers_lit_ways_a_little(tmp_path: Path) -> None:
+    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "M": (50, 15, 0)}
+    edges = [("A", "B", FOOTWAY),  # no lit bit, 100 m: day 80 s, night 88 s
+             ("A", "M", FOOTWAY | LIT), ("M", "B", FOOTWAY | LIT)]  # lit 104 m = 83.5 s
+    g = graph(tmp_path, nodes, edges)
     day = g.route(at(0, 0), at(100, 0))
     night = g.route(at(0, 0), at(100, 0), Mode(night=True))
     assert day is not None and night is not None
     assert day.length_m == pytest.approx(100, abs=1)
-    assert night.length_m == pytest.approx(130, abs=1)
+    assert night.length_m == pytest.approx(104.4, abs=1)
+
+
+def test_night_does_not_chase_rare_lit_ways(tmp_path: Path) -> None:
+    """No lit bit means «unknown» (lit is tagged on ~3% of Astana edges), not «dark»."""
+    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "L1": (0, 15, 0), "L2": (100, 15, 0)}
+    edges = [("A", "B", FOOTWAY),  # 100 m, night 88 s
+             ("A", "L1", FOOTWAY | LIT), ("L1", "L2", FOOTWAY | LIT), ("L2", "B", FOOTWAY | LIT)]
+    night = graph(tmp_path, nodes, edges).route(at(0, 0), at(100, 0), Mode(night=True))
+    assert night is not None  # the lit way is 130 m = 104 s: not worth it
+    assert night.length_m == pytest.approx(100, abs=1)
 
 
 def test_prefers_footways_to_big_roads(tmp_path: Path) -> None:
@@ -221,6 +231,19 @@ def test_missing_or_broken_files_load_as_none(tmp_path: Path) -> None:
 def test_loaded_once(tmp_path: Path) -> None:
     path = write_graph(tmp_path, STREET, STREET_EDGES)
     assert load_graph(path) is load_graph(path)
+
+
+def test_dead_end_crossings_and_sub_cm_edges_are_tolerated(tmp_path: Path) -> None:
+    """ARCHITECTURE §5: OSM has crossing tails of degree 1 and coincident nodes."""
+    nodes = {"A": (0, 0, 0), "A2": (0.004, 0, 0), "M": (50, 0, 0), "B": (100, 0, 0),
+             "T": (50, 10, CROSSING | SIGNALS)}  # a crossing node hanging off the way
+    edges = [("A", "A2", FOOTWAY), ("A2", "M", FOOTWAY), ("M", "B", FOOTWAY),
+             ("M", "T", CROSS_SEG)]
+    g = graph(tmp_path, nodes, edges)
+    path = g.route(at(0, 0), at(100, 0))
+    assert path is not None and not path.straight
+    assert path.length_m == pytest.approx(100, abs=1)
+    assert path.crossings == []  # the tail is not walked
 
 
 # ---------------------------------------- review BLOCK: binding far, points near

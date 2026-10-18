@@ -367,3 +367,19 @@ def test_graph_search_crash_gives_exactly_the_straight_route(
     assert on_graph == plain and on_graph is not None and on_graph.path_source == "straight"
     walk = plan_walk(at(0, -5), [east, north], 55, graph=g)
     assert [c.poi.id for c in walk] == [c.poi.id for c in plan_walk(at(0, -5), [east, north], 55)]
+
+
+def test_route_with_every_leg_straight_is_the_straight_route(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """S1 at Mega on the real graph: NU Park only by a detour > 3 x + 200 m, both legs fall
+    back to straight segments -> path_source=straight and the straight note, not «graph»."""
+    from .test_walkgraph import FOOTWAY
+
+    nodes = {"A": (0, 0, 0), "A2": (0, 600, 0), "B2": (60, 600, 0), "B": (60, 0, 0)}
+    edges = [("A", "A2", FOOTWAY), ("A2", "B2", FOOTWAY), ("B2", "B", FOOTWAY)]
+    g = load_graph(write_graph(tmp_path, nodes, edges))
+    park = cand_at("park", at(60, 0))
+    on_graph = plan_route(at(0, 0), [park], None, {"test:poi/park": 30}, loop=True, graph=g,
+                          graph_note="graph note")
+    plain = plan_route(at(0, 0), [park], None, {"test:poi/park": 30}, loop=True)
+    assert on_graph == plain and on_graph is not None
+    assert on_graph.path_source == "straight" and on_graph.note != "graph note"

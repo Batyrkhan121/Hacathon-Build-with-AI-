@@ -9,7 +9,9 @@ docs/ARCHITECTURE.md §5 (built by DATA, pipeline/walk_graph.py). Only numpy and
   landmark_nodes from the meta, anything else via a grid index.
 - A* by time: length / 1.25 m/s; stairs x2, big road x1.3 (pavements and footways win),
   crossing +20 s (traffic lights), +10 s (marked), +40 s (unmarked). Modes: wheelchair —
-  no stairs, unmarked crossing +60 s; night — unlit edges x1.5; with kids — unmarked +60 s.
+  no stairs, unmarked crossing +60 s; night — edges without the lit bit x1.1 (in OSM
+  Astana lit is tagged on ~3% of edges: no bit means «unknown», not «dark», so a known-lit
+  way is only a mild plus); with kids — unmarked +60 s.
   The heuristic is the straight line at the same pace: every real cost is at least that.
 - These weights only choose the path. Minutes shown to the user are the length at 75 m/min:
   walk_min = ceil(length / 75), minimum 1 (docs/ARCHITECTURE.md §5).
@@ -46,7 +48,7 @@ ROUTE_LIMIT_S = 0.3
 
 STAIRS_X = 2.0
 MAJOR_ROAD_X = 1.3
-UNLIT_NIGHT_X = 1.5
+UNLIT_NIGHT_X = 1.1  # ARCHITECTURE §5: at most x1.1, or routes chase the rare lit=yes ways
 CROSSING_S: dict[str, float] = {"signals": 20.0, "marked": 10.0, "unmarked": 40.0}
 UNMARKED_CAREFUL_S = 60.0  # in a wheelchair or with kids
 DETOUR_MAX_X = 3.0  # graph longer than 3 x straight + 200 m -> the straight segment
