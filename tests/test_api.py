@@ -56,13 +56,17 @@ def test_health_degraded_without_pois(landmarks: dict[str, Landmark], tmp_path: 
              llm=FakeLLM(), settings=make_settings(tmp_path))
     with TestClient(api.create_app(d)) as c:
         h = c.get("/api/health")
-        assert h.status_code == 200
+        # 503: a hosting platform's HTTP check only sees the code, an empty server must fail it
+        assert h.status_code == 503
         body_ = h.json()
         assert body_["status"] == "degraded" and body_["poi_count"] == 0
+        assert body_["index"] == "lexical" and body_["llm"] == "ok"
+        assert body_["schema_version"] == api.SCHEMA_VERSION
         assert "poi.jsonl: 0 valid rows" in body_["warnings"]
         assert any("POI" in w for w in body_["warnings"])
-        meta = c.get("/api/meta").json()
-        assert meta["status"] == "degraded" and meta["warnings"]
+        meta = c.get("/api/meta")  # data description, not a probe: the code stays 200
+        assert meta.status_code == 200
+        assert meta.json()["status"] == "degraded" and meta.json()["warnings"]
         r = c.post("/api/recommend", json=body())
         assert r.status_code == 503 and "POI" in r.json()["detail"]
 
@@ -71,8 +75,29 @@ def test_health_degraded_without_landmarks(synthetic_pois: list[POI], tmp_path: 
     d = Deps(store=make_store(synthetic_pois, {}), llm=FakeLLM(),
              settings=make_settings(tmp_path))
     with TestClient(api.create_app(d)) as c:
-        h = c.get("/api/health").json()
+        r = c.get("/api/health")
+    h = r.json()
     assert h["status"] == "degraded" and any("ориентир" in w for w in h["warnings"])
+    assert r.status_code == 200  # degraded with POI: the server answers, cards work
+
+
+def test_degraded_with_pois_is_still_200(deps: Deps, tmp_path: Path) -> None:
+    # LLM off + stale index + another model: all degraded, none of them is an empty server
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": "gemini-embedding-001", "dim": 768,
+                                                 "status": "stale"}), encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+    deps.llm = FakeLLM(available=False)
+    with TestClient(api.create_app(deps)) as c:
+        r = c.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "degraded" and r.json()["poi_count"] == 14
 
 
 def test_health_explains_index_and_llm(deps: Deps) -> None:
