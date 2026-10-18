@@ -1105,6 +1105,7 @@ def _route(
         return route.plan_route(
             ctx.origin, stops, intent.time_budget_min, visits, loop=loop, note=note,
             graph=graph, mode=mode, origin_landmark=ctx.landmark_id, graph_note=graph_note,
+            lang=intent.lang,
         ), False
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)\n%s", request_id, type(exc).__name__,
