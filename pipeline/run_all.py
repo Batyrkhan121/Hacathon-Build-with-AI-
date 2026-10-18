@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, fetch_osm, normalize, report
+from pipeline import build_index, etalon, fetch_osm, normalize, report
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -58,7 +58,13 @@ def run(
     paths = normalize.raw_files(area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw OSM data for area {area!r}; Overpass unavailable?")
-    pois = normalize.normalize_payloads(normalize.load_payloads(paths))
+    pois = normalize.finalize(
+        normalize.normalize_payloads(normalize.load_payloads(paths)),
+        normalize.load_landmarks(settings.landmarks_path),
+    )
+    # hand-checked reference places: compared with OSM first, the missing ones added
+    pois, etalon_notes = etalon.run_on(pois)
+    notes.extend(etalon_notes)
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 

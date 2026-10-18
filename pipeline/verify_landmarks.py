@@ -15,20 +15,9 @@ from pathlib import Path
 
 from app.config import get_settings
 from pipeline.fetch_osm import run_query
+from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import element_point, haversine_m
 
-# landmark id -> OSM object whose centre is the anchor (looked up 2026-10-18)
-LANDMARK_OSM: dict[str, str] = {
-    "expo": "way/454857501",  # the Nur Alem sphere, tagged in OSM as "Alem.ai" (office)
-    "mega_silk_way": "way/499328514",  # shop=mall, building
-    "baiterek": "way/230401645",  # historic=monument, Q804210
-    "khan_shatyr": "way/460703779",  # shop=mall, Q671484
-    "palace_peace": "way/166197368",  # Palace of Peace and Reconciliation, Q2119741
-    "hazrat_sultan": "way/240860325",  # place_of_worship, Q4494668
-    "airport_nqz": "way/166500591",  # aeroway=terminal T1 (walk-relevant, not the runway)
-    "astana_opera": "way/917478479",  # amenity=theatre, Q21371563
-    "nurly_zhol": "way/1484667027",  # railway=station, Q137551678
-}
 COORD_DIGITS = 5
 
 

@@ -8,6 +8,8 @@ from pipeline.normalize import (
     data_confidence,
     dedupe,
     hours_flags,
+    landmark_pois,
+    name_playgrounds,
     normalize_element,
     normalize_payload,
     normalize_payloads,
@@ -176,3 +178,63 @@ def test_overlapping_chunks_take_each_element_once(tmp_path) -> None:
     assert [p.name for p in raw_files("zones", tmp_path)] == ["osm_zone_x.json"]
     assert [p.name for p in raw_files("astana", tmp_path)] == [
         "osm_astana_tile_0.json", "osm_zone_x.json", "osm_fixture.json"]
+
+
+LANDMARKS = [
+    {"id": "palace_peace", "names": {"ru": "Пирамида", "kk": "Сарай", "en": "Pyramid"},
+     "geo": {"lat": 51.12312, "lon": 71.46346}, "kind": "landmark", "verified": True},
+    {"id": "khan_shatyr", "names": {"ru": "ТРЦ «Хан Шатыр»", "en": "Khan Shatyr"},
+     "geo": {"lat": 51.13251, "lon": 71.40387}, "kind": "landmark", "verified": True},
+    {"id": "nurly_zhol", "names": {"ru": "Вокзал"}, "geo": {"lat": 51.112, "lon": 71.529},
+     "kind": "transport", "verified": True},
+    {"id": "draft", "names": {"ru": "Черновик"}, "geo": {"lat": 51.1, "lon": 71.4},
+     "kind": "landmark", "verified": False},
+]
+REFS = {"palace_peace": "way/166197368", "khan_shatyr": "way/460703779",
+        "nurly_zhol": "way/1484667027", "draft": "way/1"}
+
+
+def test_landmarks_become_pois_without_duplicates() -> None:
+    khan = normalize_element(
+        {"type": "way", "id": 460703779, "center": {"lat": 51.13251, "lon": 71.40387},
+         "tags": {"shop": "mall", "name": "Хан Шатыр"}}, DATE)
+    assert khan is not None
+    extra = landmark_pois([khan], LANDMARKS, REFS, {"palace_peace": "Q2119741"}, DATE)
+    assert [p.id for p in extra] == ["osm:way/166197368"]  # khan: present; transport, draft: no
+    pyramid = extra[0]
+    assert pyramid.category == "attraction" and pyramid.sources == ["osm", "manual"]
+    assert pyramid.name == "Пирамида" and pyramid.name_i18n["en"] == "Pyramid"
+    assert pyramid.description is None  # filled from Wikidata by pipeline.enrich
+    assert pyramid.data_confidence == 0.5  # 0.3 + wikidata 0.1 + languages 0.1
+    assert set(pyramid.tags) <= TAG_VOCAB
+
+    # same name close by under another OSM id also counts as present
+    other = khan.model_copy(update={"id": "osm:node/5", "name": "Хан Шатыр"})
+    assert not [p for p in landmark_pois([other], LANDMARKS[1:2], REFS, {}, DATE)]
+
+
+def test_playgrounds_named_after_nearest_poi_within_150_m() -> None:
+    cafe = normalize_element(node(40, {"amenity": "cafe", "name": "Ласточка"}), DATE)
+    near = normalize_element(node(41, {"leisure": "playground"}, lat=51.0894 + 0.0009), DATE)
+    far = normalize_element(node(42, {"leisure": "playground"}, lat=51.0894 + 0.003), DATE)
+    named = normalize_element(node(43, {"leisure": "playground", "name": "Мечта"},
+                                   lat=51.0894 + 0.0005), DATE)
+    assert cafe and near and far and named
+    out = {p.id: p for p in name_playgrounds([cafe, near, far, named])}
+    assert out["osm:node/41"].name == "Детская площадка у Ласточка"  # ~100 m
+    assert out["osm:node/42"].name == "Детская площадка"  # ~330 m: nobody near
+    assert out["osm:node/43"].name == "Мечта"
+    assert out["osm:node/41"].data_confidence <= 0.4
+
+
+def test_freshest_snapshot_wins_and_dates_the_record() -> None:
+    stale = {"osm3s": {"timestamp_osm_base": "2026-06-01T08:52:28Z"},
+             "qadam": {"fetched_at_unix": 1792316715},
+             "elements": [node(50, {"amenity": "cafe", "name": "Старое имя"})]}
+    fresh = {"osm3s": {"timestamp_osm_base": "2026-10-18T10:28:05Z"},
+             "qadam": {"fetched_at_unix": 1792316000},
+             "elements": [node(50, {"amenity": "cafe", "name": "Новое имя"})]}
+    (poi,) = normalize_payloads([stale, fresh])
+    assert poi.name == "Новое имя" and poi.fetched_at == "2026-10-18"
+    (old,) = normalize_payloads([stale])
+    assert old.fetched_at == "2026-06-01"  # snapshot date, not the day we downloaded it
