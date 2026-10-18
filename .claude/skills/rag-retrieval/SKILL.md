@@ -60,7 +60,7 @@ argument-hint: "[ID задач, например T20-T24]"
 
 ## LLM: внешние вызовы, у каждого есть запасной путь
 **llm.py (T30)**
-- `import anthropic`; `client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_s, max_retries=2)`; `client.messages.parse(model=settings.claude_model, max_tokens=..., system=..., messages=[{"role": "user", "content": prompt}], output_format=Schema, output_config={"effort": effort})`, затем проверь `resp.stop_reason` (`refusal`, `max_tokens` → `LLMUnavailable`) и бери `resp.parsed_output`.
+- `import anthropic`; `client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_s, max_retries=2, default_headers=settings.anthropic_headers)`; `client.messages.parse(model=settings.claude_model, max_tokens=..., system=..., messages=[{"role": "user", "content": prompt}], output_format=Schema, output_config={"effort": effort})`, затем проверь `resp.stop_reason` (`refusal`, `max_tokens` → `LLMUnavailable`) и бери `resp.parsed_output`.
 - Модели: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`. У Sonnet 5.5 `temperature`/`top_p` не задаём (400), управляем только `effort`; для скорости демо — `low`.
 - Отказы: `client.beta.messages.parse(..., betas=["server-side-fallback-2026-07-01"], fallbacks="default")`.
 - Сначала проверь форму вызовов на установленной версии SDK: `scripts/check_llm.py`, скилл `/claude-api`, при сомнениях WebFetch platform.claude.com.

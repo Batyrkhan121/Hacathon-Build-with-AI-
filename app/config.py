@@ -29,6 +29,7 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     anthropic_api_key: str | None
+    anthropic_workspace_id: str | None  # needed only for a user-level key not scoped to one
     claude_model: str
     claude_fallback_model: str
     gemini_api_key: str | None  # optional, embeddings only
@@ -50,6 +51,13 @@ class Settings:
         return self.llm_enabled and bool(self.anthropic_api_key)
 
     @property
+    def anthropic_headers(self) -> dict[str, str]:
+        """For anthropic.Anthropic(default_headers=...)."""
+        if not self.anthropic_workspace_id:
+            return {}
+        return {"anthropic-workspace-id": self.anthropic_workspace_id}
+
+    @property
     def has_embeddings(self) -> bool:
         return bool(self.gemini_api_key)
 
@@ -59,6 +67,7 @@ def get_settings() -> Settings:
     data_dir = Path(os.getenv("QADAM_DATA_DIR", ROOT / "data"))
     return Settings(
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+        anthropic_workspace_id=os.getenv("ANTHROPIC_WORKSPACE_ID") or None,
         claude_model=os.getenv("CLAUDE_MODEL") or "claude-sonnet-5-5",
         claude_fallback_model=os.getenv("CLAUDE_FALLBACK_MODEL") or "claude-haiku-5-5",
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,

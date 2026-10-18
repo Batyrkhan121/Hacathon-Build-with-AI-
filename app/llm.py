@@ -1,6 +1,9 @@
 """Claude client wrapper (anthropic SDK) + optional Gemini embeddings. Owner: LLM lane (T30).
 
 Requirements:
+- client: `anthropic.Anthropic(api_key=settings.anthropic_api_key,
+  timeout=settings.llm_timeout_s, max_retries=2, default_headers=settings.anthropic_headers)`
+  (the header carries ANTHROPIC_WORKSPACE_ID for keys not scoped to a workspace);
 - structured output into Pydantic models:
   `client.messages.parse(model=..., max_tokens=..., system=..., messages=[...],
   output_format=Schema, output_config={"effort": effort})` -> `resp.parsed_output`;

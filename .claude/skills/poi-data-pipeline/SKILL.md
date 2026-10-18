@@ -91,7 +91,7 @@ out center tags;
 
 ## Обогащение
 - Wikidata: `wbgetentities`, до 50 id за раз, `props=descriptions|sitelinks`, `languages=ru|kk|en`. Используем, когда в OSM есть тег `wikidata`. Пишем `description_source="wikidata"`.
-- Claude: только для топ-300 по popularity без описания. Вызываем `anthropic` прямо в `pipeline/enrich.py` (`client.messages.parse(model=settings.claude_model, ..., output_format=<Pydantic-модель>, output_config={"effort": "low"})`, без `temperature`), потому что T12 идёт параллельно с T30. В тестах сеть подменяем фейком. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ `ANTHROPIC_API_KEY` берём из app/config.py; без ключа шаг пропускается с пометкой в REPORT.md.
+- Claude: только для топ-300 по popularity без описания. Вызываем `anthropic` прямо в `pipeline/enrich.py` (клиент с `default_headers=settings.anthropic_headers`; `client.messages.parse(model=settings.claude_model, ..., output_format=<Pydantic-модель>, output_config={"effort": "low"})`, без `temperature`), потому что T12 идёт параллельно с T30. В тестах сеть подменяем фейком. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ `ANTHROPIC_API_KEY` берём из app/config.py; без ключа шаг пропускается с пометкой в REPORT.md.
 
 ## Индекс
 - Текст документа: `"{name}. {category_ru}. Теги: {tags}. {description}"`. Шаблон записать в meta.json.

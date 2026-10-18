@@ -76,8 +76,9 @@ def check_dotenv() -> str:
     if not s.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is empty in .env")
     embed = f"{s.embed_model}/{s.embed_dim}" if s.has_embeddings else "off (lexical)"
-    return (f"key set ({len(s.anthropic_api_key)} chars); model={s.claude_model}; "
-            f"fallback={s.claude_fallback_model}; embeddings={embed}")
+    workspace = "set" if s.anthropic_workspace_id else "none"
+    return (f"key set ({len(s.anthropic_api_key)} chars); workspace={workspace}; "
+            f"model={s.claude_model}; fallback={s.claude_fallback_model}; embeddings={embed}")
 
 
 def http_check(url: str) -> Callable[[], str]:
@@ -103,7 +104,7 @@ def _claude():  # noqa: ANN202
 
     s = get_settings()
     client = anthropic.Anthropic(api_key=s.anthropic_api_key, timeout=s.llm_timeout_s,
-                                 max_retries=1)
+                                 max_retries=1, default_headers=s.anthropic_headers)
     return client, s
 
 
