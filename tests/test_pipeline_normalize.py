@@ -256,3 +256,49 @@ def test_playground_anchor_needs_a_proper_name() -> None:
     out = {p.id: p for p in name_playgrounds([square, cafe, pg])}
     # "Сквер" is 33 m away but generic; the cafe ~100 m away has a name of its own
     assert out["osm:node/62"].name == "Детская площадка у Ласточка"
+
+
+def test_explicit_osm_indoor_tag() -> None:
+    ride = normalize_element(
+        node(80, {"tourism": "attraction", "name": "Динопарк", "indoor": "room"}), DATE)
+    plain = normalize_element(node(81, {"tourism": "attraction", "name": "Колесо"}), DATE)
+    assert ride is not None and ride.indoor is True and "indoor" in ride.tags
+    assert plain is not None and plain.indoor is None
+
+
+def test_inside_mall_footprint_marks_unknown_indoor_only() -> None:
+    from pipeline.normalize import inside, mark_inside_malls
+
+    square = [{"lat": 51.130, "lon": 71.400}, {"lat": 51.130, "lon": 71.410},
+              {"lat": 51.135, "lon": 71.410}, {"lat": 51.135, "lon": 71.400},
+              {"lat": 51.130, "lon": 71.400}]
+    hole = [{"lat": 51.132, "lon": 71.404}, {"lat": 51.132, "lon": 71.406},
+            {"lat": 51.133, "lon": 71.406}, {"lat": 51.133, "lon": 71.404},
+            {"lat": 51.132, "lon": 71.404}]
+    outlines = {"elements": [
+        {"type": "relation", "id": 1, "members": [
+            {"type": "way", "role": "outer", "geometry": square[:3]},  # outer split in two
+            {"type": "way", "role": "outer", "geometry": square[2:]},
+            {"type": "way", "role": "inner", "geometry": hole}]},
+    ]}
+    pairs = zip(square, square[1:], strict=False)
+    edges = [((a["lat"], a["lon"]), (b["lat"], b["lon"])) for a, b in pairs]
+    assert inside(51.131, 71.401, edges) and not inside(51.140, 71.401, edges)
+
+    ride = normalize_element(node(90, {"tourism": "attraction", "name": "Ride"},
+                                  lat=51.131, lon=71.401), DATE)
+    in_hole = normalize_element(node(91, {"tourism": "attraction", "name": "Двор"},
+                                     lat=51.1325, lon=71.405), DATE)
+    outside = normalize_element(node(92, {"tourism": "attraction", "name": "Вне"},
+                                     lat=51.140, lon=71.401), DATE)
+    park = normalize_element(node(93, {"leisure": "park", "name": "Сквер Х"},
+                                  lat=51.131, lon=71.402), DATE)
+    assert ride and in_hole and outside and park
+    out, marked = mark_inside_malls([ride, in_hole, outside, park], outlines)
+    by_id = {p.id: p for p in out}
+    assert marked == 1 and by_id["osm:node/90"].indoor is True
+    assert "indoor" in by_id["osm:node/90"].tags
+    assert by_id["osm:node/91"].indoor is None  # courtyard hole: not inside
+    assert by_id["osm:node/92"].indoor is None
+    assert by_id["osm:node/93"].indoor is False  # a known value is never changed
+    assert mark_inside_malls([ride], None) == ([ride], 0)

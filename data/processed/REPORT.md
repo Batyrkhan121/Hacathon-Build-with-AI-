@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 16:36 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 16:42 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -62,9 +62,10 @@
 
 ## Обогащение и индекс
 - Ручные правки (data/manual/overrides.json): 1 мест.
+- indoor только по данным: категория, явный тег OSM indoor=* (так размечены аттракционы внутри Хан Шатыра) и точка внутри контура shop=mall (добавлено этой проверкой: 0; остальные места внутри ТРЦ уже имели indoor). Неизвестен у 12 мест — не угадываем; площадки внутри контуров ТРЦ остаются outdoor по категории.
 - Wikidata: описания добавлены 16 местам (из 17 с тегом).
 - Описания Claude (claude-sonnet-5-5, пометка llm_generated): 210 из 213 заметных мест без описания (attraction, cinema, entertainment, gallery, library, mall, monument, museum, park, religious, theatre, viewpoint); кафе, бары, фастфуд и площадки не описываются (убрано старых: 0); отклонено проверкой на часы, цены и рейтинги: 3.
-- Индекс пропущен: эмбеддинги не получены (ClientError): 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage.
+- Индекс пропущен: дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: 1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты; без вектора 245 текстов.
 - Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00 — **устарел**: тексты POI (описания) изменились после сборки индекса; id и порядок совпадают, векторы части мест считаны по старым текстам.
 
 ## Примеры записей

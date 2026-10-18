@@ -54,6 +54,8 @@ def run(
                  len(res.done), len(res.cached), len(res.failed))
         if res.failed:
             notes.append(f"Выгрузка: не скачано {len(res.failed)} кусков, взяты данные с диска.")
+        if area != "fixture" and fetch_osm.fetch_mall_outlines(force=force) is None:
+            notes.append("Контуры ТРЦ не скачаны: проверка «внутри ТРЦ» (indoor) пропущена.")
 
     paths = normalize.raw_files(area, settings.data_dir / "raw")
     if not paths:
@@ -62,12 +64,23 @@ def run(
         normalize.normalize_payloads(normalize.load_payloads(paths)),
         normalize.load_landmarks(settings.landmarks_path),
     )
+    # places inside a mall footprint (rides in Khan Shatyr...) are indoor, by OSM geometry
+    pois, inside_malls = normalize.mark_inside_malls(
+        pois, normalize.load_outlines(settings.data_dir / "raw")
+    )
     # hand-checked reference places: compared with OSM first, the missing ones added
     pois, etalon_notes = etalon.run_on(pois)
     notes.extend(etalon_notes)
     # hand corrections (data/manual/overrides.json), e.g. the EXPO sphere is a museum
     pois, override_notes = overrides.apply_overrides(pois, overrides.load_overrides())
     notes.extend(override_notes)
+    unknown = sum(1 for p in pois if p.indoor is None)
+    notes.append(
+        "indoor только по данным: категория, явный тег OSM indoor=* (так размечены аттракционы "
+        "внутри Хан Шатыра) и точка внутри контура shop=mall (добавлено этой проверкой: "
+        f"{inside_malls}; остальные места внутри ТРЦ уже имели indoor). Неизвестен у {unknown} "
+        "мест — не угадываем; площадки внутри контуров ТРЦ остаются outdoor по категории."
+    )
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 
