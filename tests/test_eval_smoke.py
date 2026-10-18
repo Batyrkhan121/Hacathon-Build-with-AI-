@@ -384,3 +384,13 @@ def test_24_7_template_reason_is_not_a_failed_claim(mock_answer: Answer) -> None
     assert check_expect(ans, {"forbid_open_claim_without_high": True}) == []
     card.tags = [t for t in card.tags if t != "24_7"]
     assert check_expect(ans, {"forbid_open_claim_without_high": True})
+
+
+def test_intent_categories_include_exclude(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.intent.categories = ["attraction", "park"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]}) == []
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]})
+    ans.intent.categories = ["attraction"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]})
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]}) == []

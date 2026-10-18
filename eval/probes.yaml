@@ -8,6 +8,9 @@
 #   unknown_note_lang     пометка о часах у карточек с unknown написана на этом языке
 #   notes_lang            пометки о часах у всех карточек на этом языке
 #   top1_why_any          в why первой карточки есть одна из подстрок
+#   intent_categories_include / _exclude   эти категории есть / нет в разборе запроса
+# P12/P13 проверяют разбор запроса: без Claude это правила query_parser, с Claude — промпт
+# prompts/parse_query.md (общая фраза → достопримечательности + парки; прямое слово → без парков).
 # Запуск: python -m eval.run_eval --no-llm --scenarios eval/probes.yaml --out <папка>
 # (папка не eval/, чтобы не затереть report.md основного прогона).
 # Время: пн 19.10.2026, Астана UTC+5.
@@ -131,3 +134,26 @@
     overrides: {night: true, categories: [bar, nightlife]}
   expect:
     night_safe: true
+
+- id: P12
+  title: "Общая фраза «что стоит посмотреть» → достопримечательности и парки"
+  request:
+    query: "What's worth seeing near EXPO?"
+    location: {landmark_id: expo}
+    at: "2026-10-19T15:00:00+05:00"
+    lang: en
+  expect:
+    min_cards: 1
+    intent_categories_include: [attraction, museum, park]
+
+- id: P13
+  title: "Прямое слово «достопримечательности» → без парков"
+  request:
+    query: "Какие достопримечательности рядом с Байтереком?"
+    location: {landmark_id: baiterek}
+    at: "2026-10-19T15:00:00+05:00"
+    lang: ru
+  expect:
+    min_cards: 1
+    intent_categories_include: [attraction, monument]
+    intent_categories_exclude: [park]
