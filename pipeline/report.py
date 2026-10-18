@@ -221,7 +221,7 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
     payloads = load_payloads(raw_files(area, raw_dir))
     landmarks = json.loads(settings.landmarks_path.read_text(encoding="utf-8"))
     missing = missing_astana_chunks(raw_dir) if area == "astana" else None
-    all_notes = [*notes, index_status(settings.index_dir, len(pois))]
+    all_notes = [*notes, index_status(settings.index_dir, pois)]
     out = out or settings.poi_path.parent / "REPORT.md"
     text = build_report(pois, payloads, landmarks, missing_chunks=missing, notes=all_notes)
     out.write_text(text, encoding="utf-8")
