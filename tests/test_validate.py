@@ -655,3 +655,86 @@ def test_open_close_words_need_known_hours(cands: list[Candidate], why: str, kep
 def test_open_close_words_kept_when_hours_known(cands: list[Candidate]) -> None:
     resp = DraftResponse(summary="", cards=[draft("test:poi/1", why="Закрывается поздно. Тихо.")])
     assert finalize(resp, cands, intent(), ctx())[0][0].why == "Закрывается поздно. Тихо."
+
+
+# ------------------------- review BLOCK: pipeline template summaries must stay intact
+
+_TEMPLATE_VALUES = {"n": 3, "b": 120, "tr": 40, "res": 30, "w": 50, "hhmm": "14:20",
+                    "dur": "2 ч"}
+
+
+def _template_summaries() -> list[tuple[str, str, str]]:
+    from app.pipeline import TEXTS  # FEATURES texts, read only
+
+    out = []
+    for lang, texts in TEXTS.items():
+        for key, text in texts.items():
+            if key.startswith(("summary", "airport")):
+                out.append((lang, key, text.format(**_TEMPLATE_VALUES)))
+    return out
+
+
+@pytest.mark.parametrize(("lang", "key", "text"), _template_summaries())
+def test_pipeline_template_summaries_are_untouched(
+    cands: list[Candidate], lang: str, key: str, text: str
+) -> None:
+    mixed = template_cards(cands, intent(lang=lang), ctx())  # open/high + unknown
+    assert sanitize_summary(text, []) == text
+    assert sanitize_summary(text, mixed) == text
+    assert not has_open_claim(text), (lang, key)
+
+
+def test_typography_is_kept_in_kept_sentences(cands: list[Candidate]) -> None:
+    text = "Три идеи рядом… Кафе №1 и сквер."
+    assert sanitize_summary(text, []) == text  # no NFKC rewrite of «…» / «№»
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Открыто до закрытия.",
+        "Открыто до позднего вечера.",
+        "Открыт до поздней ночи.",
+        "Открыта до последнего посетителя.",
+        "Работает до закрытия.",
+        "Open until closing.",
+        "Кешке дейін ашық.",
+    ],
+)
+def test_until_phrases_without_numbers_are_claims(claim: str) -> None:
+    assert has_open_claim(claim)
+
+
+@pytest.mark.parametrize(
+    "text", ["Работает с 3 людьми.", "Работает допоздна.", "Ашық деректер бойынша 3 ұсыныс."]
+)
+def test_not_claims_after_review(text: str) -> None:
+    assert not has_open_claim(text)
+
+
+def test_all_day_reason_is_data_when_tagged() -> None:
+    assert has_open_claim("≈20 мин пешком, круглосуточно.")
+    assert not has_open_claim("≈20 мин пешком, круглосуточно.", all_day_ok=True)
+    assert not has_open_claim("≈20 мин жаяу, тәулік бойы.", all_day_ok=True)
+
+
+@pytest.mark.parametrize(
+    ("why", "kept"),
+    [
+        ("Кафе на улице Абая. Тихо.", "Тихо."),
+        ("Рядом по проспекту Мангилик Ел. Тихо.", "Тихо."),
+        (
+            "На улице холодно, зайдите погреться. Тихо.",
+            "На улице холодно, зайдите погреться. Тихо.",
+        ),
+    ],
+)
+def test_street_names_in_any_case(cands: list[Candidate], why: str, kept: str) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=why)])
+    assert finalize(resp, cands, intent(), ctx())[0][0].why == kept
+
+
+def test_km_with_dot_is_not_a_time(cands: list[Candidate]) -> None:
+    far = [cand(cands[3].poi, UNKNOWN, 1200)]
+    resp = DraftResponse(summary="", cards=[draft("test:poi/4", why="Парк в 1.20 км. Тихо.")])
+    assert finalize(resp, far, intent(), ctx())[0][0].why == "Парк в 1.20 км. Тихо."

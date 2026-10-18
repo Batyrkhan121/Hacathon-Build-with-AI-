@@ -199,23 +199,29 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
 # it is one of the standalone forms. Text is NFKC-normalised, zero-width characters are
 # removed and mixed-script words are folded to one alphabet before matching.
 
-_ZERO_WIDTH = dict.fromkeys(map(ord, "­​‌‍‎‏⁠﻿"))
+_ZERO_WIDTH = dict.fromkeys(
+    map(ord, "\u00ad\u200b\u200c\u200d\u200e\u200f\u2060\ufeff")  # soft hyphen, ZW*, BOM
+)
 _LAT_TO_CYR = str.maketrans("aceopxykmtABCEHKMOPTXY", "асеорхукмтАВСЕНКМОРТХУ")
 _CYR_TO_LAT = str.maketrans("асеорхукмтАВСЕНКМОРТХУ", "aceopxykmtABCEHKMOPTXY")
 _HAS_CYR = re.compile(r"[а-яёәіңғүұқөһ]", re.IGNORECASE)
 _HAS_LAT = re.compile(r"[a-z]", re.IGNORECASE)
 _WORDS = re.compile(r"\w+")
 
-_RU_ROOT = re.compile(r"\b(открыт\w*|работа(ет|ют|ть|ющ\w*))")
+# «открытые данные / ашық деректер / open data» is about the data, not about the hours
+_RU_ROOT = re.compile(r"\b(открыт\w*+(?!\s+данн)|работа(ет|ют|ть|ющ\w*))")
 _RU_MARK = re.compile(
     r"(сейчас|в данный момент|в настоящее время|\bещ[её]\b|\bуже\b|сегодня|"
-    r"\bдо\s+\d|\bс\s+\d|до\s+(полуночи|утра|ночи|вечера)|24\s*/\s*7|24\s*час)"
+    r"\bдо\s+\d|до\s+(полуночи|утра|ночи|вечера)|24\s*/\s*7|24\s*час|"
+    r"\bс\s+\d{1,2}(?:[:.]\d{2})?\s*(?:до|-|–|—)\s*\d)"  # «с 9 до 22», not «с 3 людьми»
 )
+# «открыто до закрытия / до позднего вечера», «работает до последнего посетителя»
+_RU_UNTIL = re.compile(r"\b(открыт\w*+(?!\s+данн)|работа(ет|ют))\s+(\w+\s+)?до\b")
 _RU_ALONE = re.compile(r"(круглосуточн\w*|24\s*/\s*7|без выходных)")
-_KK_ROOT = re.compile(r"(ашық|жұмыс\s+істе\w*)")
-_KK_MARK = re.compile(r"(қазір|\bәлі\b|бүгін|дейін|\d|тәулік)")
+_KK_ROOT = re.compile(r"(ашық(?!\s+дерек)|жұмыс\s+істе\w*)")
+_KK_MARK = re.compile(r"(қазір|\bәлі\b|бүгін|дейін|\d{1,2}\s*[:.]\s*\d{2}|тәулік)")
 _KK_ALONE = re.compile(r"(жұмыс\s+істеп\s+тұр\w*|тәулік\s+бойы|ашық\s*[.!…]*\s*$)")
-_EN_ROOT = re.compile(r"\b(open\w*|operat\w*)\b")
+_EN_ROOT = re.compile(r"\b(open\w*+(?!\s+data)|operat\w*)\b")
 _EN_MARK = re.compile(
     r"(\bnow\b|\bcurrently\b|\btoday\b|\btonight\b|\bstill\b|\balready\b|\buntil\b|\btill\b|"
     r"24\s*/\s*7|24 hours|at the moment)"
@@ -224,22 +230,32 @@ _EN_ALONE = re.compile(
     r"(\b(we[’']?re|we are|it[’']?s|it is|is|are|stays?)\s+open\b(?![-\s]air)|\bopen\s+24|"
     r"24\s*/\s*7|around the clock)"
 )
+# «круглосуточно / 24/7» is fine when the data says so (tag 24_7): checked with all_day_ok
+_ALL_DAY = re.compile(
+    r"(круглосуточн\w*|24\s*/\s*7|24\s*час\w*|тәулік\s+бойы|around the clock|24 hours)"
+)
 
 
 def _fold(text: str, to_cyrillic: bool) -> str:
-    """NFKC, no zero-width chars, mixed-script words folded to one alphabet, lower case."""
+    """NFKC, no zero-width chars, mixed-script words folded to one alphabet, lower case.
+
+    Only for matching: the text shown to the user keeps its own typography («…», «№»).
+    """
     text = unicodedata.normalize("NFKC", text).translate(_ZERO_WIDTH)
     table, probe = (_LAT_TO_CYR, _HAS_CYR) if to_cyrillic else (_CYR_TO_LAT, _HAS_LAT)
     text = _WORDS.sub(lambda m: m[0].translate(table) if probe.search(m[0]) else m[0], text)
     return text.lower().replace("ё", "е")
 
 
-def _sentence_claims_open(sentence: str) -> bool:
+def _sentence_claims_open(sentence: str, all_day_ok: bool = False) -> bool:
     cyr, lat = _fold(sentence, True), _fold(sentence, False)
+    if all_day_ok:  # the data says 24/7: «круглосуточно» is a fact, not a claim
+        cyr, lat = _ALL_DAY.sub(" ", cyr), _ALL_DAY.sub(" ", lat)
     return bool(
         _CLAIM_RE.search(cyr)
         or _CLAIM_RE.search(lat)
         or (_RU_ROOT.search(cyr) and _RU_MARK.search(cyr))
+        or _RU_UNTIL.search(cyr)
         or _RU_ALONE.search(cyr)
         or (_KK_ROOT.search(cyr) and _KK_MARK.search(cyr))
         or _KK_ALONE.search(cyr.strip())
@@ -249,16 +265,18 @@ def _sentence_claims_open(sentence: str) -> bool:
 
 
 def _sentences(text: str) -> list[str]:
-    clean = unicodedata.normalize("NFKC", text).translate(_ZERO_WIDTH)
+    """Sentences as written (only invisible zero-width characters are removed)."""
+    clean = text.translate(_ZERO_WIDTH)
     return [s for s in _SENTENCE_SPLIT.split(clean.strip()) if s]
 
 
-def has_open_claim(text: str) -> bool:
+def has_open_claim(text: str, *, all_day_ok: bool = False) -> bool:
     """True when any sentence claims a place is open now / states hours (ru, kk, en).
 
+    all_day_ok=True when the place has the 24_7 tag: «круглосуточно» is then data.
     Shared with eval/run_eval.py so the eval checks exactly what the guard removes.
     """
-    return any(_sentence_claims_open(s) for s in _sentences(text))
+    return any(_sentence_claims_open(s, all_day_ok) for s in _sentences(text))
 
 
 _MONEY = re.compile(r"(тенге|теңге|₸|\$|€|₽|\bруб|\btenge\b|\bkzt\b|\busd\b)", re.IGNORECASE)
@@ -267,17 +285,17 @@ _PHONE = re.compile(
 )
 _URL = re.compile(r"(https?://|www\.|\b[\w-]+\.(kz|com|ru|org|net|info)\b)", re.IGNORECASE)
 _ADDRESS = re.compile(
-    r"(\b(ул|пр|просп|мкр|пер|бул)\.\s*\w|"
-    r"\b(улица|проспект|переулок|бульвар|микрорайон|көшесі|даңғылы|street|avenue)\s+\w|"
-    r"\bд\.\s*\d)",
+    r"(\b(ул|пр|просп|мкр|пер|бул)\.\s*\w|\b(street|avenue)\s+\w|\bд\.\s*\d)",
     re.IGNORECASE,
 )
-_TIME = re.compile(r"\b([01]?\d|2[0-4])[:.]([0-5]\d)\b")
+# «на улице Абая», «по проспекту Мангилик Ел» — but not «на улице холодно»
+_STREET = re.compile(
+    r"\b(?:[Уу]лиц[аеуыи]|[Пп]роспект\w?|[Пп]ереул\w+|[Бб]ульвар\w?|[Мм]икрорайон\w?|"
+    r"көшесі\w*|даңғыл\w*)\s+[А-ЯЁӘІҢҒҮҰҚӨҺA-Z0-9«\"]"
+)
+_TIME = re.compile(r"\b([01]?\d|2[0-4])[:.]([0-5]\d)\b(?!\s*(?:км|km|м\b|m\b))")
 # «круглосуточно / 24/7» needs the 24_7 tag or the hours note; «закрывается поздно /
 # открывается рано» needs known hours. «открывается вид на город» is about the view.
-_ALL_DAY = re.compile(
-    r"(круглосуточн\w*|24\s*/\s*7|24\s*час\w*|тәулік\s+бойы|around the clock|24 hours)"
-)
 _HOURS_VERB = re.compile(
     r"(закрыва\w*+|открыва\w*+(?!\s+(вид|панорам))|\bcloses?\b|\bclosing\b|"
     r"\bopens?\b(?!\s+(onto|up|to))|жабыл\w*|ашыл\w*)"
@@ -351,7 +369,7 @@ def _sentence_unverified(sentence: str, facts: _Facts) -> bool:
         _HOURS_VERB.search(v) and _HOURS_HINT.search(v) for v in variants
     ):
         return True
-    if _ADDRESS.search(folded):
+    if _ADDRESS.search(folded) or _STREET.search(folded):
         return True
     for h, m in _TIME.findall(folded):
         if _clock(h, m) not in facts.times:
@@ -372,7 +390,7 @@ def _guard_text(text: str, facts: _Facts, allow_open: bool) -> tuple[str, bool, 
     kept: list[str] = []
     claims = facts_cut = False
     for sentence in _sentences(text):
-        if not allow_open and _sentence_claims_open(sentence):
+        if not allow_open and _sentence_claims_open(sentence, facts.all_day_ok):
             claims = True
             continue
         if _sentence_unverified(sentence, facts):
@@ -581,8 +599,9 @@ def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> s
         c.open_status == "open" and c.open_confidence == "high" for c in cards
     )
     if not llm:
-        kept = [s for s in _sentences(summary) if all_open or not _sentence_claims_open(s)]
-        return " ".join(kept)
+        sentences = _sentences(summary)
+        kept = [s for s in sentences if all_open or not _sentence_claims_open(s)]
+        return summary if len(kept) == len(sentences) else " ".join(kept)
     facts = _Facts(frozenset({float(len(cards))}), frozenset(), (), True, True)
     for card in cards:
         facts = facts.merge(_facts_from_card(card))

@@ -191,7 +191,9 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         for c in ans.cards:
             if c.open_status == "open" and c.open_confidence == "high":
                 continue
-            if any(has_open_claim(t) for t in (c.why, c.what_to_do, c.open_note)):
+            all_day = "24_7" in c.tags  # «круглосуточно» from the data is not a claim
+            texts = (c.why, c.what_to_do, c.open_note)
+            if any(has_open_claim(t, all_day_ok=all_day) for t in texts):
                 fails.append(f"{c.poi_id}: «открыто сейчас» без open/high")
         all_open = bool(ans.cards) and all(
             c.open_status == "open" and c.open_confidence == "high" for c in ans.cards

@@ -373,3 +373,13 @@ def test_open_claim_in_summary_is_caught(mock_answer: Answer) -> None:
     for c in all_open.cards:
         c.open_status, c.open_confidence = "open", "high"
     assert check_expect(all_open, {"forbid_open_claim_without_high": True}) == []
+
+
+def test_24_7_template_reason_is_not_a_failed_claim(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    card = next(c for c in ans.cards if c.open_status == "unknown")
+    card.why = "≈20 мин пешком, круглосуточно."
+    card.tags = [*card.tags, "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True}) == []
+    card.tags = [t for t in card.tags if t != "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True})
