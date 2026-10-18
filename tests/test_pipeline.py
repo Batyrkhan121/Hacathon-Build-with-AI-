@@ -498,7 +498,8 @@ class TestRecommend:
         no_ai = recommend(req("кофе", lang=lang, use_llm=False), deps).data_used.filters
         assert lexical in no_ai  # the user chose it: no reason to explain
         deps.store.embeddings = None  # no index at all
-        assert lexical in recommend(req("кофе", lang=lang), deps).data_used.filters
+        no_index = recommend(req("кофе", lang=lang), deps).data_used.filters
+        assert any(f.startswith(lexical) for f in no_index)  # (+ «отбор — Claude» with AI)
 
     @pytest.mark.parametrize(
         "vec",
@@ -521,32 +522,115 @@ class TestRecommend:
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=vec)
         filters = recommend(req("кофе"), deps).data_used.filters
-        assert "поиск: по словам (некорректный вектор запроса)" in filters
+        assert "поиск: по словам (некорректный вектор запроса), отбор — Claude" in filters
         assert seen and all(qv is None for qv in seen)
 
-    def test_no_exact_match_hook(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
-        """QUALITY's retrieval.no_exact_match(intent, candidates) -> warning in ru/kk/en."""
-        monkeypatch.setattr(retrieval, "no_exact_match", lambda intent, cands: True,
-                            raising=False)
+    def test_query_unmatched_hook(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QUALITY's retrieval.query_unmatched(store, intent, ctx, candidates) -> warning."""
+        seen: list[tuple[Any, ...]] = []
+
+        def unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
+                      cands: list[Candidate]) -> bool:
+            seen.append((store, intent, ctx, cands))
+            return True
+
+        monkeypatch.setattr(retrieval, "query_unmatched", unmatched, raising=False)
         texts = {"ru": "Точного совпадения по запросу нет — показано, что есть рядом.",
                  "kk": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
                  "en": "No exact match for your request — showing what is nearby."}
         for lang, text in texts.items():
             assert text in recommend(req("кофе", lang=lang, use_llm=False), deps).warnings
-        monkeypatch.setattr(retrieval, "no_exact_match", lambda intent, cands: False)
+        store, _intent, ctx, cands = seen[0]
+        assert store is deps.store and isinstance(ctx, SearchContext) and cands
+        monkeypatch.setattr(retrieval, "query_unmatched", lambda *a: False)
         assert not any("совпадения" in w
                        for w in recommend(req("кофе", use_llm=False), deps).warnings)
 
-    def test_no_exact_match_hook_absent_or_broken(self, deps: Deps,
-                                                  monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delattr(retrieval, "no_exact_match", raising=False)
-        assert recommend(req("кофе", use_llm=False), deps).cards
+    def test_query_unmatched_absent_or_broken(self, deps: Deps,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delattr(retrieval, "query_unmatched", raising=False)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # old main: no function yet
 
         def boom(*_a: Any) -> bool:
             raise RuntimeError("bug")
 
-        monkeypatch.setattr(retrieval, "no_exact_match", boom, raising=False)
+        monkeypatch.setattr(retrieval, "query_unmatched", boom, raising=False)
         assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
+
+    def test_llm_summary_is_sanitized_as_llm(self, deps: Deps,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+
+        def sanitize(summary: str, cards: list[Card], llm: bool = False) -> str:
+            calls.append(llm)
+            return summary
+
+        monkeypatch.setattr(validate, "sanitize_summary", sanitize)
+        assert recommend(req("кофе"), deps).data_used.generation == "llm"
+        assert calls == [True]  # the LLM wrote it
+        recommend(req("кофе", use_llm=False), deps)
+        assert calls == [True, False]  # template counters / airport times: default
+
+    def test_old_sanitize_signature_still_works(self, deps: Deps,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validate, "sanitize_summary", lambda summary, cards: summary)
+        assert recommend(req("кофе"), deps).summary == "Идеи от модели"
+
+    # ----------------------------------- no query vector: Claude picks from 16
+
+    @pytest.mark.parametrize(
+        ("lang", "picked", "lexical", "semantic"),
+        [("ru", "поиск: по словам, отбор — Claude", "поиск: по словам",
+          "поиск: по смыслу и по словам"),
+         ("kk", "іздеу: сөздері бойынша, іріктеу — Claude", "іздеу: сөздері бойынша",
+          "іздеу: мағынасы мен сөздері бойынша"),
+         ("en", "search: by keywords, picked by Claude", "search: by keywords",
+          "search: by meaning and keywords")],
+    )
+    def test_claude_picks_from_a_wider_keyword_pool(
+        self, deps: Deps, monkeypatch: pytest.MonkeyPatch, lang: str, picked: str,
+        lexical: str, semantic: str
+    ) -> None:
+        ks: list[int] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            ks.append(k)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        # 1) no vector, Claude on -> 16 keyword candidates, Claude picks
+        a = recommend(req("кофе", lang=lang), deps)
+        assert ks[-1] == 16 and a.data_used.generation == "llm"
+        assert picked in a.data_used.filters
+        # 2) no AI -> 8 candidates, plain keyword search
+        b = recommend(req("кофе", lang=lang, use_llm=False), deps)
+        assert ks[-1] == 8 and lexical in b.data_used.filters
+        assert not any("Claude" in f for f in b.data_used.filters)
+        # 3) a usable vector -> 8 candidates, semantic search
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        c = recommend(req("кофе", lang=lang), deps)
+        assert ks[-1] == 8 and semantic in c.data_used.filters
+
+    def test_claude_unavailable_keeps_the_usual_pool(self, deps: Deps,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        ks: list[int] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            ks.append(k)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        deps.llm = FakeLLM(available=False)
+        a = recommend(req("кофе"), deps)
+        assert ks == [8] and "поиск: по словам" in a.data_used.filters
+        deps.llm = FakeLLM(fail=LLMUnavailable("timeout"))  # asked, then failed
+        b = recommend(req("кофе"), deps)
+        assert ks[-1] == 16 and b.data_used.generation == "template"
+        assert "поиск: по словам" in b.data_used.filters  # no «отбор — Claude» claim
+        assert len(b.cards) <= 3
 
     # ------------------------------------------- silent-failure review (wave 3)
 
@@ -613,17 +697,18 @@ class TestRecommend:
         a = recommend(req(), deps)
         assert ("Смысловой поиск недоступен (дневная квота Gemini) — поиск только по словам."
                 in a.warnings)
-        assert "поиск: по словам (дневная квота Gemini)" in a.data_used.filters
+        assert "поиск: по словам (дневная квота Gemini), отбор — Claude" in a.data_used.filters
         deps.llm = FakeLLM(embed=np.zeros(4, dtype=np.float32), embed_status="ok")
         bad = recommend(req(), deps)
-        assert "поиск: по словам (некорректный вектор запроса)" in bad.data_used.filters
+        assert ("поиск: по словам (некорректный вектор запроса), отбор — Claude"
+                in bad.data_used.filters)
 
     def test_no_gemini_key_is_a_reason_not_a_warning(self, deps: Deps) -> None:
         deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=None, embed_status="no_key")
         a = recommend(req(lang="en"), deps)
-        assert "search: by keywords (no Gemini key)" in a.data_used.filters
+        assert "search: by keywords (no Gemini key), picked by Claude" in a.data_used.filters
         assert not any("Semantic search" in w for w in a.warnings)
 
     def test_time_machine_weather_label(self, deps: Deps) -> None:

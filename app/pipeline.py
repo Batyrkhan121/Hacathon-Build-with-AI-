@@ -26,6 +26,7 @@ them for fakes.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import traceback
@@ -76,6 +77,9 @@ DISCLAIMERS: dict[str, str] = {
     ),
 }
 TOP_K = 8
+# No query vector (Gemini quota / failure) but Claude will write the cards: it gets a wider
+# keyword pool and picks 1–3 by meaning (finalize still drops foreign ids, facts stay ours).
+LLM_POOL_K = 16
 SPARSE_MIN = 3  # fewer candidates than this -> "few places nearby" warning
 # Tourist before a flight (wave 3 rule): walk budget = time to departure - transfer - reserve.
 # Applies only when a flight / the airport is mentioned or the UI sent departure_in_min.
@@ -154,7 +158,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_group": "группа {v}", "f_categories": "категории: {v}", "f_tags": "теги: {v}",
         "f_no_ai": "режим без ИИ",
         "f_search_semantic": "поиск: по смыслу и по словам",
-        "f_search_lexical": "поиск: по словам",
+        "f_search_lexical": "поиск: по словам", "f_search_claude": ", отбор — Claude",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -214,7 +218,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_night": "түн", "f_tourist": "турист", "f_group": "топ {v}",
         "f_categories": "санаттар: {v}", "f_tags": "тегтер: {v}", "f_no_ai": "ЖИ-сыз режим",
         "f_search_semantic": "іздеу: мағынасы мен сөздері бойынша",
-        "f_search_lexical": "іздеу: сөздері бойынша",
+        "f_search_lexical": "іздеу: сөздері бойынша", "f_search_claude": ", іріктеу — Claude",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -271,7 +275,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_group": "group of {v}", "f_categories": "categories: {v}", "f_tags": "tags: {v}",
         "f_no_ai": "no-AI mode",
         "f_search_semantic": "search: by meaning and keywords",
-        "f_search_lexical": "search: by keywords",
+        "f_search_lexical": "search: by keywords", "f_search_claude": ", picked by Claude",
     },
 }
 
@@ -479,20 +483,23 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 warn.append(t["semantic_down"].format(
                     reason=EMBED_REASONS[intent.lang][semantic_reason]))
 
+    wide_pool = llm is not None and llm.available and query_vec is None
+    pool_k = LLM_POOL_K if wide_pool else TOP_K
+
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
     search_intent = plan_intent
     if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
         candidates, failed = [], False
     else:
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
     if short_walks:  # "two cards beat a third one 48 minutes away"
         candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
     if not candidates and not failed and not no_time and not short_walks:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
-            candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+            candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     if plan_intent.night and not no_time:
@@ -503,7 +510,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
             far_ctx = ctx.model_copy(update={"radius_m": min(
                 round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
-            more, failed = _retrieve(store, far_intent, far_ctx, query_vec)
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k)
             sure = [c for c in more if _night_sure(c)]
             if sure:
                 search_intent, ctx = far_intent, far_ctx
@@ -512,14 +519,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = sure
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
-    if candidates and _no_exact_match(search_intent, candidates):
+    if candidates and _query_unmatched(store, search_intent, ctx, candidates):
         warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
@@ -549,6 +556,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     generation = "template"
     summary: str | None = None
     gen_model: str | None = None
+    llm_summary: str | None = None
     if candidates and llm is not None:
         draft = None
         try:
@@ -566,6 +574,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 draft_ids = {d.poi_id for d in draft.cards}
                 if any(c.poi_id in draft_ids for c in cards):
                     generation, summary, gen_model = "llm", draft.summary, llm.last_model
+                    llm_summary = draft.summary
             except Exception as exc:  # noqa: BLE001 - a finalize bug must not kill the answer
                 log.error("request %s: finalize failed (%s)\n%s", request_id,
                           type(exc).__name__, _frames(exc))
@@ -576,7 +585,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
     if candidates and not cards:
         try:
-            cards = validate.template_cards(gen_candidates, search_intent, ctx)
+            cards = validate.template_cards(gen_candidates[:TOP_K], search_intent, ctx)
         except Exception as exc:  # noqa: BLE001
             log.error("request %s: template_cards failed (%s)\n%s", request_id,
                       type(exc).__name__, _frames(exc))
@@ -612,7 +621,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         # E11 / UI "tourist + departure": NQZ has a few cafes and nothing to see — say so,
         # whatever categories were asked (the UI sends no text categories at all)
         summary = _airport_summary(t, intent, has_cards=bool(cards))
-    summary = validate.sanitize_summary(summary, cards)  # "open now" never leaks via summary
+    # "open now" never leaks via the summary; model text is checked as model text
+    summary = _sanitize_summary(summary, cards,
+                                by_llm=generation == "llm" and summary == llm_summary)
 
     answer = Answer(
         request_id=request_id,
@@ -628,6 +639,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             weather=_weather_label(t, wx, intent.lang, local_time, manual=req.at is not None),
             filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
                              semantic=query_vec is not None,
+                             claude_picked=wide_pool and generation == "llm",
                              semantic_reason=semantic_reason,
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
@@ -688,17 +700,30 @@ def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarr
     return q
 
 
-def _no_exact_match(intent: QueryIntent, candidates: list[Candidate]) -> bool:
-    """QUALITY decides (retrieval.no_exact_match): nothing matches the meaningful words of the
-    query, so the cards are just what is nearby. Absent or broken -> no warning."""
-    check = getattr(retrieval, "no_exact_match", None)
+def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
+                     candidates: list[Candidate]) -> bool:
+    """QUALITY decides (retrieval.query_unmatched): the query has meaningful words and none of
+    them matches any candidate, so the cards are just what is nearby. Absent (older main) or
+    broken -> no warning, never a failed answer."""
+    check = getattr(retrieval, "query_unmatched", None)
     if check is None:
         return False
     try:
-        return bool(check(intent, candidates))
+        return bool(check(store, intent, ctx, candidates))
     except Exception as exc:  # noqa: BLE001 - a missing hint never kills the answer
-        log.error("no_exact_match failed (%s)", type(exc).__name__)
+        log.error("query_unmatched failed (%s)\n%s", type(exc).__name__, _frames(exc))
         return False
+
+
+def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool) -> str:
+    """validate.sanitize_summary(summary, cards, llm=...) when QUALITY's version takes `llm`
+    (stricter for model text); the older two-argument version otherwise."""
+    fn = validate.sanitize_summary
+    try:
+        takes_llm = "llm" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        takes_llm = False
+    return fn(summary, cards, llm=by_llm) if takes_llm else fn(summary, cards)
 
 
 def _sights(candidates: list[Candidate]) -> int:
@@ -781,10 +806,11 @@ def _safe_radius(intent: QueryIntent) -> int:
 
 
 def _retrieve(
-    store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None
+    store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None,
+    k: int = TOP_K,
 ) -> tuple[list[Candidate], bool]:
     try:
-        return retrieval.retrieve(store, intent, ctx, query_vec, k=TOP_K), False
+        return retrieval.retrieve(store, intent, ctx, query_vec, k=k), False
     except Exception as exc:  # noqa: BLE001 - an empty answer beats a 500
         # data problem (bad index / record) vs a bug in the code: both need a fix, not a retry
         kind = "data" if isinstance(exc, (ValueError, KeyError, IndexError)) else "bug"
@@ -910,7 +936,7 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
              *, lang: Lang = "ru", airport: int | None = None,
              night_by_clock: bool = False, semantic: bool = False,
-             semantic_reason: str | None = None) -> list[str]:
+             semantic_reason: str | None = None, claude_picked: bool = False) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran."""
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
@@ -938,10 +964,11 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
     if semantic:
         out.append(t["f_search_semantic"])
-    elif semantic_reason in EMBED_REASONS[lang]:
-        out.append(f"{t['f_search_lexical']} ({EMBED_REASONS[lang][semantic_reason]})")
     else:
-        out.append(t["f_search_lexical"])
+        line = t["f_search_lexical"]
+        if semantic_reason in EMBED_REASONS[lang]:
+            line += f" ({EMBED_REASONS[lang][semantic_reason]})"
+        out.append(line + (t["f_search_claude"] if claude_picked else ""))
     if not use_llm:
         out.append(t["f_no_ai"])
     return out
