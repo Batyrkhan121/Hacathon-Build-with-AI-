@@ -72,6 +72,7 @@ class Result:
     cards: int = 0
     generation: str | None = None
     search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
+    search_line: str | None = None  # the «поиск: …» line from data_used.filters, verbatim
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -268,6 +269,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
         passed=False,
         latency_ms=out.latency_ms,
         search=search_mode(out),
+        search_line=search_line(out),
     )
     if out.error:
         res.failures.append(f"ошибка: {out.error}")
@@ -425,6 +427,14 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
 SEARCH_LABEL = {"vector": "по смыслу", "words": "по словам"}
 _SEMANTIC_MARKERS = ("смысл", "мағына", "meaning", "semantic")
 _SEARCH_PREFIXES = ("поиск", "іздеу", "search")
+
+
+def search_line(out: Outcome) -> str | None:
+    if out.answer is None:
+        return None
+    return next(
+        (f for f in out.answer.data_used.filters if f.lower().startswith(_SEARCH_PREFIXES)), None
+    )
 
 
 def search_mode(out: Outcome) -> str | None:
