@@ -157,9 +157,10 @@ class FakeLLM:
                  intent: QueryIntent | None = None, embed: np.ndarray | None = None,
                  error_kind: str = "network", parse_fail: Exception | None = None,
                  embed_status: str | None = None, enabled: bool = True,
-                 summary: str = "Идеи от модели") -> None:
+                 summary: str = "Идеи от модели", whys: list[str] | None = None) -> None:
         self.available = available
         self.summary = summary
+        self.whys = whys or []
         self.enabled = enabled
         self.fail = fail
         self.parse_fail = parse_fail
@@ -191,9 +192,10 @@ class FakeLLM:
         ids = [line.split('"')[3] for line in prompt.splitlines() if line.strip()
                .startswith('"id":')]
         return DraftResponse(summary=self.summary, cards=[
-            CardDraft(poi_id=i, why="Рядом и подходит.", what_to_do="Загляните на 20 минут.",
+            CardDraft(poi_id=i, why=self.whys[n] if n < len(self.whys) else "Рядом и подходит.",
+                      what_to_do="Загляните на 20 минут.",
                       visit_min_low=20, visit_min_high=30, idea_source="generated")
-            for i in ids[:2]])
+            for n, i in enumerate(ids[:2])])
 
     def embed_query(self, text: str) -> np.ndarray | None:
         self.embedded.append(text)
@@ -690,6 +692,46 @@ class TestRecommend:
         monkeypatch.setattr(pipeline_mod, "_template_summary", lambda t, n: "Ночью: тег night")
         assert recommend(req("кофе", use_llm=False), deps).summary == "Ночью: тег night"
 
+    # ----------------------------------- raw tags in a model-written why (cache: 6 of 66)
+
+    @pytest.mark.parametrize("leak", ["Рядом, есть кофе и wifi.",
+                                      "Площадка отмечена тегом «для детей»."])
+    def test_model_why_with_a_raw_tag_becomes_the_template_why(self, deps: Deps,
+                                                                leak: str) -> None:
+        deps.llm = FakeLLM(whys=[leak, "Тихо и уютно."])
+        a = recommend(req("кофе"), deps)
+        assert a.data_used.generation == "llm" and len(a.cards) == 2
+        first, second = a.cards
+        assert first.why == f"≈{first.walk_min} мин пешком"  # fake_template_cards: matched
+        assert first.what_to_do == "Загляните на 20 минут." and first.idea_source == "generated"
+        assert second.why == "Тихо и уютно."  # the other card is not touched
+
+    def test_english_wifi_in_a_why_is_a_word(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(whys=["Quiet place with wifi and coffee."])
+        a = recommend(req("coffee", lang="en"), deps)
+        assert a.lang == "en" and a.cards[0].why == "Quiet place with wifi and coffee."
+
+    def test_template_cards_are_not_checked_for_tags(self, deps: Deps,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        def tagged(candidates: list[Candidate], intent: QueryIntent, ctx: SearchContext,
+                   n: int = 3) -> list[Card]:
+            return [c.model_copy(update={"why": "Есть wifi."})
+                    for c in fake_template_cards(candidates, intent, ctx, n)]
+
+        monkeypatch.setattr(validate, "template_cards", tagged)
+        a = recommend(req("кофе", use_llm=False), deps)
+        assert a.data_used.generation == "template" and a.cards
+        assert all(c.why == "Есть wifi." for c in a.cards)
+
+    @pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+    def test_template_reasons_never_look_like_raw_tags(self, lang: str) -> None:
+        # every phrase a template why is made of (retrieval.REASONS, MISSING_TAG_WORDS)
+        what = ", ".join(w.get(lang, w["ru"]) for w in retrieval.MISSING_TAG_WORDS.values())
+        for key, texts in retrieval.REASONS.items():
+            for src in retrieval.SOURCE_LABELS.values():
+                text = texts.get(lang, texts["ru"]).format(n=7, src=src, what=what)
+                assert not pipeline_mod._tag_leak(text, lang, []), (key, text)
+
     @pytest.mark.parametrize(("lang", "text", "titles", "leak"), [
         ("ru", "Поздним вечером: все с тегом night", [], True),
         ("ru", "Здесь есть wifi и розетки", [], True),
@@ -1104,6 +1146,19 @@ def no_weather(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("no_weather")
 class TestRealCore:
+    @pytest.mark.parametrize(("lang", "query", "landmark"), [
+        ("ru", "Тихое кафе с wifi и розетками, поработать", "expo"),
+        ("ru", "Куда с ребёнком в тепло, бесплатно", "khan_shatyr"),
+        ("kk", "Балалармен тегін мұражай", "baiterek"),
+        ("en", "Quiet cafe with wifi and power outlets, open late", "expo"),
+    ])
+    def test_template_whys_do_not_trip_the_tag_check(self, real_deps: Deps, lang: str,
+                                                     query: str, landmark: str) -> None:
+        a = recommend(real_req(query, landmark, lang=lang), real_deps)
+        assert a.data_used.generation == "template" and a.cards
+        for card in a.cards:
+            assert not pipeline_mod._tag_leak(card.why, lang, [card.title]), card.why
+
     def test_s1_walk_is_a_loop_within_budget(self, real_deps: Deps) -> None:
         a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
                                "что посоветуете?", "mega_silk_way"), real_deps)

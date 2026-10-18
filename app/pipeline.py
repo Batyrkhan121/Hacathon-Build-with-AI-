@@ -641,6 +641,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                           type(exc).__name__, _frames(exc))
                 warn.append(t["gen_check_failed"])
                 cards = []
+    if generation == "llm":
+        cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id)
     if parse_reason is not None and not llm_down_said:
         warn.append(t["parse_fallback"].format(
             reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
@@ -872,6 +874,29 @@ def _tag_leak(text: str, lang: str, titles: Iterable[str]) -> bool:
     if lang == "en":
         return _EN_TAG_NEAR_RE.search(text) is not None
     return _BARE_TAG_RE.search(text) is not None
+
+
+def _untag_whys(cards: list[Card], candidates: list[Candidate], intent: QueryIntent,
+                ctx: SearchContext, request_id: str) -> list[Card]:
+    """A model-written why naming a raw tag («есть кофе и wifi», «отмечена тегом …») gets the
+    template why of the same candidate (validate.template_cards); nothing else changes."""
+    by_id = {c.poi.id: c for c in candidates}
+    out: list[Card] = []
+    for card in cards:
+        cand = by_id.get(card.poi_id)
+        if cand is not None and _tag_leak(card.why, intent.lang, [card.title]):
+            try:
+                why = validate.template_cards([cand], intent, ctx, n=1)[0].why
+            except Exception as exc:  # noqa: BLE001 - keep the card as it is
+                log.error("request %s: template why for card %d failed (%s)\n%s", request_id,
+                          card.rank, type(exc).__name__, _frames(exc))
+                why = ""
+            if why.strip():
+                log.info("request %s: card %d why names a raw tag: template why", request_id,
+                         card.rank)
+                card = card.model_copy(update={"why": why})
+        out.append(card)
+    return out
 
 
 def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool) -> str:
