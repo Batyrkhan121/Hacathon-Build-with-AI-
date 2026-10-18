@@ -26,3 +26,4 @@ data/cache/
 Thumbs.db
 .vscode/
 .idea/
+eval/smoke_report.md
