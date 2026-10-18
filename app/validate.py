@@ -52,6 +52,11 @@ MAX_TODO_CHARS = 360
 MAX_WHY_SENTENCES = 2
 MAX_CARDS = 3
 UNKNOWN_HOURS_NOTE = "нет данных о часах, проверьте перед визитом"
+UNKNOWN_HOURS_NOTES: dict[str, str] = {  # T70 step 6: the note follows the user's language
+    "ru": UNKNOWN_HOURS_NOTE,
+    "kk": "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз",
+    "en": "no opening hours data, check before you go",
+}
 
 _CLAIM_RE = re.compile(
     "|".join(r"\s+".join(map(re.escape, claim.split())) for claim in FORBIDDEN_OPEN_CLAIMS),
@@ -227,8 +232,9 @@ def _card(
 ) -> Card:
     poi, hours = cand.poi, cand.hours
     note = hours.note
-    if hours.status == "unknown" and "проверьте" not in note:
-        note = UNKNOWN_HOURS_NOTE
+    if hours.status == "unknown" and (intent.lang != "ru" or "проверьте" not in note):
+        # ru keeps a more specific hours.py note ("…нестандартный формат, проверьте…")
+        note = UNKNOWN_HOURS_NOTES.get(intent.lang, UNKNOWN_HOURS_NOTE)
     return Card(
         rank=rank,
         poi_id=poi.id,

@@ -363,3 +363,23 @@ def test_title_distance_units(lang: str, near: str, far: str) -> None:
     assert cards[0].title.endswith(near)
     twin = [cand(make_poi("3", "cafe", "Мю"), distance=1250), cs[1]]
     assert template_cards(twin, intent(lang=lang), ctx())[0].title.endswith(far)
+
+
+@pytest.mark.parametrize(
+    ("lang", "note"),
+    [
+        ("ru", "нет данных о часах, проверьте перед визитом"),
+        ("kk", "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз"),
+        ("en", "no opening hours data, check before you go"),
+    ],
+)
+def test_unknown_hours_note_in_user_language(
+    cands: list[Candidate], lang: str, note: str
+) -> None:
+    cards = template_cards(cands, intent(lang=lang), ctx())
+    unknown = [c for c in cards if c.open_status == "unknown"]
+    assert unknown
+    assert all(c.open_note == note for c in unknown)
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3")])
+    finalized, _ = finalize(resp, cands, intent(lang=lang), ctx())
+    assert finalized[0].open_note == note
