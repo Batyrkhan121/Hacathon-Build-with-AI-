@@ -41,7 +41,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import ROOT, get_settings
@@ -170,6 +170,16 @@ async def _send_json(send: Callable, status_code: int, content: dict[str, Any]) 
     await send({"type": "http.response.body", "body": payload})
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """web/ with `Cache-Control: no-cache` (WEB request): the browser revalidates every file
+    (ETag / Last-Modified -> cheap 304), so an old index.html never meets a new app.js."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def build_default_deps() -> Deps:
     settings = get_settings()
     return Deps(store=load_store(settings), llm=LLMClient(settings), settings=settings)
@@ -277,7 +287,7 @@ def create_app(deps: Deps | None = None) -> FastAPI:
         return answer
 
     if WEB_DIR.is_dir():  # last, so /api/* routes win
-        app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+        app.mount("/", NoCacheStaticFiles(directory=WEB_DIR, html=True), name="web")
     return app
 
 
