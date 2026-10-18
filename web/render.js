@@ -98,12 +98,20 @@ export function hoursBadge(card, atTime) {
 
 // ------------------------------------------------------------------ states
 
-export function renderIntro(root) {
-  root.replaceChildren(h('p', { class: 'intro', text: t('intro') }));
+// Пустое состояние: одно полезное действие вместо пересказа функций.
+export function renderIntro(root, { onExample } = {}) {
+  root.replaceChildren(
+    h(
+      'div',
+      { class: 'intro' },
+      h('p', { text: t('intro') }),
+      onExample ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onExample }, t('intro.example')) : null,
+    ),
+  );
 }
 
 // Скелетон повторяет форму карточек, чтобы ничего не прыгало, когда придёт ответ.
-export function renderLoading(root) {
+export function renderLoading(root, { onCancel } = {}) {
   const skel = () =>
     h(
       'li',
@@ -117,6 +125,9 @@ export function renderLoading(root) {
     h(
       'div',
       { class: 'loading', 'aria-label': t('loading.label') },
+      onCancel
+        ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
+        : null,
       h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
       h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),
     ),
@@ -286,8 +297,10 @@ function renderCard(card, atTime, ctx) {
           'p',
           { class: 'card-cat' },
           h('span', { 'aria-hidden': 'true', text: CATEGORY_ICON[card.category] || CATEGORY_ICON.other }),
-          ` ${categoryLabel(card.category)}`,
-          unnamed ? h('span', { class: 'unnamed', text: ` · ${t('card.unnamed')}` }) : null,
+          // У безымянного места заголовок и так равен категории — не повторяем её.
+          unnamed
+            ? h('span', { class: 'unnamed', text: ` ${t('card.unnamed')}` })
+            : ` ${categoryLabel(card.category)}`,
         ),
       ),
     ),

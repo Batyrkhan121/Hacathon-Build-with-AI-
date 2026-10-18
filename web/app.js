@@ -57,6 +57,8 @@ const els = {
   status: $('status'),
   answer: $('answer'),
   mockPill: $('mock-pill'),
+  stale: $('stale'),
+  staleBtn: $('stale-btn'),
   mapFallback: $('map-fallback'),
 };
 
@@ -144,9 +146,11 @@ async function submit({ useLlm = true } = {}) {
   const ctrl = new AbortController();
   state.inflight = ctrl;
   setBusy(true);
+  setStale(false);
   mapView.clearAnswer();
-  view.renderLoading(els.answer);
+  view.renderLoading(els.answer, { onCancel: cancelRequest });
   setStatus(t('status.loading', { where: whereLabel() }));
+  revealResults(); // скелетон должен быть виден сразу, а не после ответа
   const started = performance.now();
 
   try {
@@ -157,7 +161,6 @@ async function submit({ useLlm = true } = {}) {
     state.lastError = null;
     renderAnswer();
     setStatus(t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1) }));
-    revealResults();
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
     state.lastRequest = body;
@@ -165,13 +168,44 @@ async function submit({ useLlm = true } = {}) {
     state.lastError = err;
     renderError(); // role="alert" сам озвучит ошибку
     setStatus('');
-    revealResults();
   } finally {
     if (state.inflight === ctrl) {
       state.inflight = null;
       setBusy(false);
     }
   }
+}
+
+// Карточки на экране относятся к прошлым условиям (место, фильтры, время) — говорим об этом прямо.
+function setStale(stale) {
+  els.stale.hidden = !(stale && state.lastAnswer);
+}
+
+// Отмена: возвращаем то, что было на экране до запроса.
+function cancelRequest() {
+  const ctrl = state.inflight;
+  if (!ctrl) return;
+  state.inflight = null;
+  ctrl.abort();
+  setBusy(false);
+  restoreResults();
+  setStatus(t('status.cancelled'));
+}
+
+function restoreResults() {
+  if (state.lastAnswer) renderAnswer();
+  else if (state.lastError) renderError();
+  else renderIntro();
+}
+
+function renderIntro() {
+  view.renderIntro(els.answer, { onExample: () => applyPreset(PRESETS[0]) });
+}
+
+function autoGrow() {
+  const q = els.query;
+  q.style.height = 'auto';
+  q.style.height = `${Math.min(q.scrollHeight + 2, 168)}px`;
 }
 
 function setBusy(busy) {
@@ -301,9 +335,7 @@ function renderChips() {
     ...TIMES.map((time) =>
       chip(time ? time : `${t('when.now')} · ${astanaClock()}`, state.time === time, () => {
         state.time = time;
-        state.activePreset = null;
-        renderChips();
-        renderPresets();
+        filtersChanged();
       }),
     ),
   );
@@ -316,6 +348,7 @@ function filtersChanged() {
   state.activePreset = null;
   renderChips();
   renderPresets();
+  setStale(true);
 }
 
 function clearFilters() {
@@ -387,6 +420,7 @@ function setLocation(loc) {
   renderWhereNote();
   renderLocationOnMap();
   renderPresets();
+  setStale(true);
 }
 
 function setCellFromPoint(lat, lng) {
@@ -424,11 +458,14 @@ function setWhereMsg(key, kind) {
 function onPickClick() {
   if (state.picking) return stopPicking();
   if (!window.h3) return setWhereMsg('h3.missing', 'error');
-  const ok = mapView.startPick((lat, lng) => {
-    state.picking = false;
-    syncPickButton();
-    setCellFromPoint(lat, lng);
-  });
+  const ok = mapView.startPick(
+    (lat, lng) => {
+      state.picking = false;
+      syncPickButton();
+      setCellFromPoint(lat, lng);
+    },
+    { label: t('pick.banner'), cancelLabel: t('pick.cancel'), onCancel: stopPicking },
+  );
   if (!ok) return;
   state.picking = true;
   syncPickButton();
@@ -456,6 +493,7 @@ function syncPickButton() {
 function applyPreset(p) {
   stopPicking();
   els.query.value = t(`preset.${p.id}.query`);
+  autoGrow();
   state.budget = null;
   FLAGS.forEach((f) => (state.flags[f] = Boolean(p.flags?.[f])));
   state.time = p.time;
@@ -480,6 +518,7 @@ function bindEvents() {
     }
   });
   els.query.addEventListener('input', () => {
+    autoGrow();
     if (state.activePreset) {
       state.activePreset = null;
       renderPresets();
@@ -495,10 +534,9 @@ function bindEvents() {
   els.pickBtn.addEventListener('click', onPickClick);
   els.timeInput.addEventListener('change', () => {
     state.time = els.timeInput.value || null;
-    state.activePreset = null;
-    renderChips();
-    renderPresets();
+    filtersChanged();
   });
+  els.staleBtn.addEventListener('click', () => submit());
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') stopPicking();
   });
@@ -510,7 +548,9 @@ function bindEvents() {
     renderAll();
     if (state.lastAnswer) renderAnswer({ redrawMap: false });
     else if (state.lastError) renderError();
-    else view.renderIntro(els.answer);
+    else if (!state.inflight) renderIntro();
+    if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
+    autoGrow();
     if (state.location.type === 'cell') {
       mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
     }
@@ -547,7 +587,7 @@ async function init() {
   }
   bindEvents();
   renderAll();
-  view.renderIntro(els.answer);
+  renderIntro();
 
   try {
     state.landmarks = await fetchLandmarks();

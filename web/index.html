@@ -92,6 +92,10 @@
       <section class="results" id="results" tabindex="-1" aria-labelledby="results-title">
         <h2 id="results-title" class="visually-hidden" data-i18n="results.title">Результаты</h2>
         <p class="status" id="status" role="status"></p>
+        <div class="stale" id="stale" hidden>
+          <span data-i18n="stale.text">Условия изменились: карточки ниже для прежнего запроса.</span>
+          <button type="button" class="btn btn-primary btn-sm" id="stale-btn" data-i18n="stale.btn">Обновить</button>
+        </div>
         <div id="answer"></div>
       </section>
     </div>

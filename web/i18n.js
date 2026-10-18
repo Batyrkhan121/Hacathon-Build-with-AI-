@@ -26,7 +26,7 @@ const DICT = {
     'preset.S5.query': 'Ищу необычную ночную активность',
 
     'query.label': 'Что хотите?',
-    'query.placeholder': 'Например: хочу прогуляться 30–60 минут и выпить кофе',
+    'query.placeholder': 'Например: прогулка на час и кофе',
     'submit': 'Подсказать',
     'submit.busy': 'Ищу…',
 
@@ -64,7 +64,14 @@ const DICT = {
     'when.custom': 'Своё время',
     'when.hint': 'Машина времени для демо, время Астаны (UTC+5)',
 
-    'intro': 'Нажмите сценарий S1–S5 или опишите, чего хочется. Получите 1–3 места рядом: почему, сколько времени и что делать.',
+    'intro': 'Выберите сценарий или напишите, чего хочется: подберу 1–3 места рядом.',
+    'intro.example': 'Показать пример: прогулка у Mega',
+    'stale.text': 'Условия изменились: карточки ниже для прежнего запроса.',
+    'stale.btn': 'Обновить',
+    'loading.cancel': 'Отменить',
+    'status.cancelled': 'Запрос отменён',
+    'pick.banner': 'Нажмите на карту: уйдёт только H3-ячейка вокруг точки',
+    'pick.cancel': 'Отмена',
     'query.empty': 'Напишите запрос или выберите сценарий.',
     'location.missing': 'Выберите ориентир или своё место.',
     'landmarks.error': 'Не удалось загрузить ориентиры.',
@@ -244,7 +251,7 @@ const DICT = {
     'preset.S5.query': 'Ерекше түнгі демалыс іздеп жүрмін',
 
     'query.label': 'Не қалайсыз?',
-    'query.placeholder': 'Мысалы: 30–60 минут серуендеп, кофе ішкім келеді',
+    'query.placeholder': 'Мысалы: бір сағат серуен және кофе',
     'submit': 'Ұсыну',
     'submit.busy': 'Іздеп жатырмын…',
 
@@ -282,7 +289,14 @@ const DICT = {
     'when.custom': 'Өз уақытым',
     'when.hint': 'Демоға арналған уақыт машинасы, Астана уақыты (UTC+5)',
 
-    'intro': 'S1–S5 сценарийін басыңыз немесе не қалайтыныңызды жазыңыз. Жақын жерден 1–3 орын аласыз: неге, қанша уақыт және не істеуге болады.',
+    'intro': 'Сценарий таңдаңыз немесе не қалайтыныңызды жазыңыз: жақын жерден 1–3 орын ұсынамын.',
+    'intro.example': 'Мысал: Mega маңында серуен',
+    'stale.text': 'Шарттар өзгерді: төмендегі карточкалар алдыңғы сұрау бойынша.',
+    'stale.btn': 'Жаңарту',
+    'loading.cancel': 'Болдырмау',
+    'status.cancelled': 'Сұрау тоқтатылды',
+    'pick.banner': 'Картаны басыңыз: нүкте айналасындағы H3 ұяшығы ғана жіберіледі',
+    'pick.cancel': 'Болдырмау',
     'query.empty': 'Сұрау жазыңыз немесе сценарий таңдаңыз.',
     'location.missing': 'Бағдарды немесе өз орныңызды таңдаңыз.',
     'landmarks.error': 'Бағдарларды жүктеу мүмкін болмады.',
@@ -462,7 +476,7 @@ const DICT = {
     'preset.S5.query': "I'm looking for something unusual to do at night",
 
     'query.label': 'What would you like?',
-    'query.placeholder': 'e.g. a 30–60 minute walk and a coffee',
+    'query.placeholder': 'e.g. an hour-long walk and coffee',
     'submit': 'Suggest',
     'submit.busy': 'Searching…',
 
@@ -500,7 +514,14 @@ const DICT = {
     'when.custom': 'Custom time',
     'when.hint': 'Demo time machine, Astana time (UTC+5)',
 
-    'intro': "Tap a scenario S1–S5 or describe what you want. You'll get 1–3 places nearby: why, how long and what to do.",
+    'intro': "Pick a scenario or describe what you want: I'll suggest 1–3 places nearby.",
+    'intro.example': 'Show an example: walk near Mega',
+    'stale.text': 'Conditions changed: the cards below are for the previous request.',
+    'stale.btn': 'Update',
+    'loading.cancel': 'Cancel',
+    'status.cancelled': 'Request cancelled',
+    'pick.banner': 'Tap the map: only the H3 cell around the point is sent',
+    'pick.cancel': 'Cancel',
     'query.empty': 'Type a request or pick a scenario.',
     'location.missing': 'Pick a landmark or your location.',
     'landmarks.error': "Couldn't load landmarks.",

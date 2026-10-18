@@ -181,10 +181,23 @@ export function clearCell() {
 }
 
 // Режим «указать на карте»: следующий клик превращается в H3-ячейку (координаты дальше не идут).
-export function startPick(onPick) {
+// Подсказка висит прямо на карте: на телефоне панель с кнопкой может быть вне экрана.
+let pickBanner = null;
+
+export function startPick(onPick, { label, cancelLabel, onCancel }) {
   if (!map) return false;
   stopPick();
-  map.getContainer().classList.add('is-picking');
+  const container = map.getContainer();
+  container.classList.add('is-picking');
+  pickBanner = L.DomUtil.create('div', 'pick-banner', container);
+  pickBanner.setAttribute('role', 'status');
+  const text = L.DomUtil.create('span', 'pick-text', pickBanner);
+  const cancel = L.DomUtil.create('button', 'pick-cancel', pickBanner);
+  cancel.type = 'button';
+  text.textContent = label;
+  cancel.textContent = cancelLabel;
+  L.DomEvent.disableClickPropagation(pickBanner);
+  L.DomEvent.on(cancel, 'click', () => onCancel());
   pickHandler = (e) => {
     stopPick();
     onPick(e.latlng.lat, e.latlng.lng);
@@ -193,11 +206,19 @@ export function startPick(onPick) {
   return true;
 }
 
+export function setPickLabel(label, cancelLabel) {
+  if (!pickBanner) return;
+  pickBanner.querySelector('.pick-text').textContent = label;
+  pickBanner.querySelector('.pick-cancel').textContent = cancelLabel;
+}
+
 export function stopPick() {
   if (!map) return;
   map.getContainer().classList.remove('is-picking');
   if (pickHandler) map.off('click', pickHandler);
   pickHandler = null;
+  pickBanner?.remove();
+  pickBanner = null;
 }
 
 export function reducedMotion() {
