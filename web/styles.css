@@ -822,7 +822,7 @@ input[type="time"] {
 }
 
 .btn-link {
-  min-height: 32px;
+  min-height: 34px;
   padding: 4px 6px;
   background: transparent;
   color: var(--accent-strong);
@@ -1408,6 +1408,88 @@ input[type="time"] {
 
 .cell-tooltip.leaflet-tooltip-top::before {
   border-top-color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------------------ polish (T75/T76) */
+
+/* Зона клика ≥ 40 px без изменения вида: псевдоэлемент на 3 px сверху и снизу
+   (ровно половина зазора 6 px между рядами, так что зоны соседей не пересекаются). */
+.chip,
+.btn-sm,
+.btn-link {
+  position: relative;
+}
+
+.chip::after,
+.btn-sm::after,
+.btn-link::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+}
+
+.lang button {
+  min-height: 36px;
+}
+
+.leaflet-bar a,
+.leaflet-touch .leaflet-bar a {
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+}
+
+/* Атрибуция OSM: ссылка была 3,9:1 на полупрозрачном фоне — делаем ≥ 4,5:1. */
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink-2);
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--accent-strong);
+}
+
+/* Переносы: заголовки ровными строками, короткие тексты без висячих слов. */
+.summary,
+.card-title,
+.error-title,
+.empty-title {
+  text-wrap: balance;
+}
+
+.card-text dd,
+.warning,
+.hint,
+.where-note,
+.intro p,
+.tl-name,
+.disclaimer {
+  text-wrap: pretty;
+}
+
+/* Тактильное нажатие. */
+.btn,
+.chip {
+  transition-property: background-color, border-color, color, transform;
+  transition-duration: 0.15s, 0.15s, 0.15s, 0.1s;
+  transition-timing-function: ease-out;
+}
+
+.btn:active:not(:disabled),
+.chip:active {
+  transform: scale(0.97);
+}
+
+/* Ответ появляется мягко: прозрачность и сдвиг на 4 px, без «прыжка». */
+.answer {
+  animation: answer-in 0.22s ease-out both;
+}
+
+@keyframes answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

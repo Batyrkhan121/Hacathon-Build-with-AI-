@@ -29,7 +29,10 @@ async function getJson(url, signal) {
 }
 
 export async function fetchLandmarks() {
-  const urls = isMock ? ['../data/landmarks.json', 'api/landmarks'] : ['api/landmarks', '../data/landmarks.json'];
+  // http.server из корня отдаёт страницу как /web/ — там API нет, файл ориентиров рядом.
+  const devServer = location.pathname.includes('/web/');
+  const urls =
+    isMock && devServer ? ['../data/landmarks.json', 'api/landmarks'] : ['api/landmarks', '../data/landmarks.json'];
   for (const url of urls) {
     try {
       const data = await getJson(url);

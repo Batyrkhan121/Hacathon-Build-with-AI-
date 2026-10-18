@@ -91,7 +91,7 @@ const DICT = {
 
     'results.title': 'Результаты',
     'status.loading': 'Ищу места: {where}…',
-    'status.done': 'Готово за {sec} с',
+    'status.done': 'Готово за {sec} с · карточек: {n}',
     'loading.label': 'Загружаю карточки',
 
     'error.title': 'Не получилось получить ответ',
@@ -113,6 +113,8 @@ const DICT = {
     'map.fallback': 'Карта не загрузилась. Карточки работают и без неё.',
     'map.origin': 'Старт: {name}',
     'map.myArea': 'ваш район',
+    'map.zoomIn': 'Приблизить',
+    'map.zoomOut': 'Отдалить',
 
     'unit.m': 'м',
     'unit.km': 'км',
@@ -336,7 +338,7 @@ const DICT = {
 
     'results.title': 'Нәтижелер',
     'status.loading': 'Орын іздеп жатырмын: {where}…',
-    'status.done': '{sec} с ішінде дайын',
+    'status.done': '{sec} с ішінде дайын · карточкалар: {n}',
     'loading.label': 'Карточкаларды жүктеп жатырмын',
 
     'error.title': 'Жауап алу мүмкін болмады',
@@ -358,6 +360,8 @@ const DICT = {
     'map.fallback': 'Карта жүктелмеді. Карточкалар онсыз да жұмыс істейді.',
     'map.origin': 'Бастау: {name}',
     'map.myArea': 'сіздің аумағыңыз',
+    'map.zoomIn': 'Жақындату',
+    'map.zoomOut': 'Алыстату',
 
     'unit.m': 'м',
     'unit.km': 'км',
@@ -581,7 +585,7 @@ const DICT = {
 
     'results.title': 'Results',
     'status.loading': 'Finding places: {where}…',
-    'status.done': 'Done in {sec} s',
+    'status.done': 'Done in {sec} s · cards: {n}',
     'loading.label': 'Loading cards',
 
     'error.title': "Couldn't get an answer",
@@ -603,6 +607,8 @@ const DICT = {
     'map.fallback': "The map didn't load. Cards still work without it.",
     'map.origin': 'Start: {name}',
     'map.myArea': 'your area',
+    'map.zoomIn': 'Zoom in',
+    'map.zoomOut': 'Zoom out',
 
     'unit.m': 'm',
     'unit.km': 'km',
@@ -761,8 +767,27 @@ export function getLang() {
   return current;
 }
 
+// Не во всех браузерах есть данные Intl для kk-KZ (тогда числа выходят как в en: «0.7»).
+// Казахский пишет числа так же, как русский (запятая, пробел), поэтому запасной вариант — ru-RU.
+const numberLocaleCache = {};
 export function locale() {
-  return LOCALES[current];
+  if (!(current in numberLocaleCache)) {
+    const wanted = LOCALES[current];
+    // supportedLocalesOf может «поддерживать» kk-KZ, но форматировать по-английски — проверяем результат.
+    const probe = new Intl.NumberFormat(wanted, { minimumFractionDigits: 1 }).format(0.5);
+    numberLocaleCache[current] = current === 'kk' && !probe.includes(',') ? 'ru-RU' : wanted;
+  }
+  return numberLocaleCache[current];
+}
+
+// Короткие дни недели свои, а не из Intl: у kk-KZ в Intl их может не быть. Индекс = getUTCDay().
+const WEEKDAYS = {
+  ru: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'],
+  kk: ['жс', 'дс', 'сс', 'ср', 'бс', 'жм', 'сб'],
+  en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+};
+export function weekday(dayIndex) {
+  return (WEEKDAYS[current] || WEEKDAYS.ru)[dayIndex];
 }
 
 export function t(key, vars) {

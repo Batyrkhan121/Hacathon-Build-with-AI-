@@ -1,6 +1,6 @@
 // Время Астаны (UTC+5 круглый год) без зависимости от часового пояса браузера.
 // Сдвигаем «сейчас» на +5 ч и дальше читаем дату в UTC.
-import { locale } from './i18n.js';
+import { weekday } from './i18n.js';
 
 const OFFSET_MS = 5 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
@@ -31,10 +31,10 @@ export function dayOffsetOf(at) {
   return Math.round((target - today) / DAY_MS);
 }
 
-// «пн 19.10» на языке интерфейса.
+// «пн 19.10» на языке интерфейса (дата всегда ДД.ММ — так её пишут и в ru, и в kk).
 export function shortDay(dayOffset = 0) {
   const d = astanaNow(dayOffset);
-  const weekday = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' }).format(d);
-  const dm = new Intl.DateTimeFormat(locale(), { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(d);
-  return `${weekday.replace(/\.$/, '')} ${dm}`;
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${weekday(d.getUTCDay())} ${dd}.${mm}`;
 }

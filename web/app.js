@@ -172,7 +172,9 @@ async function submit({ useLlm = true } = {}) {
     state.lastAnswer = answer;
     state.lastError = null;
     renderAnswer();
-    setStatus(t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1) }));
+    setStatus(
+      t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1), n: answer.cards.length }),
+    );
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
     state.lastRequest = body;
@@ -233,6 +235,8 @@ function setStatus(text) {
 function showFormError(text) {
   els.formError.textContent = text;
   els.formError.hidden = !text;
+  if (text) els.query.setAttribute('aria-invalid', 'true');
+  else els.query.removeAttribute('aria-invalid');
 }
 
 function revealResults() {
@@ -270,6 +274,8 @@ function renderAnswer({ redrawMap = true } = {}) {
     routeLabel: route
       ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
       : '',
+    markerLabel: (card) =>
+      `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
   });
 }
 
@@ -613,6 +619,7 @@ function syncLangButtons() {
   document.querySelectorAll('.lang button').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.lang === getLang()));
   });
+  mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
 }
 
 function renderAll() {
@@ -627,6 +634,7 @@ async function init() {
   syncLangButtons();
   els.mockPill.hidden = !isMock;
   if (!mapView.initMap(document.getElementById('map'))) els.mapFallback.hidden = false;
+  mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
   if (!window.h3) {
     els.geoBtn.disabled = true;
     els.pickBtn.disabled = true;

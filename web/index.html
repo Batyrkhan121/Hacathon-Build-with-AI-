@@ -44,10 +44,11 @@
           <div class="preset-list" id="presets"></div>
         </section>
 
-        <form id="ask" class="block ask" novalidate>
+        <form id="ask" class="block ask" action="#" novalidate>
           <label for="query" class="label" data-i18n="query.label">Что хотите?</label>
           <div class="query-row">
-            <textarea id="query" name="query" rows="2" maxlength="500" required
+            <!-- без name: если JS не загрузился, браузер не отправит текст запроса в URL (и в логи) -->
+            <textarea id="query" rows="2" maxlength="500" required
                       data-i18n-placeholder="query.placeholder"></textarea>
             <button type="submit" class="btn btn-primary" id="submit">
               <span data-i18n="submit">Подсказать</span>
