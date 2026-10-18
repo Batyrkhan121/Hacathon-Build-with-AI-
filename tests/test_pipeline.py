@@ -188,8 +188,11 @@ def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> 
                  snapshot_date="2026-10-18", **over)
 
 
+DAYTIME = "2026-10-19T15:00:00+05:00"  # fixed: night mode switches on by the clock
+
+
 def req(query: str = "кофе", **kw: Any) -> RecommendRequest:
-    body: dict[str, Any] = {"query": query, "location": {"landmark_id": "expo"}}
+    body: dict[str, Any] = {"query": query, "location": {"landmark_id": "expo"}, "at": DAYTIME}
     body.update(kw)
     return RecommendRequest.model_validate(body)
 
@@ -418,7 +421,7 @@ class TestRecommend:
         utc = recommend(req(at="2026-10-19T18:30:00+00:00", use_llm=False), deps)
         assert utc.context.local_time.utcoffset() == timedelta(hours=5)
         assert utc.context.local_time.hour == 23
-        now = recommend(req(use_llm=False), deps)
+        now = recommend(req(use_llm=False, at=None), deps)
         assert now.context.local_time.tzinfo is not None
         assert abs(now.context.local_time - hours.now_astana()) < timedelta(minutes=1)
 
@@ -660,6 +663,52 @@ class TestRealCore:
         a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
         if a.route is not None:
             assert "С ребёнком закладывайте больше времени." in a.route.note
+
+    def test_night_by_the_clock(self, real_deps: Deps) -> None:
+        a = recommend(real_req("кофе", "khan_shatyr", at="2026-10-19T23:30:00+05:00"),
+                      real_deps)
+        assert not a.intent.night  # nothing about the night in the text...
+        assert "ночь (по времени)" in a.data_used.filters  # ...but it is 23:30
+        assert any("обратно лучше на такси" in w for w in a.warnings)
+        night_tags = {"late_open", "24_7", "night"}
+        for card in a.cards:
+            assert card.open_status == "open" or night_tags & set(card.tags), card.title
+            assert card.walk_min <= 15
+        day = recommend(real_req("кофе", "khan_shatyr"), real_deps)
+        assert not any("ночь" in f for f in day.data_used.filters)
+
+    def test_night_switched_off_in_ui(self, real_deps: Deps) -> None:
+        from app.schemas import UserOverrides
+
+        if "night" not in UserOverrides.model_fields:
+            pytest.skip("UserOverrides.night not merged yet")
+        a = recommend(real_req("кофе", "khan_shatyr", at="2026-10-19T23:30:00+05:00",
+                               overrides={"night": False}), real_deps)
+        assert not any("ночь" in f for f in a.data_used.filters)
+
+    def test_kids_walk_short_unless_user_says_otherwise(self, real_deps: Deps) -> None:
+        a = recommend(real_req("куда сходить с ребёнком", "khan_shatyr"), real_deps)
+        assert "пешком до 15 мин" in a.data_used.filters
+        assert all(c.walk_min <= 15 for c in a.cards)
+        own = recommend(real_req("с ребёнком, не дальше 25 минут пешком", "khan_shatyr"),
+                        real_deps)
+        assert "пешком до 25 мин" in own.data_used.filters
+
+    def test_kids_at_night_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("с ребёнком", "khan_shatyr", at="2026-10-19T23:00:00+05:00"),
+                      real_deps)
+        assert any("поздно для прогулки с ребёнком" in w for w in a.warnings)
+
+    def test_group_warning_for_food_places(self, real_deps: Deps) -> None:
+        a = recommend(real_req("нас 5 человек, хотим поесть", "khan_shatyr"), real_deps)
+        assert a.intent.group_size == 5 and a.cards
+        assert "Для компании из 5 человек: столик в кафе лучше уточнить заранее." in a.warnings
+
+    def test_wheelchair_note_and_short_walks(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я на коляске, хочу прогуляться час", "khan_shatyr"), real_deps)
+        assert "пешком до 15 мин" in a.data_used.filters
+        if a.route is not None:
+            assert "ступени" in a.route.note and "закладывайте больше времени" in a.route.note
 
     def test_no_route_at_a_transport_hub(self, real_deps: Deps) -> None:
         a = recommend(real_req("Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть "

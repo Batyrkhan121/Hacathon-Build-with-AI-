@@ -82,6 +82,10 @@ AIRPORT_RESERVE_MIN = 60  # check-in and security before departure
 MIN_WALK_LEFT_MIN = 15  # less than this left -> no cards, "leave now"
 TOURIST_MAX_CARDS = 2
 HUB_MAX_WALK_MIN = 15  # at a transport hub and for tourists: short walks, no radius widening
+CAREFUL_MAX_WALK_MIN = 15  # kids / wheelchair / night, unless the user set a limit
+NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
+GROUP_MIN = 3
+FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
 MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
@@ -92,7 +96,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "llm_down": "LLM недоступна — показаны карточки по данным.",
         "hours_unknown_1": "Для 1 места нет данных о часах работы — проверьте перед визитом.",
         "hours_unknown_n": "Для {n} мест нет данных о часах работы — проверьте перед визитом.",
-        "night": "Ночь: выбирайте освещённые людные места и заранее продумайте дорогу обратно.",
+        "night": "Ночь: выбирайте освещённые людные места; обратно лучше на такси.",
+        "kids_night": "Уже поздно для прогулки с ребёнком — лучше место в помещении рядом.",
+        "group": "Для компании из {n} человек: столик в кафе лучше уточнить заранее.",
+        "f_night_clock": "ночь (по времени)",
         "widened": "Рядом мало вариантов — радиус поиска расширен до {r} м.",
         "nothing": "Подходящих мест не нашлось. Попробуйте увеличить время, убрать часть "
                    "фильтров или выбрать другую точку.",
@@ -137,8 +144,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "hours_unknown_1": "1 орынның жұмыс уақыты туралы дерек жоқ — барар алдында тексеріңіз.",
         "hours_unknown_n": "{n} орынның жұмыс уақыты туралы дерек жоқ — барар алдында "
                            "тексеріңіз.",
-        "night": "Түн: жарық әрі адамы көп жерлерді таңдаңыз, қайтар жолды алдын ала "
-                 "ойластырыңыз.",
+        "night": "Түн: жарық әрі адамы көп жерлерді таңдаңыз; кері қарай таксимен қайтқан "
+                 "дұрыс.",
+        "kids_night": "Баламен серуендеуге кеш — жақын жердегі жабық орынды таңдаған дұрыс.",
+        "group": "{n} адамдық топқа: кафеде үстелді алдын ала нақтылаңыз.",
+        "f_night_clock": "түн (уақыт бойынша)",
         "widened": "Жақын жерде нұсқа аз — іздеу радиусы {r} м-ге дейін ұлғайтылды.",
         "nothing": "Сәйкес орын табылмады. Уақытты көбейтіп, кейбір сүзгілерді алып тастап "
                    "немесе басқа нүкте таңдап көріңіз.",
@@ -180,7 +190,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
         "hours_unknown_1": "No opening-hours data for 1 place — check before you go.",
         "hours_unknown_n": "No opening-hours data for {n} places — check before you go.",
-        "night": "Night: choose well-lit, busy places and plan your way back in advance.",
+        "night": "Night: choose well-lit, busy places; better take a taxi back.",
+        "kids_night": "It is late for a walk with a child — an indoor place nearby is better.",
+        "group": "For a group of {n}: check table availability at cafes in advance.",
+        "f_night_clock": "night (by the clock)",
         "widened": "Few options nearby — search radius widened to {r} m.",
         "nothing": "No matching places found. Try more time, fewer filters or another "
                    "starting point.",
@@ -283,6 +296,16 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if short_walks:
         plan_update["max_walk_min"] = min(intent.max_walk_min or HUB_MAX_WALK_MIN,
                                           HUB_MAX_WALK_MIN)
+    # Night by the clock (22:00–06:00), unless the UI switched night mode off explicitly:
+    # retrieval then keeps late_open / 24_7 / open-now places only.
+    night_switch = getattr(req.overrides, "night", None) if req.overrides else None
+    night_by_clock = (not intent.night and night_switch is None
+                      and (local_time.hour >= NIGHT_FROM_H or local_time.hour < NIGHT_TO_H))
+    if night_by_clock:
+        plan_update["night"] = True
+    careful = intent.with_kids or intent.wheelchair or intent.night or night_by_clock
+    if careful and intent.max_walk_min is None and "max_walk_min" not in plan_update:
+        plan_update["max_walk_min"] = CAREFUL_MAX_WALK_MIN
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
@@ -383,7 +406,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         warn.append(t["nothing"])
     if walk_budget is not None:
         warn.append(_airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
-    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route, at_hub=at_hub,
+    warn.extend(_context_warnings(t, plan_intent, cards, candidates, mini_route, at_hub=at_hub,
                                   flight=flight, deadline_given=walk_budget is not None))
     if summary is None:
         summary = _template_summary(t, len(cards))
@@ -405,7 +428,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
             weather=wx.summary if wx is not None else t["weather_unknown"],
-            filters=_filters(t, search_intent, ctx, req.use_llm,
+            filters=_filters(t, search_intent, ctx, req.use_llm, night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None),
             sources=_sources(cards, wx is not None),
@@ -512,6 +535,8 @@ def _context_warnings(
         out.append(t["hours_unknown_n"].format(n=unknown))
     if intent.night:
         out.append(t["night"])
+        if intent.with_kids:
+            out.append(t["kids_night"])
     if intent.wheelchair and cards:
         wheel = {c.poi.id: c.poi.wheelchair for c in candidates}
         confirmed = sum(1 for c in cards if wheel.get(c.poi_id) == "yes")
@@ -522,6 +547,9 @@ def _context_warnings(
             out.append(t["tourist_hub"])
         elif flight:  # a tourist without a flight gets no airport advice
             out.append(t["tourist"])
+    if (intent.group_size or 0) >= GROUP_MIN and any(c.category in FOOD_CATEGORIES
+                                                      for c in cards):
+        out.append(t["group"].format(n=intent.group_size))
     if mini_route is not None and not mini_route.fits_budget:
         out.append(t["route_over"])
     return out
@@ -577,7 +605,7 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
-             *, airport: int | None = None) -> list[str]:
+             *, airport: int | None = None, night_by_clock: bool = False) -> list[str]:
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
     if intent.time_budget_min and airport is not None:
@@ -589,7 +617,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         out.append(t["f_walk"].format(v=intent.max_walk_min))
     flags = (("f_kids", intent.with_kids), ("f_wheelchair", intent.wheelchair),
              ("f_indoor", intent.indoor == "indoor"), ("f_outdoor", intent.indoor == "outdoor"),
-             ("f_night", intent.night), ("f_tourist", intent.tourist))
+             ("f_night_clock" if night_by_clock else "f_night", intent.night),
+             ("f_tourist", intent.tourist))
     out.extend(t[key] for key, on in flags if on)
     if intent.group_size:
         out.append(t["f_group"].format(v=intent.group_size))
