@@ -642,3 +642,14 @@ def test_requested_features_missing_in_data_are_named(lang: str, reason: str) ->
     out = retrieve(make_store([cafe]), q, make_ctx(), None)
     assert reason in explain(out[0], q, make_ctx(), lang=lang)
     assert out[0].matched[1].startswith("есть кофе")  # what the data has comes first
+
+
+@pytest.mark.parametrize(
+    ("tag", "reason"),
+    [("food", "serves food"), ("shopping", "shops inside"), ("history", "history spot")],
+)
+def test_english_reasons_read_as_phrases(tag: str, reason: str) -> None:
+    poi = make_poi("1", "restaurant", 0.001, tags=[tag])
+    q = intent("food", must_tags=[tag], lang="en")
+    out = retrieve(make_store([poi]), q, make_ctx(), None)
+    assert reason in explain(out[0], q, make_ctx(), lang="en")
