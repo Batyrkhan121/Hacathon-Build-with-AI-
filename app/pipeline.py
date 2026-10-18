@@ -45,6 +45,8 @@ from app.schemas import (
     Candidate,
     Card,
     DataUsed,
+    Landmark,
+    Lang,
     LocationInput,
     MiniRoute,
     QueryIntent,
@@ -234,6 +236,60 @@ TEXTS: dict[str, dict[str, str]] = {
 }
 
 
+# T73: names in the "data used" panel follow the answer language (codes stay in Answer.intent).
+CATEGORY_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"cafe": "кафе", "restaurant": "ресторан", "fast_food": "фастфуд", "bar": "бар",
+           "nightlife": "ночная жизнь", "museum": "музей", "gallery": "галерея",
+           "theatre": "театр", "cinema": "кино", "library": "библиотека", "park": "парк",
+           "playground": "детская площадка", "viewpoint": "смотровая площадка",
+           "attraction": "достопримечательность", "monument": "памятник",
+           "religious": "культовое место", "mall": "ТРЦ", "sport": "спорт",
+           "entertainment": "развлечения", "other": "другое"},
+    "kk": {"cafe": "кафе", "restaurant": "мейрамхана", "fast_food": "фастфуд", "bar": "бар",
+           "nightlife": "түнгі өмір", "museum": "мұражай", "gallery": "галерея",
+           "theatre": "театр", "cinema": "кино", "library": "кітапхана", "park": "саябақ",
+           "playground": "балалар алаңы", "viewpoint": "көру алаңы",
+           "attraction": "көрікті жер", "monument": "ескерткіш", "religious": "ғибадат орны",
+           "mall": "сауда орталығы", "sport": "спорт", "entertainment": "ойын-сауық",
+           "other": "басқа"},
+    "en": {"cafe": "cafe", "restaurant": "restaurant", "fast_food": "fast food", "bar": "bar",
+           "nightlife": "nightlife", "museum": "museum", "gallery": "gallery",
+           "theatre": "theatre", "cinema": "cinema", "library": "library", "park": "park",
+           "playground": "playground", "viewpoint": "viewpoint", "attraction": "sight",
+           "monument": "monument", "religious": "place of worship", "mall": "mall",
+           "sport": "sport", "entertainment": "entertainment", "other": "other"},
+}
+TAG_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"coffee": "кофе", "wifi": "Wi-Fi", "power_outlets": "розетки", "quiet": "тихо",
+           "work_friendly": "можно поработать", "kids": "для детей",
+           "interactive": "интерактив", "indoor": "в помещении", "outdoor": "на улице",
+           "view": "вид", "photo_spot": "фото", "night": "ночь", "late_open": "допоздна",
+           "24_7": "круглосуточно", "free": "бесплатно", "wheelchair": "доступная среда",
+           "vegetarian": "вегетарианское", "local_cuisine": "местная кухня",
+           "live_music": "живая музыка", "walk": "прогулка", "water": "у воды",
+           "architecture": "архитектура", "history": "история", "art": "искусство",
+           "shopping": "шопинг", "sport": "спорт", "food": "еда"},
+    "kk": {"coffee": "кофе", "wifi": "Wi-Fi", "power_outlets": "розетка", "quiet": "тыныш",
+           "work_friendly": "жұмыс істеуге болады", "kids": "балаларға",
+           "interactive": "интерактив", "indoor": "ғимарат ішінде", "outdoor": "далада",
+           "view": "көрініс", "photo_spot": "фото", "night": "түн", "late_open": "кешке дейін",
+           "24_7": "тәулік бойы", "free": "тегін", "wheelchair": "кедергісіз орта",
+           "vegetarian": "вегетариандық", "local_cuisine": "ұлттық тағам",
+           "live_music": "тірі музыка", "walk": "серуен", "water": "су жағасы",
+           "architecture": "сәулет", "history": "тарих", "art": "өнер",
+           "shopping": "сауда", "sport": "спорт", "food": "тамақ"},
+    "en": {"coffee": "coffee", "wifi": "Wi-Fi", "power_outlets": "power outlets",
+           "quiet": "quiet", "work_friendly": "work-friendly", "kids": "for kids",
+           "interactive": "interactive", "indoor": "indoor", "outdoor": "outdoor",
+           "view": "view", "photo_spot": "photo spot", "night": "night",
+           "late_open": "open late", "24_7": "24/7", "free": "free",
+           "wheelchair": "wheelchair access", "vegetarian": "vegetarian",
+           "local_cuisine": "local cuisine", "live_music": "live music", "walk": "walk",
+           "water": "waterside", "architecture": "architecture", "history": "history",
+           "art": "art", "shopping": "shopping", "sport": "sport", "food": "food"},
+}
+
+
 class InvalidRequest(ValueError):
     """The request cannot be answered as given (the API answers 422 with this message)."""
 
@@ -309,7 +365,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
-    # 3. context
+    # 3. context (the area label is in the answer language: the LLM and the panel read it)
+    lm_here = store.landmarks.get(landmark_id) if landmark_id else None
+    area_label = _localized_area(intent.lang, lm_here, h3_cell, area_label)
     wx = weather.get_weather(origin, local_time)
     ctx = SearchContext(
         origin=origin,
@@ -391,6 +449,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             log.error("request %s: template_cards failed (%s)", request_id, type(exc).__name__)
             failed = True
     cards = cards[: TOURIST_MAX_CARDS if walk_budget is not None else 3]
+    cards = _localize_hours(cards, candidates, local_time, intent.lang)
 
     # 7. route
     note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
@@ -427,8 +486,10 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         data_used=DataUsed(
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
-            weather=wx.summary if wx is not None else t["weather_unknown"],
-            filters=_filters(t, search_intent, ctx, req.use_llm, night_by_clock=night_by_clock,
+            weather=(weather.summary_for(wx, intent.lang) if wx is not None
+                     else t["weather_unknown"]),
+            filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
+                             night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None),
             sources=_sources(cards, wx is not None),
@@ -450,6 +511,42 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:
+    """CORE builds the Russian label («у EXPO», «ваш район (≈0,1 км²) у …»); kk / en here."""
+    if lang == "ru":
+        return ru_label
+    if landmark is not None:
+        name = landmark.names.get(lang) or landmark.names.get("ru") or landmark.id
+        return f"near {name}" if lang == "en" else f"{name} маңында"
+    area = f"{h3.cell_area(cell, unit='km^2'):.1f}"
+    if lang == "en":
+        return f"your area (≈{area} km²)"
+    return f"сіздің ауданыңыз (≈{area.replace('.', ',')} км²)"
+
+
+def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime, lang: Lang
+                    ) -> list[Card]:
+    """Hours notes in kk / en (texts live in app.hours). Status and confidence are untouched:
+    a card is only re-worded when hours.py gives the very same verdict."""
+    if lang == "ru":
+        return cards
+    by_id = {c.poi.id: c for c in candidates}
+    out: list[Card] = []
+    for card in cards:
+        cand = by_id.get(card.poi_id)
+        if cand is None:
+            out.append(card)
+            continue
+        verdict = hours.evaluate_hours(cand.poi.opening_hours, at, lang=lang)
+        if (verdict.status, verdict.confidence) != (card.open_status, card.open_confidence):
+            out.append(card)
+            continue
+        raw = (cand.poi.opening_hours or "").strip()
+        note = hours.unknown_note(lang) if verdict.status == "unknown" and not raw else verdict.note
+        out.append(card.model_copy(update={"open_note": note}))
+    return out
 
 
 def _coarsen(loc: LocationInput, res: int) -> LocationInput:
@@ -605,7 +702,8 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
-             *, airport: int | None = None, night_by_clock: bool = False) -> list[str]:
+             *, lang: Lang = "ru", airport: int | None = None,
+             night_by_clock: bool = False) -> list[str]:
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
     if intent.time_budget_min and airport is not None:
@@ -623,9 +721,12 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if intent.group_size:
         out.append(t["f_group"].format(v=intent.group_size))
     if intent.categories:
-        out.append(t["f_categories"].format(v=", ".join(intent.categories)))
+        names = CATEGORY_NAMES[lang]
+        out.append(t["f_categories"].format(v=", ".join(names.get(c, c)
+                                                         for c in intent.categories)))
     if intent.must_tags:
-        out.append(t["f_tags"].format(v=", ".join(intent.must_tags)))
+        tags = TAG_NAMES[lang]
+        out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
     if not use_llm:
         out.append(t["f_no_ai"])
     return out

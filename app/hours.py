@@ -1,10 +1,12 @@
-"""Opening-hours evaluation. Owner: CORE lane (task T21).
+"""Opening-hours evaluation. Owner: CORE lane (task T21); wave 3: FEATURES lane (T73).
 
 Parse the common subset of OSM `opening_hours` deterministically, e.g.
   "24/7", "Mo-Su 10:00-22:00", "Mo-Fr 09:00-18:00; Sa 10:00-16:00", "Mo-Su 10:00-02:00",
   "Tu-Su 10:00-20:00; Mo off", "Mo-Fr 08:00-12:00,13:00-17:00", "sunrise-sunset" (-> low).
 Anything not understood -> status "unknown", confidence "low" (never guess "open").
-Notes are short human text in Russian; the UI shows them next to the hours badge.
+Notes are short human text; the UI shows them next to the hours badge. Russian by default,
+`lang="kk" | "en"` gives the same note in Kazakh / English (T73). `unknown_note(lang)` is the
+"no data, check before visiting" text that cards show for unknown hours.
 
 Semantics follow the OSM spec: rules are separated by ";" and a later rule replaces earlier
 ones for its days; ", " before a weekday starts an additional rule that adds to them; days
@@ -18,7 +20,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from app.schemas import HoursVerdict
+from app.schemas import HoursVerdict, Lang
 
 ASTANA_TZ = timezone(timedelta(hours=5))  # Kazakhstan is UTC+5 since 2024
 
@@ -35,6 +37,58 @@ NOTE_NO_DATA = "нет данных о часах работы"
 NOTE_UNPARSED = "часы работы в OSM в нестандартном формате, проверьте перед визитом"
 NOTE_ONLY_HOLIDAYS = "есть только праздничные часы, проверьте перед визитом"
 NOTE_HOLIDAYS = "в праздники часы могут отличаться"
+NOTE_UNKNOWN_CHECK = "нет данных о часах, проверьте перед визитом"  # = validate.UNKNOWN_HOURS_NOTE
+
+_T: dict[str, dict[str, object]] = {
+    "ru": {
+        "no_data": NOTE_NO_DATA, "unknown_check": NOTE_UNKNOWN_CHECK, "unparsed": NOTE_UNPARSED,
+        "only_holidays": NOTE_ONLY_HOLIDAYS, "holidays": NOTE_HOLIDAYS,
+        "osm": "по данным OSM: {s}", "daily": "ежедневно", "day_off": "выходной",
+        "all_day": "круглосуточно", "closes_in": "закроется через {d}",
+        "closed_today": "по данным OSM сегодня не работает", "hours": "часы: {s}",
+        "today_off": "сегодня выходной", "closed": "закрыто",
+        "opens_in": "{head}, откроется через {d}", "opens_at": "{head}, откроется в {t}",
+        "opens_tomorrow": "{head}, откроется завтра в {t}",
+        "min": "{m} мин", "h": "{h} ч", "h_min": "{h} ч {m} мин", "days": _DAYS_RU,
+    },
+    "kk": {
+        "no_data": "жұмыс уақыты туралы дерек жоқ",
+        "unknown_check": "жұмыс уақыты туралы дерек жоқ, барар алдында тексеріңіз",
+        "unparsed": "OSM-дегі жұмыс уақыты стандартты емес форматта, барар алдында тексеріңіз",
+        "only_holidays": "тек мереке күнгі уақыт бар, барар алдында тексеріңіз",
+        "holidays": "мереке күндері уақыт өзгеше болуы мүмкін",
+        "osm": "OSM деректері бойынша: {s}", "daily": "күн сайын", "day_off": "демалыс",
+        "all_day": "тәулік бойы", "closes_in": "жабылуына {d} қалды",
+        "closed_today": "OSM деректері бойынша бүгін жұмыс істемейді", "hours": "уақыты: {s}",
+        "today_off": "бүгін демалыс күні", "closed": "жабық",
+        "opens_in": "{head}, ашылуына {d} қалды", "opens_at": "{head}, сағат {t}-де ашылады",
+        "opens_tomorrow": "{head}, ертең сағат {t}-де ашылады",
+        "min": "{m} мин", "h": "{h} сағ", "h_min": "{h} сағ {m} мин",
+        "days": ("Дс", "Сс", "Ср", "Бс", "Жм", "Сб", "Жс"),
+    },
+    "en": {
+        "no_data": "no opening-hours data",
+        "unknown_check": "no opening-hours data, check before you go",
+        "unparsed": "opening hours in OSM use a non-standard format, check before you go",
+        "only_holidays": "only holiday hours are listed, check before you go",
+        "holidays": "hours may differ on public holidays",
+        "osm": "per OSM: {s}", "daily": "daily", "day_off": "closed", "all_day": "24/7",
+        "closes_in": "closes in {d}", "closed_today": "per OSM: closed today",
+        "hours": "hours: {s}", "today_off": "closed today", "closed": "closed",
+        "opens_in": "{head}, opens in {d}", "opens_at": "{head}, opens at {t}",
+        "opens_tomorrow": "{head}, opens tomorrow at {t}",
+        "min": "{m} min", "h": "{h} h", "h_min": "{h} h {m} min", "days": _DAYS,
+    },
+}
+
+
+def _tx(lang: str) -> dict[str, object]:
+    return _T.get(lang, _T["ru"])
+
+
+def unknown_note(lang: Lang = "ru") -> str:
+    """What a card says when the hours are unknown: no data + check before visiting."""
+    return str(_tx(lang)["unknown_check"])
 
 Interval = tuple[int, int]  # minutes from the day's midnight; end may exceed DAY_MIN (overnight)
 Week = tuple[tuple[Interval, ...] | None, ...]  # 7 days; None = day not described by any rule
@@ -135,16 +189,18 @@ def _clock(minute: int) -> str:
     return f"{(minute // 60) % 24:02d}:{minute % 60:02d}"
 
 
-def _duration(minutes: int) -> str:
+def _duration(minutes: int, lang: str = "ru") -> str:
+    t = _tx(lang)
     if minutes < 60:
-        return f"{minutes} мин"
+        return str(t["min"]).format(m=minutes)
     hours, rest = divmod(minutes, 60)
-    return f"{hours} ч {rest} мин" if rest else f"{hours} ч"
+    return str(t["h_min"]).format(h=hours, m=rest) if rest else str(t["h"]).format(h=hours)
 
 
-def _days_label(days: list[int]) -> str:
+def _days_label(days: list[int], lang: str = "ru") -> str:
+    names = _tx(lang)["days"]
     if len(days) == 7:
-        return "ежедневно"
+        return str(_tx(lang)["daily"])
     runs: list[list[int]] = []
     for day in days:
         if runs and runs[-1][-1] == day - 1:
@@ -152,12 +208,13 @@ def _days_label(days: list[int]) -> str:
         else:
             runs.append([day])
     parts = [
-        _DAYS_RU[r[0]] if len(r) == 1 else f"{_DAYS_RU[r[0]]}–{_DAYS_RU[r[-1]]}" for r in runs
+        names[r[0]] if len(r) == 1 else f"{names[r[0]]}–{names[r[-1]]}" for r in runs
     ]
     return ", ".join(parts)
 
 
-def _render(week: Week) -> str:
+def _render(week: Week, lang: str = "ru") -> str:
+    t = _tx(lang)
     groups: dict[tuple[Interval, ...], list[int]] = {}
     for day, day_intervals in enumerate(week):
         if day_intervals is not None:
@@ -165,12 +222,12 @@ def _render(week: Week) -> str:
     parts = []
     for intervals, days in groups.items():
         if not intervals:
-            times = "выходной"
+            times = str(t["day_off"])
         elif intervals == ((0, DAY_MIN),):
-            times = "круглосуточно"
+            times = str(t["all_day"])
         else:
             times = ", ".join(f"{_clock(s)}–{_clock(e)}" for s, e in intervals)
-        parts.append(f"{_days_label(days)} {times}")
+        parts.append(f"{_days_label(days, lang)} {times}")
     return "; ".join(parts)
 
 
@@ -196,7 +253,7 @@ def _join(*parts: str) -> str:
     return " · ".join(p for p in parts if p)
 
 
-def evaluate_hours(raw: str | None, at: datetime) -> HoursVerdict:
+def evaluate_hours(raw: str | None, at: datetime, lang: Lang = "ru") -> HoursVerdict:
     """Status of a place at local time `at` (tz-aware).
 
     - raw is None/empty -> unknown/low, note "нет данных о часах работы".
@@ -204,27 +261,30 @@ def evaluate_hours(raw: str | None, at: datetime) -> HoursVerdict:
       fill closes_in_min.
     - parsed and closed -> closed/high, fill opens_in_min when it opens later today.
     - ranges past midnight ("18:00-02:00") must work, incl. early-morning `at`.
+    `lang` only changes the wording of `note`; status, confidence and minutes are the same.
     """
+    t = _tx(lang)
     if raw is None or not raw.strip():
-        return HoursVerdict(status="unknown", confidence="low", note=NOTE_NO_DATA)
+        return HoursVerdict(status="unknown", confidence="low", note=str(t["no_data"]))
     try:
         week, holidays = _parse(raw)
     except (_Unparsable, ValueError):
-        return HoursVerdict(status="unknown", confidence="low", note=NOTE_UNPARSED)
+        return HoursVerdict(status="unknown", confidence="low", note=str(t["unparsed"]))
     if all(day is None for day in week):
-        return HoursVerdict(status="unknown", confidence="low", note=NOTE_ONLY_HOLIDAYS)
+        return HoursVerdict(status="unknown", confidence="low", note=str(t["only_holidays"]))
 
     local = at.astimezone(ASTANA_TZ) if at.tzinfo else at.replace(tzinfo=ASTANA_TZ)
     weekday = local.weekday()
     now = local.hour * 60 + local.minute
-    schedule = f"по данным OSM: {_render(week)}"
-    holiday_note = NOTE_HOLIDAYS if holidays else ""
+    schedule = str(t["osm"]).format(s=_render(week, lang))
+    holiday_note = str(t["holidays"]) if holidays else ""
     spans = _spans(week, weekday)
 
     current = next(((s, e) for s, e in spans if s <= now < e), None)
     if current is not None:
         closes_in = current[1] - now if current[1] < 2 * DAY_MIN else None
-        closing = f"закроется через {_duration(closes_in)}" if closes_in and closes_in <= 60 else ""
+        closing = (str(t["closes_in"]).format(d=_duration(closes_in, lang))
+                   if closes_in and closes_in <= 60 else "")
         return HoursVerdict(
             status="open",
             confidence="high",
@@ -236,18 +296,21 @@ def evaluate_hours(raw: str | None, at: datetime) -> HoursVerdict:
         return HoursVerdict(
             status="closed",
             confidence="medium",
-            note=_join("по данным OSM сегодня не работает", f"часы: {_render(week)}", holiday_note),
+            note=_join(str(t["closed_today"]), str(t["hours"]).format(s=_render(week, lang)),
+                       holiday_note),
         )
 
     next_start = next((s for s, _ in spans if s > now), None)
     opens_in: int | None = None
-    head = "сегодня выходной" if week[weekday] == () else "закрыто"
+    head = str(t["today_off"] if week[weekday] == () else t["closed"])
     if next_start is not None and next_start < DAY_MIN:
         opens_in = next_start - now
-        when = f"через {_duration(opens_in)}" if opens_in <= 60 else f"в {_clock(next_start)}"
-        head = f"{head}, откроется {when}"
+        if opens_in <= 60:
+            head = str(t["opens_in"]).format(head=head, d=_duration(opens_in, lang))
+        else:
+            head = str(t["opens_at"]).format(head=head, t=_clock(next_start))
     elif next_start is not None and next_start < 2 * DAY_MIN:
-        head = f"{head}, откроется завтра в {_clock(next_start - DAY_MIN)}"
+        head = str(t["opens_tomorrow"]).format(head=head, t=_clock(next_start - DAY_MIN))
     return HoursVerdict(
         status="closed",
         confidence="high",

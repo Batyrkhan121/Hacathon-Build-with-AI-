@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -427,7 +428,7 @@ class TestRecommend:
 
     def test_weather_goes_to_context_and_data_used(self, deps: Deps,
                                                    monkeypatch: pytest.MonkeyPatch) -> None:
-        wx = WeatherInfo(temp_c=-3, summary="-3°C, ветер 5 м/с", outdoor_ok=True,
+        wx = WeatherInfo(temp_c=-3, wind_ms=5, summary="-3°C, ветер 5 м/с", outdoor_ok=True,
                          fetched_at=datetime.now(UTC))
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: wx)
         a = recommend(req(use_llm=False), deps)
@@ -435,7 +436,7 @@ class TestRecommend:
         assert a.data_used.weather == "-3°C, ветер 5 м/с"
         assert "open_meteo" in a.data_used.sources
         b = recommend(req(use_llm=False, lang="en"), deps)
-        assert b.data_used.weather == "-3°C, ветер 5 м/с"
+        assert b.data_used.weather == "-3°C, wind 5 m/s"  # same numbers, answer language
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
         assert recommend(req(use_llm=False), deps).data_used.weather == "погода неизвестна"
 
@@ -709,6 +710,42 @@ class TestRealCore:
         assert "пешком до 15 мин" in a.data_used.filters
         if a.route is not None:
             assert "ступени" in a.route.note and "закладывайте больше времени" in a.route.note
+
+    def test_e7_english_answer_has_no_russian_text(self, real_deps: Deps) -> None:
+        a = recommend(real_req("I'm near EXPO with one free hour. What's worth seeing nearby?",
+                               "expo"), real_deps)
+        assert a.lang == "en" and 1 <= len(a.cards) <= 3
+        assert a.intent.time_budget_min == 60 and "free" not in a.intent.must_tags
+        texts = [a.summary, a.disclaimer, a.context.area_label, a.data_used.location,
+                 a.data_used.time, a.data_used.weather or "", *a.warnings, *a.data_used.filters]
+        texts += [t for c in a.cards for t in (c.why, c.what_to_do, c.open_note)]
+        if a.route is not None:
+            texts.append(a.route.note)
+        cyrillic = [x for x in texts if re.search(r"[А-Яа-яЁё]", x)]
+        assert cyrillic == []  # only POI titles / addresses may stay in the local script
+        assert a.context.area_label.startswith("near EXPO")
+
+    def test_e6_kazakh_answer_has_no_russian_service_text(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Мен Бәйтерек жанындамын, бір сағатқа серуендегім келеді. "
+                               "Не ұсынасыз?", "baiterek"), real_deps)
+        assert a.lang == "kk" and 1 <= len(a.cards) <= 3
+        russian = re.compile(r"нет данных|по данным|ежедневно|проверьте|закроется|откроется|"
+                             r"погода|радиус поиска|пешком|время|у Монумент")
+        texts = [a.summary, a.disclaimer, a.context.area_label, a.data_used.location,
+                 a.data_used.weather or "", *a.warnings, *a.data_used.filters]
+        texts += [t for c in a.cards for t in (c.why, c.what_to_do, c.open_note)]
+        if a.route is not None:
+            texts.append(a.route.note)
+        assert [x for x in texts if russian.search(x)] == []
+        assert a.context.area_label.endswith("маңында")
+        assert "серуен" in " ".join(a.data_used.filters)  # tag name, not the code "walk"
+
+    def test_kazakh_cell_area_label(self, real_deps: Deps) -> None:
+        cell = h3.latlng_to_cell(51.128, 71.430, 9)
+        a = recommend(RecommendRequest.model_validate({
+            "query": "кофе", "location": {"h3_cell": cell}, "lang": "kk", "at": DAYTIME,
+            "use_llm": False}), real_deps)
+        assert a.context.area_label.startswith("сіздің ауданыңыз (≈0,1 км²)")
 
     def test_no_route_at_a_transport_hub(self, real_deps: Deps) -> None:
         a = recommend(real_req("Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть "
