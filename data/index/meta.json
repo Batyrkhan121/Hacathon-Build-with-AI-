@@ -4,5 +4,8 @@
   "count": 1228,
   "created_at": "2026-10-18T16:26:04+05:00",
   "task_type": "RETRIEVAL_DOCUMENT",
-  "doc_template": "{name}. {category_ru}. Теги: {tags}. {description}"
+  "doc_template": "{name}. {category_ru}. Теги: {tags}. {description}",
+  "status": "stale",
+  "stale_reason": "пересборка отложена (--skip-index), данные изменились",
+  "stale_since": "2026-10-18T17:36:22+05:00"
 }
