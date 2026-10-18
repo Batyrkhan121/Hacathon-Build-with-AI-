@@ -144,6 +144,7 @@ async function submit({ useLlm = true } = {}) {
   const ctrl = new AbortController();
   state.inflight = ctrl;
   setBusy(true);
+  mapView.clearAnswer();
   view.renderLoading(els.answer);
   setStatus(t('status.loading', { where: whereLabel() }));
   const started = performance.now();
@@ -162,8 +163,8 @@ async function submit({ useLlm = true } = {}) {
     state.lastRequest = body;
     state.lastAnswer = null;
     state.lastError = err;
-    renderError();
-    setStatus(view.errorText(err));
+    renderError(); // role="alert" сам озвучит ошибку
+    setStatus('');
     revealResults();
   } finally {
     if (state.inflight === ctrl) {

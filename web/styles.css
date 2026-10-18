@@ -7,7 +7,7 @@
   --surface-2: #faf8f4;
   --ink: #15222c;
   --ink-2: #48575f;
-  --ink-3: #66737c;
+  --ink-3: #5f6b74; /* ≥4.5:1 и на белом, и на тёплом фоне */
   --line: #e2ddd2;
   --line-strong: #cfc8ba;
 
@@ -193,6 +193,25 @@ textarea {
   }
   .results {
     padding: 4px 16px 28px;
+  }
+}
+
+@media (max-width: 420px) {
+  .query-row {
+    flex-direction: column;
+  }
+  .btn-primary {
+    width: 100%;
+  }
+  .tagline {
+    font-size: 12px;
+  }
+  .data-used dl {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .data-used dd {
+    margin-bottom: 6px;
   }
 }
 
@@ -980,6 +999,80 @@ input[type="time"] {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+/* --- loading */
+
+.sk {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #ece8df 0%, #f6f3ec 50%, #ece8df 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+
+.rank.sk {
+  border-radius: 0;
+}
+
+.sk-summary {
+  height: 20px;
+  width: 85%;
+  margin-bottom: 14px;
+}
+
+.sk-title {
+  flex: 1;
+  height: 18px;
+  margin-top: 8px;
+}
+
+.sk-line {
+  height: 12px;
+  margin-top: 12px;
+  width: 70%;
+}
+
+.sk-line.short {
+  width: 45%;
+}
+
+.sk-block {
+  height: 52px;
+  margin-top: 12px;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* --- error */
+
+.error-box {
+  padding: 14px 16px;
+  background: var(--error-bg);
+  border: 1px solid #f2c4bf;
+  border-radius: var(--radius);
+}
+
+.error-title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--error-ink);
+}
+
+.error-text {
+  margin: 4px 0 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* --- empty */

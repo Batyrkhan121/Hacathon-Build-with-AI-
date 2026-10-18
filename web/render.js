@@ -102,16 +102,62 @@ export function renderIntro(root) {
   root.replaceChildren(h('p', { class: 'intro', text: t('intro') }));
 }
 
+// Скелетон повторяет форму карточек, чтобы ничего не прыгало, когда придёт ответ.
 export function renderLoading(root) {
-  root.replaceChildren(h('p', { class: 'intro', text: t('submit.busy') }));
+  const skel = () =>
+    h(
+      'li',
+      { class: 'card skeleton' },
+      h('div', { class: 'card-head' }, h('span', { class: 'rank sk' }), h('span', { class: 'sk sk-title' })),
+      h('span', { class: 'sk sk-line' }),
+      h('span', { class: 'sk sk-line short' }),
+      h('span', { class: 'sk sk-block' }),
+    );
+  root.replaceChildren(
+    h(
+      'div',
+      { class: 'loading', 'aria-label': t('loading.label') },
+      h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
+      h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),
+    ),
+  );
 }
 
 export function errorText(err) {
-  return `${err.kind}${err.status ? ` ${err.status}` : ''}`;
+  switch (err?.kind) {
+    case 'timeout':
+      return t('error.timeout');
+    case 'validation':
+      return t('error.validation', { detail: err.detail || '422' });
+    case 'server':
+      return t('error.server', { status: err.status ?? '?' });
+    case 'format':
+      return t('error.format');
+    case 'mock':
+      return t('error.mock');
+    default:
+      return t('error.network');
+  }
 }
 
-export function renderError(root, err) {
-  root.replaceChildren(h('p', { class: 'intro', text: errorText(err) }));
+export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi }) {
+  root.replaceChildren(
+    h(
+      'div',
+      { class: 'error-box', role: 'alert' },
+      h('p', { class: 'error-title', text: t('error.title') }),
+      h('p', { class: 'error-text', text: errorText(err) }),
+      h(
+        'div',
+        { class: 'error-actions' },
+        canRetryNoAi
+          ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onRetryNoAi }, t('error.retryNoAi'))
+          : null,
+        h('button', { type: 'button', class: 'btn btn-ghost', onclick: onRetry }, t('error.retry')),
+      ),
+      canRetryNoAi ? h('p', { class: 'hint', text: t('error.noAiHint') }) : null,
+    ),
+  );
 }
 
 // ------------------------------------------------------------------ answer
