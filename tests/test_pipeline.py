@@ -1365,3 +1365,84 @@ class TestRealCore:
         if a.route is not None:
             assert a.route.legs[-1].to_id != "origin"
             assert "без обратной дороги" in a.route.note
+
+
+# --------------------------------------- T91: the route and card minutes on the walk graph
+
+
+def _grid_graph(tmp_path: Path) -> Path:
+    """Lit footways every 40 m around EXPO (x, y in metres from the walkgraph test origin)."""
+    from .test_walkgraph import FOOTWAY, LIT, write_graph
+
+    step, xs, ys = 40, range(-800, 1641, 40), range(-1300, 1101, 40)
+    nodes = {f"{x}:{y}": (x, y, 0) for x in xs for y in ys}
+    edges = []
+    for x in xs:
+        for y in ys:
+            if f"{x + step}:{y}" in nodes:
+                edges.append((f"{x}:{y}", f"{x + step}:{y}", FOOTWAY | LIT))
+            if f"{x}:{y + step}" in nodes:
+                edges.append((f"{x}:{y}", f"{x}:{y + step}", FOOTWAY | LIT))
+    return write_graph(tmp_path, nodes, edges)
+
+
+def _graph_deps(deps: Deps, path: Path) -> Deps:
+    settings = dataclasses.replace(deps.settings, walk_graph_enabled=True, walk_graph_path=path)
+    return Deps(store=deps.store, llm=deps.llm, settings=settings)
+
+
+def test_route_and_card_minutes_follow_the_graph(deps: Deps, tmp_path: Path) -> None:
+    import math
+
+    from app.walkgraph import load_graph
+
+    path = _grid_graph(tmp_path)
+    ans = recommend(req("кофе", use_llm=False), _graph_deps(deps, path))
+    assert len(ans.cards) >= 2 and ans.route is not None
+    assert ans.route.path_source == "graph"
+    assert ans.route.total_walk_m == sum(leg.distance_m for leg in ans.route.legs)
+    graph = load_graph(path)
+    assert graph is not None
+    lengths = graph.lengths_from(ans.context.origin, {c.poi_id: c.geo for c in ans.cards},
+                                 origin_landmark="expo")
+    for card in ans.cards:  # distance and minutes on the card: both along the graph
+        assert card.distance_m == round(lengths[card.poi_id])
+        assert card.walk_min == max(1, math.ceil(lengths[card.poi_id] / 75 - 1e-9))
+        assert card.why.startswith(f"≈{card.walk_min} мин")  # the reason says the same
+
+
+def test_without_the_flag_or_with_a_broken_graph_the_route_is_straight(
+    deps: Deps, tmp_path: Path
+) -> None:
+    off = recommend(req("кофе", use_llm=False), deps)  # tests run with WALK_GRAPH=false
+    assert off.route is not None and off.route.path_source == "straight"
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "walk_graph.npz").write_bytes(b"not a zip")
+    ans = recommend(req("кофе", use_llm=False), _graph_deps(deps, broken / "walk_graph.npz"))
+    assert ans.route is not None and ans.route.path_source == "straight"
+    assert [c.walk_min for c in ans.cards] == [c.walk_min for c in off.cards]
+
+
+def test_walk_limit_holds_for_graph_minutes(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """max_walk_min is a straight-line radius; the graph minutes on the cards keep it too."""
+    from app.walkgraph import WalkGraph
+
+    near, far = "test:poi/12", "test:poi/1"  # straight 4 and 5 min from EXPO
+    lengths = {near: 280.0, far: 600.0}  # on the graph: 4 and 8 min
+
+    def fake_lengths(self, origin, targets, mode=None, **kw):  # type: ignore[no-untyped-def]
+        return {key: lengths[key] for key in targets if key in lengths}
+
+    monkeypatch.setattr(WalkGraph, "lengths_from", fake_lengths)
+    graph_deps = _graph_deps(deps, _grid_graph(tmp_path))
+    ans = recommend(req("кофе", use_llm=False, overrides={"max_walk_min": 5}), graph_deps)
+    assert [(c.poi_id, c.walk_min) for c in ans.cards] == [(near, 4)]  # 8 min trimmed
+    assert not any("По тротуарам" in w for w in ans.warnings)
+
+    lengths[near] = 450.0  # both over the limit on the graph: kept, and the user is told
+    ans = recommend(req("кофе", use_llm=False, overrides={"max_walk_min": 5}), graph_deps)
+    assert ans.cards and all(c.walk_min > 5 for c in ans.cards)
+    assert any("По тротуарам до мест дольше 5 мин" in w for w in ans.warnings)
