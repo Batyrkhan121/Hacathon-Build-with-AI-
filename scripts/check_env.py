@@ -187,7 +187,7 @@ def main() -> int:
         ("net: Open-Meteo", http_check(
             "https://api.open-meteo.com/v1/forecast?latitude=51.13&longitude=71.43"
             "&current=temperature_2m")),
-        ("net: unpkg (Leaflet CDN)", http_check("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js")),
+        ("net: OSM tiles (map background)", http_check("https://tile.openstreetmap.org/0/0/0.png")),
     ]
     if args.llm:
         checks += [

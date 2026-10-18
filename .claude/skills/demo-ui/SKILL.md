@@ -14,9 +14,9 @@ argument-hint: "[ID задачи, например T41]"
 `web/index.html`, `web/styles.css`, `web/app.js`, `web/i18n.js`, при желании `web/api.js`, `web/map.js`.
 `web/mock/answer_sample.json` принадлежит интегратору: читать можно, менять нельзя. Он валиден по `Answer` из `app/schemas.py`.
 
-## Библиотеки (CDN)
-- Leaflet 1.9.4: `https://unpkg.com/leaflet@1.9.4/dist/leaflet.css` и `.../leaflet.js`.
-- h3-js 4.1.0: `https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js` (глобальный объект `h3`). Проверь, что файл реально грузится.
+## Библиотеки (локально, без CDN)
+- Leaflet 1.9.4 и h3-js 4.1.0 (глобальный объект `h3`) лежат в `web/vendor/leaflet-1.9.4/` и `web/vendor/h3-js-4.1.0/` вместе с лицензиями; `index.html` подключает их относительными путями. Браузер к unpkg не обращается.
+- Обновление версии: новая папка `<имя>-<версия>/`, сверка sha256 с `?meta` unpkg, таблица в `web/vendor/README.md`. `integrity` для своих файлов не ставим (см. README).
 - Тайлы: стандартные OSM `https://tile.openstreetmap.org/{z}/{x}/{y}.png` (CARTO basemaps с 2026 года отдают без ключа заглушку «API KEY REQUIRED»). Атрибуция обязательна: «© OpenStreetMap contributors». Сервер тайлов видит IP и участок карты, это записано в docs/ETHICS.md.
 
 ## Экран
