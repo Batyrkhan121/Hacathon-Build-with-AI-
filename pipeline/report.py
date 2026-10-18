@@ -73,7 +73,10 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         "Файл `data/processed/walk_graph.npz` (контракт: docs/ARCHITECTURE.md, раздел 5), "
         "собирает `python -m pipeline.walk_graph`. Источник — дороги и тропинки OSM, по "
         "которым можно идти пешком (без motorway/trunk, foot=no, access=private).",
-        f"- Снимок OSM: {meta.get('osm_snapshot') or '—'}; собран {meta.get('created_at', '—')}.",
+        f"- Снимок OSM: {meta.get('osm_snapshot') or '—'}"
+        + (f" (плитки из разных снимков: {', '.join(meta['osm_snapshots'])}; указан самый старый)"
+           if len(meta.get("osm_snapshots") or []) > 1 else "")
+        + f"; собран {meta.get('created_at', '—')}.",
         f"- Узлов: {meta.get('nodes', 0)}; рёбер: {meta.get('edges', 0)}; длина сети: "
         f"{meta.get('total_length_km', '—')} км; в крупнейшей связной компоненте "
         f"{100 * (meta.get('largest_component_share') or 0):.1f}% узлов (остальные отброшены).",
@@ -101,7 +104,7 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
                if meta.get("tiles_partial") else "")
             + ". Маршрут вне покрытых плиток граф не построит. Среди POI внутри покрытых "
             f"плиток ({meta.get('poi_in_coverage', '—')}) привязано "
-            f"{100 * (meta.get('poi_snapped_share_in_coverage') or 0):.0f}%."
+            f"{100 * (meta.get('poi_snapped_share_in_coverage') or 0):.1f}%."
         )
     return lines
 

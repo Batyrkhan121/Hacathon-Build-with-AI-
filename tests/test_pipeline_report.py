@@ -85,7 +85,8 @@ def test_landmark_count_ignores_plain_overrides() -> None:
 
 def test_report_walk_graph_section_states_partial_coverage() -> None:
     walk = {
-        "osm_snapshot": "2026-10-18", "created_at": "2026-10-19T01:30:00+05:00",
+        "osm_snapshot": "2026-05-31", "osm_snapshots": ["2026-05-31", "2026-10-18"],
+        "created_at": "2026-10-19T01:30:00+05:00",
         "nodes": 1200, "edges": 1500, "total_length_km": 310.5,
         "largest_component_share": 0.9712, "crossings": 80, "unmarked_crossings": 12,
         "signals": 20, "kerbs_lowered": 9, "steps_edges": 4, "lit_edges": 700,
@@ -100,8 +101,9 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
     section = text.split("## Пешеходный граф", 1)[1]
     for piece in ("Узлов: 1200; рёбер: 1500", "97.1% узлов", "Переходов: 80", "светофоров: 20",
                   "лестницами: 4", "40 из 100 (40%)", "медиана 18 м", "ориентиров: 7 из 9",
-                  "2.5 МБ", "Покрытие частичное: 2 из 9 плиток", "не скачаны: walk_tile_0",
-                  "(45) привязано 89%"):
+                  "2.5 МБ", "разных снимков: 2026-05-31, 2026-10-18",
+                  "Покрытие частичное: 2 из 9 плиток", "не скачаны: walk_tile_0",
+                  "(45) привязано 88.9%"):
         assert piece in section, piece
     assert "## Пешеходный граф" not in build_report(pois, [PAYLOAD], LANDMARKS)
     full = build_report(pois, [PAYLOAD], LANDMARKS,
