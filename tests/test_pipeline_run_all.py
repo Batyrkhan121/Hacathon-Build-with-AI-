@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,14 +10,13 @@ import pytest
 from app.config import get_settings
 from app.schemas import POI
 
-from .conftest import ROOT
-
 
 @pytest.fixture
 def tmp_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data = tmp_path / "data"
     (data / "raw").mkdir(parents=True)
-    shutil.copy(ROOT / "data" / "landmarks.json", data / "landmarks.json")
+    # no landmarks: this test is about the step chain; landmark POIs are tested in normalize
+    (data / "landmarks.json").write_text("[]", encoding="utf-8")
     payload = {
         "qadam": {"fetched_at_unix": 1792314269, "chunk": "zone_test", "endpoint": "fake"},
         "elements": [

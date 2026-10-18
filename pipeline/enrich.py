@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.schemas import POI
 from pipeline.build_index import CATEGORY_RU
+from pipeline.landmark_refs import LANDMARK_OSM, LANDMARK_WIKIDATA
 from pipeline.normalize import load_payloads, raw_files, write_jsonl
 from pipeline.report import raw_tags_by_id
 
@@ -275,6 +276,10 @@ def run(limit: int | None = None, area: str = "astana") -> list[str]:
         pois = [POI.model_validate_json(line) for line in fh if line.strip()]
     tags = raw_tags_by_id(load_payloads(raw_files(area, settings.data_dir / "raw")))
     qids = {pid: t["wikidata"] for pid, t in tags.items() if t.get("wikidata")}
+    # landmarks added as POIs by normalize.finalize have no raw OSM tags here
+    for lm_id, qid in LANDMARK_WIKIDATA.items():
+        if lm_id in LANDMARK_OSM:
+            qids.setdefault(f"osm:{LANDMARK_OSM[lm_id]}", qid)
     pois, wiki_note = wikidata_step(pois, qids, settings.cache_dir / "wikidata.json")
     pois, llm_note = llm_step(
         pois, limit or DEFAULT_LIMIT, settings.cache_dir / "descriptions.json",

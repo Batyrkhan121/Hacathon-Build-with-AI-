@@ -58,7 +58,10 @@ def run(
     paths = normalize.raw_files(area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw OSM data for area {area!r}; Overpass unavailable?")
-    pois = normalize.normalize_payloads(normalize.load_payloads(paths))
+    pois = normalize.finalize(
+        normalize.normalize_payloads(normalize.load_payloads(paths)),
+        normalize.load_landmarks(settings.landmarks_path),
+    )
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
 

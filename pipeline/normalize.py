@@ -84,6 +84,10 @@ LOCAL_CUISINES = frozenset({"kazakh", "central_asian", "uzbek", "uyghur"})
 HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "historic"})
 
 MIN_PREFIX_LEN = 5
+PLAYGROUND_NEAR_M = 150.0
+LANDMARK_NEAR_M = 150.0
+# landmarks are curated by the team (source "manual"): famous buildings worth a photo
+LANDMARK_TAGS: tuple[str, ...] = ("architecture", "photo_spot")
 
 _TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})")
 _NON_WORD = re.compile(r"[\W_]+")
@@ -378,6 +382,114 @@ def normalize_payload(payload: Mapping) -> list[POI]:
     return normalize_payloads([payload])
 
 
+# ----------------------------------------------------------------- post-steps
+
+
+def landmark_pois(
+    pois: Sequence[POI],
+    landmarks: Sequence[Mapping],
+    osm_refs: Mapping[str, str],
+    qids: Mapping[str, str],
+    checked_at: str,
+) -> list[POI]:
+    """Verified, non-transport landmarks that our OSM selectors miss (the Pyramid is an
+    amenity=community_centre, the Nur Alem sphere an office) become `attraction` POIs.
+    A landmark whose OSM object, or a same-named POI nearby, is already present is skipped.
+    Its description comes later from Wikidata (pipeline.enrich)."""
+    present = {p.id for p in pois}
+    out: list[POI] = []
+    for lm in landmarks:
+        ref = osm_refs.get(lm["id"])
+        if lm.get("kind") == "transport" or not lm.get("verified") or ref is None:
+            continue
+        poi_id = f"osm:{ref}"
+        lat, lon = float(lm["geo"]["lat"]), float(lm["geo"]["lon"])
+        names = {lang: v for lang, v in lm["names"].items() if lang in ("ru", "kk", "en") and v}
+        name = names.get("ru") or next(iter(names.values()))
+        candidate_keys = {_NON_WORD.sub("", n.casefold()) for n in names.values()}
+        if poi_id in present or any(
+            contains_name(candidate_keys, name_keys(p))
+            and haversine_m(lat, lon, p.geo.lat, p.geo.lon) < LANDMARK_NEAR_M
+            for p in pois
+        ):
+            continue
+        qid = qids.get(lm["id"])
+        out.append(
+            POI(
+                id=poi_id,
+                name=name,
+                name_i18n=names,
+                category="attraction",
+                tags=list(LANDMARK_TAGS),
+                geo={"lat": lat, "lon": lon},
+                h3_r9=h3.latlng_to_cell(lat, lon, 9),
+                popularity=popularity({"wikidata": qid} if qid else {}, "attraction"),
+                sources=["osm", "manual"],
+                data_confidence=data_confidence(
+                    has_hours=False,
+                    has_contact=False,
+                    has_description=False,
+                    has_wikidata=bool(qid),
+                    has_address=False,
+                    multilingual=len(names) > 1,
+                ),
+                fetched_at=checked_at,
+            )
+        )
+    return out
+
+
+def contains_name(a: set[str], b: set[str]) -> bool:
+    """Looser than same_name, for landmark names with a type prefix:
+    "трцханшатыр" contains "ханшатыр"."""
+    return any(
+        min(len(x), len(y)) >= MIN_PREFIX_LEN and (x in y or y in x) for x in a for y in b
+    )
+
+
+def is_unnamed_playground(poi: POI) -> bool:
+    return poi.category == "playground" and poi.name == PLAYGROUND_NAME
+
+
+def name_playgrounds(pois: Sequence[POI], radius_m: float = PLAYGROUND_NEAR_M) -> list[POI]:
+    """"Детская площадка" -> "Детская площадка у <nearest named non-playground POI>"
+    when one is within radius_m; otherwise the generic name stays."""
+    buckets: dict[str, list[POI]] = {}
+    for p in pois:
+        if p.category != "playground":
+            buckets.setdefault(h3.latlng_to_cell(p.geo.lat, p.geo.lon, 8), []).append(p)
+    out: list[POI] = []
+    for p in pois:
+        if not is_unnamed_playground(p):
+            out.append(p)
+            continue
+        cell = h3.latlng_to_cell(p.geo.lat, p.geo.lon, 8)
+        near = [
+            (haversine_m(p.geo.lat, p.geo.lon, a.geo.lat, a.geo.lon), a.id, a)
+            for c in h3.grid_disk(cell, 1)
+            for a in buckets.get(c, [])
+        ]
+        near = [item for item in near if item[0] <= radius_m]
+        if near:
+            anchor = min(near, key=lambda item: (item[0], item[1]))[2]
+            p = p.model_copy(update={"name": f"{PLAYGROUND_NAME} у {anchor.name}"})
+        out.append(p)
+    return out
+
+
+def finalize(pois: Sequence[POI], landmarks: Sequence[Mapping]) -> list[POI]:
+    """Steps after dedupe: landmarks as POIs, then playground names (landmarks can be
+    their anchors)."""
+    from pipeline.landmark_refs import LANDMARK_OSM, LANDMARK_WIKIDATA, LANDMARKS_CHECKED_AT
+
+    extra = landmark_pois(pois, landmarks, LANDMARK_OSM, LANDMARK_WIKIDATA, LANDMARKS_CHECKED_AT)
+    return sorted(name_playgrounds([*pois, *extra]), key=lambda p: p.id)
+
+
+def load_landmarks(path: Path) -> list[dict]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def raw_files(area: str, raw_dir: Path) -> list[Path]:
     """Raw chunk files feeding an area: `astana` takes every chunk on disk (tiles, zones,
     fixture) so a partly downloaded city still has the demo zones."""
@@ -413,7 +525,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     paths = raw_files(args.area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw files for area {args.area!r}: run pipeline.fetch_osm first")
-    pois = normalize_payloads(load_payloads(paths))
+    pois = finalize(
+        normalize_payloads(load_payloads(paths)), load_landmarks(settings.landmarks_path)
+    )
     write_jsonl(pois, out)
     print(f"{len(pois)} POI from {len(paths)} raw files -> {out}")
 
