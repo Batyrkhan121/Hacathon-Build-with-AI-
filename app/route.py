@@ -6,7 +6,42 @@ straight segments, walking time via app.geo.walk_minutes. Be honest in MiniRoute
 
 from __future__ import annotations
 
-from app.schemas import Candidate, GeoPoint, MiniRoute
+from app.geo import haversine_m, walk_minutes
+from app.schemas import Candidate, GeoPoint, MiniRoute, RouteLeg
+
+DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
+ROUTE_NOTE = (
+    "Маршрут приблизительный: прямые отрезки × 1,3, скорость 4,5 км/ч, без обратной дороги"
+)
+
+
+def _legs(origin: GeoPoint, ordered: list[Candidate]) -> list[RouteLeg]:
+    legs: list[RouteLeg] = []
+    here, here_id = origin, "origin"
+    for cand in ordered:
+        distance = haversine_m(here, cand.poi.geo)
+        legs.append(
+            RouteLeg(
+                from_id=here_id,
+                to_id=cand.poi.id,
+                distance_m=round(distance),
+                walk_min=walk_minutes(distance),
+            )
+        )
+        here, here_id = cand.poi.geo, cand.poi.id
+    return legs
+
+
+def _nearest_neighbour(origin: GeoPoint, stops: list[Candidate]) -> list[Candidate]:
+    pending = list(stops)
+    ordered: list[Candidate] = []
+    here = origin
+    while pending:
+        # ties keep the card order (rank)
+        nearest = min(range(len(pending)), key=lambda i: (haversine_m(here, pending[i].poi.geo), i))
+        ordered.append(pending.pop(nearest))
+        here = ordered[-1].poi.geo
+    return ordered
 
 
 def plan_route(
@@ -21,4 +56,28 @@ def plan_route(
     visit_min maps poi_id -> planned minutes on site (use Card.visit_min_low).
     Return None when fewer than 1 stop remains.
     """
-    raise NotImplementedError("T23 (CORE)")
+    unique: list[Candidate] = []
+    for cand in stops:
+        if all(cand.poi.id != u.poi.id for u in unique):
+            unique.append(cand)
+    ordered = _nearest_neighbour(origin, unique[: max(0, max_stops)])
+    if not ordered:
+        return None
+
+    while True:
+        legs = _legs(origin, ordered)
+        visits = sum(visit_min.get(c.poi.id, DEFAULT_VISIT_MIN) for c in ordered)
+        total = sum(leg.walk_min for leg in legs) + visits
+        if budget_min is None or total <= budget_min or len(ordered) == 1:
+            break
+        ordered = ordered[:-1]
+
+    return MiniRoute(
+        stop_ids=[c.poi.id for c in ordered],
+        legs=legs,
+        total_walk_m=sum(leg.distance_m for leg in legs),
+        total_min=total,
+        fits_budget=budget_min is None or total <= budget_min,
+        path=[origin, *(c.poi.geo for c in ordered)],
+        note=ROUTE_NOTE,
+    )
