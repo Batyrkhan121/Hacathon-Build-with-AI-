@@ -1,16 +1,17 @@
 #!/bin/sh
 # Secret guard (git core.hooksPath scripts/hooks): blocks a commit whose added lines contain an
-# Anthropic or Google API key, or an assignment to a NAME_API_KEY variable with a non-empty value. Keys belong in .env only.
+# Anthropic, Google or OpenRouter API key, or an assignment to a NAME_API_KEY variable with a non-empty value. Keys belong in .env only.
 # The patterns are assembled from pieces so this file never matches itself.
 A='sk-ant''-'
 G='AI''za'
+O='sk-or''-'
 K='API_''KEY'
 added=$(git diff --cached --no-color -U0 --diff-filter=ACMR | grep -E '^\+([^+]|$)')
-hits=$(printf '%s\n' "$added" | grep -nE "$A|$G|[A-Z0-9_]*${K}[[:space:]]*=[[:space:]]*[\"']?[^[:space:]\"'#]")
+hits=$(printf '%s\n' "$added" | grep -nE "$A|$G|$O|[A-Z0-9_]*${K}[[:space:]]*=[[:space:]]*[\"']?[^[:space:]\"'#]")
 if [ -n "$hits" ]; then
   echo "COMMIT BLOCKED: staged changes contain what looks like an API key" >&2
-  echo "($A, $G or a NAME_${K}=<value> line with a non-empty value)." >&2
-  printf '%s\n' "$hits" | sed -E "s/($A|$G).*/\1.../; s/(${K}[[:space:]]*=).*/\1.../" >&2
+  echo "($A, $G, $O or a NAME_${K}=<value> line with a non-empty value)." >&2
+  printf '%s\n' "$hits" | sed -E "s/($A|$G|$O).*/\1.../; s/(${K}[[:space:]]*=).*/\1.../" >&2
   echo "Remove the key (keys belong in .env only), unstage the file and commit again." >&2
   exit 1
 fi
