@@ -74,7 +74,11 @@ def test_landmark_count_ignores_plain_overrides() -> None:
     pois = [
         poi("osm:way/166197368", ["osm", "manual"]),  # the Pyramid: a landmark added as POI
         poi("osm:node/5126825313", ["osm", "manual"]),  # the circus: only an override
-        poi("osm:way/230401645", ["osm"]),  # Baiterek: a landmark found by its own tags
+        # Baiterek: a landmark found by its own OSM tags that also got an override
+        poi("osm:way/230401645", ["osm", "manual"]),
     ]
-    text = build_report(pois, [PAYLOAD], LANDMARKS)
+    raw = PAYLOAD | {"elements": [*PAYLOAD["elements"], {
+        "type": "way", "id": 230401645, "center": {"lat": 51.128, "lon": 71.43},
+        "tags": {"historic": "monument", "name": "Бәйтерек"}}]}
+    text = build_report(pois, [raw], LANDMARKS)
     assert "Ориентиры, добавленные как места (объект OSM + ручная разметка): 1." in text
