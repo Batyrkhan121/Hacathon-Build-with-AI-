@@ -220,7 +220,7 @@ export function renderAnswer(root, answer, ctx) {
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, when, ctx)),
+          answer.cards.map((c) => renderCard(c, when, { ...ctx, origin: answer.context?.origin })),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -248,6 +248,43 @@ function renderEmpty(ctx) {
     hasFilters
       ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
       : null,
+  );
+}
+
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked']; // schemas 1.1.0 CrossingKind
+
+// Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
+// + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
+function renderGraphSummary(route, ctx) {
+  const walkMin = route.legs.reduce((sum, leg) => sum + (leg.walk_min || 0), 0);
+  // Считаем те же переходы, что рисует карта: только виды из контракта.
+  const crossings = (route.crossings || []).filter((c) => CROSSING_KINDS.includes(c.kind));
+  const signals = crossings.filter((c) => c.kind === 'signals').length;
+  const base = crossings.length
+    ? t('route.graphSummary', {
+        dist: formatDistance(route.total_walk_m),
+        min: walkMin,
+        n: crossings.length,
+        s: signals,
+      })
+    : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
+  const steps = route.steps_count || 0;
+  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
+  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
+  const stepsText = steps
+    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
+    : t('route.noSteps');
+  return h(
+    'div',
+    { class: 'route-graph' },
+    h(
+      'p',
+      { class: 'route-graph-line' },
+      base,
+      ' · ',
+      h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
+    ),
+    h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
   );
 }
 
@@ -305,6 +342,7 @@ function renderRoute(route, byId, ctx, originName) {
       }),
     ),
     h('ol', { class: 'timeline' }, items),
+    route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null,
     route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
     h(
       'div',
@@ -415,10 +453,53 @@ function renderCard(card, when, ctx) {
         ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
         : null,
     ),
+    renderDirections(card, ctx.origin),
   );
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
   return li;
+}
+
+// «Как пройти»: пешеходный маршрут в 2GIS и Яндекс Картах, в новой вкладке.
+// Без начальной точки оба сервиса маршрут не строят (ждут геопозицию), поэтому старт — центр поиска
+// из ответа (context.origin: ориентир или центр H3-ячейки), от него же посчитаны минуты в карточке.
+// Наша страница к этим сервисам не обращается: уходит только переход по ссылке по клику.
+const coord = (x) => Number(x).toFixed(6);
+
+export function directionsUrls(dest, origin) {
+  const d = { lat: coord(dest.lat), lon: coord(dest.lon) };
+  const o = origin ? { lat: coord(origin.lat), lon: coord(origin.lon) } : null;
+  // Яндекс: rtext=широта,долгота~широта,долгота; rtt=pd — пешком.
+  const yandex = `https://yandex.kz/maps/?rtext=${o ? `${o.lat},${o.lon}` : ''}~${d.lat},${d.lon}&rtt=pd`;
+  // 2GIS: точки «долгота,широта» через «|», пешеходный режим — вкладка tab/pedestrian.
+  const twogis =
+    'https://2gis.kz/astana/directions/tab/pedestrian/points/' +
+    `${o ? `${o.lon}%2C${o.lat}` : ''}%7C${d.lon}%2C${d.lat}`;
+  return { yandex, twogis };
+}
+
+function renderDirections(card, origin) {
+  const { yandex, twogis } = directionsUrls(card.geo, origin);
+  const title = cardTitle(card);
+  const link = (href, app) =>
+    h(
+      'a',
+      {
+        class: 'btn btn-link btn-sm',
+        href,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        'aria-label': t('dir.aria', { title, app }),
+      },
+      app,
+    );
+  return h(
+    'div',
+    { class: 'directions' },
+    h('span', { class: 'directions-label', text: t('dir.title') }),
+    link(twogis, t('dir.2gis')),
+    link(yandex, t('dir.yandex')),
+  );
 }
 
 export function popupFor(card) {

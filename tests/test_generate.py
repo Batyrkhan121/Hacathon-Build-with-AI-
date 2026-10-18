@@ -246,3 +246,32 @@ def test_missing_prompt_is_loud(monkeypatch: pytest.MonkeyPatch, caplog, cands) 
             gen.draft_cards(QueryIntent(raw_query="кофе"), context(), cands, object())  # type: ignore[arg-type]
     assert any("generate_cards" in r.getMessage() and r.levelno >= logging.ERROR
                for r in caplog.records)
+
+
+# ---------------- prompts/parse_query.md follows the rules parser (REQUEST from FEATURES)
+
+GENERAL_SEE = [
+    "что посмотреть", "что интересного", "куда сходить посмотреть", "what to see",
+    "things to see", "worth seeing", "worth visiting", "places to visit", "what's interesting",
+    "көретін жер", "көруге тұрарлық", "не көруге болады",
+]
+SPECIFIC_SIGHTS = ["достопримечательности", "sights", "sightseeing", "attraction", "landmarks",
+                   "көрікті"]
+
+
+def test_parse_prompt_sights_rule_matches_rules_parser() -> None:
+    import json
+    from pathlib import Path
+
+    from app.query_parser import SIGHTS, SIGHTS_AND_PARKS, parse_rules
+
+    text = Path("prompts/parse_query.md").read_text(encoding="utf-8")
+    line = next(ln for ln in text.splitlines() if ln.startswith("- categories:"))
+    assert json.dumps(SIGHTS, ensure_ascii=False) in line  # specific words: no parks
+    assert json.dumps(SIGHTS_AND_PARKS, ensure_ascii=False) in line  # general phrases: + park
+    for phrase in GENERAL_SEE:
+        assert f"«{phrase}»" in line, phrase
+        assert "park" in parse_rules(phrase, None, {}).categories, phrase  # rules agree
+    for word in SPECIFIC_SIGHTS:
+        assert f"«{word}»" in line, word
+        assert "park" not in parse_rules(f"покажи {word}", None, {}).categories, word

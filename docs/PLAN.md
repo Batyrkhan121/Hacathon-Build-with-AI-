@@ -172,19 +172,20 @@
 
 | Дорожка | Файлы |
 |---|---|
-| DATA | `pipeline/walk_graph.py`, `data/processed/walk_graph.*`, `tests/test_pipeline_walk_graph.py` |
-| FEATURES | `app/walkgraph.py`, `app/route.py`, `app/pipeline.py`, `tests/test_{walkgraph,route,pipeline}.py` |
+| DATA (T93) | `pipeline/walk_graph.py`, `data/processed/walk_graph.*`, `tests/test_pipeline_walk_graph.py`; секция «Пешеходный граф» в `pipeline/report.py` и `data/processed/REPORT.md` (только чтение walk_graph_meta.json) |
+| T91, сессия в D:\core, ветка `feat/walkgraph` от main | `app/walkgraph.py`, `app/route.py`, маршрутная часть `app/pipeline.py`, `tests/test_{walkgraph,route}.py` и маршрутные тесты в `tests/test_pipeline.py` |
+| FEATURES | до вливания T91 не трогает `app/walkgraph.py`, `app/route.py` и `app/pipeline.py`; в остальном код-фриз |
 | POLISH | `web/**` |
 | EVAL | проверки маршрута в `eval/**`, документы `docs/{RAG,SCENARIOS,ETHICS,PITCH,VIDEO}.md` |
 | DEPLOY | `Dockerfile`, `.dockerignore` |
 | ИНТЕГРАТОР | контракт `app/schemas.py` (1.1.0), флаг в `app/config.py`, формат графа в `docs/ARCHITECTURE.md` |
 
-Правила: новых зависимостей нет, только numpy и heapq. Формат графа описан в `docs/ARCHITECTURE.md`, раздел 5. Флаг `WALK_GRAPH` по умолчанию включён, если файл графа есть. При любой ошибке — прежние прямые отрезки и `path_source=straight`. В тестах `WALK_GRAPH=false` (tests/conftest.py): тест, которому нужен граф, строит маленький синтетический граф сам.
+Нумерация по решению пользователя (19.10): T91 маршрут (D:\core), T92 карта (POLISH), T93 граф (DATA), T94 проверка (EVAL). Правила: новых зависимостей нет, только numpy и heapq. Формат графа описан в `docs/ARCHITECTURE.md`, раздел 5. Флаг `WALK_GRAPH` по умолчанию включён, если файл графа есть. При любой ошибке — прежние прямые отрезки и `path_source=straight`. В тестах `WALK_GRAPH=false` (tests/conftest.py): тест, которому нужен граф, строит маленький синтетический граф сам.
 
 - [x] **T90 Контракт и формат (ИНТЕГРАТОР).** `MiniRoute` 1.1.0: `path_source` (graph | straight, по умолчанию straight), `crossings` — список `RouteCrossing` (lat, lon, kind: signals | marked | unmarked), не больше 50, `steps_count` (по умолчанию 0). Флаг `WALK_GRAPH` и пути в `app/config.py`. Формат `walk_graph.npz` и `walk_graph_meta.json` в ARCHITECTURE.md.
-- [ ] **T91 Граф (DATA).** `pipeline/walk_graph.py`: Overpass, bbox Астаны → пешеходные пути (footway, sidewalk, path, pedestrian, steps, living_street, residential и т. п.) и узлы переходов → `walk_graph.npz` + `walk_graph_meta.json` по формату; привязка POI и ориентиров к ближайшим узлам; отчёт: узлы, рёбра, переходы, светофоры, доля крупнейшей компоненты. Тесты на маленьких сырых примерах, без сети. Файл не больше 20 MB.
-- [ ] **T92 Маршрут по графу (FEATURES).** `app/walkgraph.py`: загрузка npz, ближайший узел к старту (ориентир или центр H3-ячейки) и к местам, Дейкстра на heapq. `app/route.py` и `app/pipeline.py`: при `walk_graph_ready` путь, `legs`, минуты и `total_walk_m` по графу, `crossings` и `steps_count`, честная `note`. При любой ошибке и для недостижимых точек — прямые отрезки, `path_source=straight`. Факты считает код. Время ответа не должно вырасти заметно (граф грузится один раз при старте).
-- [ ] **T93 Карта (POLISH).** Путь по графу — сплошной линией по тротуарам; прямые отрезки — пунктиром с прежней подписью; переходы на карте по виду (светофор / зебра / без разметки); число лестниц. Подписи ru/kk/en. Кнопка «Как пройти» остаётся.
+- [ ] **T91 Маршрут по графу (D:\core, ветка feat/walkgraph).** `app/walkgraph.py`: загрузка npz, ближайший узел к старту (ориентир или центр H3-ячейки) и к местам, Дейкстра на heapq. `app/route.py` и `app/pipeline.py`: при `walk_graph_ready` путь, `legs`, минуты и `total_walk_m` по графу, `crossings` и `steps_count`, честная `note`. При любой ошибке и для недостижимых точек — прямые отрезки, `path_source=straight`. Факты считает код. Время ответа не должно вырасти заметно (граф грузится один раз при старте).
+- [ ] **T92 Карта (POLISH).** Путь по графу — сплошной линией по тротуарам; прямые отрезки — пунктиром с прежней подписью; переходы на карте по виду (светофор / зебра / без разметки); число лестниц. Подписи ru/kk/en. Кнопка «Как пройти» остаётся.
+- [ ] **T93 Граф (DATA).** `pipeline/walk_graph.py`: Overpass, bbox Астаны → пешеходные пути (footway, sidewalk, path, pedestrian, steps, living_street, residential и т. п.) и узлы переходов → `walk_graph.npz` + `walk_graph_meta.json` по формату; привязка POI и ориентиров к ближайшим узлам; отчёт: узлы, рёбра, переходы, светофоры, доля крупнейшей компоненты. Тесты на маленьких сырых примерах, без сети. Файл не больше 20 MB.
 - [ ] **T94 Проверка (EVAL).** В eval: у S1 и пешеходных сценариев `path_source=graph`, путь начинается у старта и заканчивается у мест, минуты по графу не меньше прямых, `crossings` ≤ 50; при `WALK_GRAPH=false` всё как раньше (16/16). Проверка в браузере. Документы: RAG (маршрут по графу), ETHICS (данные OSM, ничего нового не уходит), PITCH/VIDEO.
 - DEPLOY: в `.dockerignore` разрешить `data/processed/walk_graph.npz` и `data/processed/walk_graph_meta.json`, иначе в образе граф не появится и маршрут останется прямым.
 

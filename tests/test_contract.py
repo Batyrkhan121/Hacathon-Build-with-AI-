@@ -26,11 +26,15 @@ def test_landmarks_valid(landmarks) -> None:
         assert all(alias == alias.lower() for alias in lm.aliases), lm.id
 
 
-def test_mock_answer_valid() -> None:
-    raw = json.loads((ROOT / "web" / "mock" / "answer_sample.json").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json"])
+def test_mock_answer_valid(name: str) -> None:
+    raw = json.loads((ROOT / "web" / "mock" / name).read_text(encoding="utf-8"))
     answer = Answer.model_validate(raw)
     assert 1 <= len(answer.cards) <= 3
     assert [c.rank for c in answer.cards] == list(range(1, len(answer.cards) + 1))
+    if name == "answer_route.json":  # the walk-graph mock of web/?mock=route
+        assert answer.route is not None and answer.route.path_source == "graph"
+        assert answer.route.crossings and len(answer.route.path) >= 2
 
 
 @pytest.mark.parametrize(
