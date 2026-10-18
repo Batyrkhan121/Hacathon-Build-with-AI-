@@ -211,6 +211,21 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         text = " ".join([ans.summary, *ans.warnings]).lower()
         if not any(s.lower() in text for s in exp["text_any"]):
             fails.append(f"в summary/warnings нет ни одного из {exp['text_any']}")
+    # ranking probes (eval/probes.yaml, T70): what comes first matters, not just what is there
+    top = ans.cards[0] if ans.cards else None
+    if "top1_categories_any" in exp and top is not None:
+        if top.category not in exp["top1_categories_any"]:
+            fails.append(f"первая карточка {top.category} ({top.title}), ожидали "
+                         f"{exp['top1_categories_any']}")
+    if "top1_note_forbid" in exp and top is not None:
+        hits = [s for s in exp["top1_note_forbid"] if s.lower() in top.open_note.lower()]
+        if hits:
+            fails.append(f"первая карточка: {hits} в «{top.open_note[:60]}»")
+    if "unknown_note_lang" in exp:
+        for c in ans.cards:
+            got = detect_script(c.open_note)
+            if c.open_status == "unknown" and got != exp["unknown_note_lang"]:
+                fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
     for key, want in (exp.get("intent") or {}).items():
         got = getattr(ans.intent, key, None)
         if got != want:

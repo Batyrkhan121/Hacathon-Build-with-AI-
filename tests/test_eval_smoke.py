@@ -172,3 +172,34 @@ def test_url_runner_unreachable_fails_fast() -> None:
     runner, notes = run_eval.url_runner("http://down", client=client)
     assert runner is None
     assert "недоступен" in notes[0]
+
+
+# ------------------------------------------------ T70 probe checks (QUALITY, wave 3)
+
+
+def test_top1_checks(mock_answer: Answer) -> None:
+    first = mock_answer.cards[0]
+    assert check_expect(mock_answer, {"top1_categories_any": [first.category]}) == []
+    assert check_expect(mock_answer, {"top1_categories_any": ["bar"]})
+    assert check_expect(mock_answer, {"top1_note_forbid": ["закроется через"]}) == []
+    bad = mock_answer.model_copy(deep=True)
+    bad.cards[0].open_note = "закроется через 30 мин · по данным OSM: ежедневно 10:00–24:00"
+    assert check_expect(bad, {"top1_note_forbid": ["закроется через"]})
+
+
+def test_unknown_note_lang(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    unknown = [c for c in ans.cards if c.open_status == "unknown"]
+    assert unknown
+    unknown[0].open_note = "no opening hours data, check before you go"
+    assert check_expect(ans, {"unknown_note_lang": "en"}) == []
+    unknown[0].open_note = "нет данных о часах, проверьте перед визитом"
+    assert check_expect(ans, {"unknown_note_lang": "en"})
+
+
+def test_probes_file_is_valid() -> None:
+    probes = run_eval.load_scenarios(run_eval.SCENARIOS_PATH.parent / "probes.yaml")
+    assert len(probes) >= 6
+    assert all(p["id"].startswith("P") for p in probes)
+    for p in probes:
+        RecommendRequest.model_validate(p["request"])
