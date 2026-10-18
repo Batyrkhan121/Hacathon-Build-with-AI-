@@ -670,8 +670,13 @@ class TestRealCore:
         a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
                                "что посоветуете?", "mega_silk_way"), real_deps)
         assert a.cards[0].category in {"park", "viewpoint", "monument", "attraction"}
-        assert all(c.distance_m >= 50 for c in a.cards)  # not the mall you stand at
-        assert a.route is not None and a.route.fits_budget and a.route.total_min <= 60
+        assert all(c.distance_m >= 100 for c in a.cards)  # not the mall you stand at
+        r = a.route
+        assert r is not None and r.fits_budget and r.total_min <= 60
+        names = {c.poi_id: c.title for c in a.cards}
+        in_route = [names.get(pid, "") for pid in r.stop_ids]
+        assert "NU Park" in in_route or a.cards[0].title == "NU Park"
+        assert not any("Mega Silk Way" in n for n in in_route)
 
     def test_walk_with_kids_note_asks_for_extra_time(self, real_deps: Deps) -> None:
         a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
