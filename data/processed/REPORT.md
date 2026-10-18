@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 16:46 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 16:56 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -28,18 +28,18 @@
 | religious | 17 | 6% |
 | library | 10 | 60% |
 | cinema | 9 | 78% |
-| museum | 9 | 11% |
+| museum | 9 | 22% |
 | theatre | 9 | 0% |
 | gallery | 7 | 0% |
 | entertainment | 4 | 25% |
 | nightlife | 3 | 33% |
 
 ## Полнота полей
-- `opening_hours`: 27%.
+- `opening_hours`: 28%.
 - `wheelchair` указан: 5%.
 - адрес: 14%; сайт или телефон: 19%.
 - тег `wikidata` в OSM: 1% (15).
-- описание: нет — 86% (1050), llm_generated — 13% (161), wikidata — 1% (16), osm — 0% (1).
+- описание: нет — 97% (1188), llm_generated — 3% (37), osm — 0% (1), wikidata — 0% (1), manual — 0% (1).
 - название на 2+ языках: 10%.
 - средний `data_confidence`: 0.39
 - `rating` пуст у всех записей: настоящих рейтингов в открытых данных нет. `popularity` — документированный прокси (wiki-ссылки, полнота тегов, тип, бренд).
@@ -58,21 +58,21 @@
 | 51.138, 71.440 | Монумент «Байтерек» | 65 | 34% | 50 |
 | 51.125, 71.472 | Мечеть «Хазрет Султан» | 58 | 24% | 36 |
 
-Вывод для слайда «ограничения»: больше всего данных в ячейке 51.162, 71.442 (156 POI на ≈5 км²); в 17 из 46 ячеек не больше 3 POI. Часы работы известны у 27% мест — у остальных карточка пишет «нет данных о часах, проверьте перед визитом».
+Вывод для слайда «ограничения»: больше всего данных в ячейке 51.162, 71.442 (156 POI на ≈5 км²); в 17 из 46 ячеек не больше 3 POI. Часы работы известны у 28% мест — у остальных карточка пишет «нет данных о часах, проверьте перед визитом».
 
 ## Обогащение и индекс
 - Ручные правки (data/manual/overrides.json): 4 мест.
-- indoor только по данным: категория, явный тег OSM indoor=* (так размечены аттракционы внутри Хан Шатыра) и точка внутри контура shop=mall (добавлено этой проверкой: 0; остальные места внутри ТРЦ уже имели indoor). Неизвестен у 12 мест — не угадываем; площадки внутри контуров ТРЦ остаются outdoor по категории.
-- Wikidata: описания добавлены 16 местам (из 17 с тегом).
-- Описания Claude (claude-sonnet-5-5, пометка llm_generated): 161 из 165 заметных мест без описания (attraction, cinema, entertainment, gallery, library, monument, museum, park, religious, theatre, viewpoint); кафе, бары, фастфуд, площадки и ТРЦ не описываются; отклонено проверкой на часы, цены и рейтинги: 3. Новых запросов не было (нет ANTHROPIC_API_KEY или LLM_ENABLED=false): только из кэша.
-- Индекс пропущен: дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: 1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты; без вектора 197 текстов.
+- indoor только по данным: категория, явный тег OSM indoor=* (так размечены аттракционы внутри Хан Шатыра) и точка внутри контура shop=mall (добавлено этой проверкой: 2; остальные места внутри ТРЦ уже имели indoor). Неизвестен у 12 мест — не угадываем; площадки внутри контуров ТРЦ остаются outdoor по категории.
+- Wikidata: описания добавлены 1 местам из 16 с тегом; короткие и пустые по смыслу не взяты: 14.
+- Описания Claude (claude-sonnet-5-5, пометка llm_generated): 37 из 175 заметных мест без описания (attraction, cinema, entertainment, gallery, library, monument, museum, park, religious, theatre, viewpoint); кафе, бары, фастфуд, площадки и ТРЦ не описываются; модель не уверена (null): 138; отклонено проверкой (часы, цены, удобства, адреса, пересказ названия и тегов): 0.
+- Индекс пропущен: дневная квота Gemini исчерпана (429 RESOURCE_EXHAUSTED, бесплатный тариф: 1000 эмбеддингов в сутки); перезапустите pipeline.build_index после сброса квоты; без вектора 141 текстов.
 - Векторный индекс: 1228 векторов, модель `gemini-embedding-001`, dim=768, создан 2026-10-18T16:26:04+05:00 — **устарел**: тексты POI (описания) изменились после сборки индекса; id и порядок совпадают, векторы части мест считаны по старым текстам.
 
 ## Примеры записей
 ```json
-{"id": "osm:way/460703779", "name": "Хан Шатыр", "name_i18n": {"ru": "Хан Шатыр", "en": "Khan Shatyr"}, "category": "mall", "tags": ["indoor", "late_open", "shopping", "wheelchair"], "geo": {"lat": 51.1325089, "lon": 71.4038726}, "h3_r9": "8921538228fffff", "description": "торгово-развлекательный центр в столице Казахстана", "description_source": "wikidata", "address": "Тұран даңғылы, 37", "opening_hours": "Mo-Su,PH 10:00-23:00", "wheelchair": "yes", "indoor": true, "popularity": 0.6, "sources": ["osm", "wikidata"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
-{"id": "osm:way/762780007", "name": "Abu Dhabi Plaza", "name_i18n": {}, "category": "mall", "tags": ["indoor", "shopping"], "geo": {"lat": 51.1219718, "lon": 71.4279322}, "h3_r9": "89215380483ffff", "description": "многофункциональный комплекс", "description_source": "wikidata", "address": "Сығанақ көшесі, 60/5", "opening_hours": "Mo-Su 10:00-22:00", "phone": "+7 7172 621616", "website": "https://abudhabiplaza.info/", "wheelchair": "unknown", "indoor": true, "popularity": 0.6, "sources": ["osm", "wikidata"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:way/454857501", "name": "Alem.ai (бывш. Нур Алем)", "name_i18n": {"ru": "Alem.ai (бывш. Нур Алем)", "kk": "Alem.ai (бұрынғы Нұр Әлем)", "en": "Alem.ai (formerly Nur Alem)"}, "category": "museum", "tags": ["architecture", "indoor", "interactive", "kids", "photo_spot"], "geo": {"lat": 51.08925, "lon": 71.41619}, "h3_r9": "892153806dbffff", "description": "Бывший шар Нур Алем, теперь международный центр ИИ Alem.ai. На первом этаже — Музей Сингулярности: иммерсивная выставка и интерактивные зоны. Билет 2 500 ₸, дети до 7 лет бесплатно.", "description_source": "manual", "opening_hours": "Tu-Su 10:00-18:30; Mo off", "website": "https://alem.ai/", "wheelchair": "unknown", "kids_friendly": true, "indoor": true, "popularity": 0.61, "sources": ["osm", "manual", "wikidata"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:way/460703779", "name": "Хан Шатыр", "name_i18n": {"ru": "Хан Шатыр", "en": "Khan Shatyr"}, "category": "mall", "tags": ["indoor", "late_open", "shopping", "wheelchair"], "geo": {"lat": 51.1325089, "lon": 71.4038726}, "h3_r9": "8921538228fffff", "address": "Тұран даңғылы, 37", "opening_hours": "Mo-Su,PH 10:00-23:00", "wheelchair": "yes", "indoor": true, "popularity": 0.6, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:way/762780007", "name": "Abu Dhabi Plaza", "name_i18n": {}, "category": "mall", "tags": ["indoor", "shopping"], "geo": {"lat": 51.1219718, "lon": 71.4279322}, "h3_r9": "89215380483ffff", "address": "Сығанақ көшесі, 60/5", "opening_hours": "Mo-Su 10:00-22:00", "phone": "+7 7172 621616", "website": "https://abudhabiplaza.info/", "wheelchair": "unknown", "indoor": true, "popularity": 0.6, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
 {"id": "osm:node/11162304905", "name": "Атлас", "name_i18n": {"ru": "Атлас", "en": "Atlas"}, "category": "restaurant", "tags": ["coffee", "food", "indoor", "late_open", "vegetarian", "wifi"], "geo": {"lat": 51.131615, "lon": 71.4275325}, "h3_r9": "89215382353ffff", "address": "Қонаев көшесі, 29", "opening_hours": "Su-Sa 10:00-02:00", "phone": "+7 (771) 231-36-14", "website": "https://atlasrestobar.taplink.ws/", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
-{"id": "osm:way/241241552", "name": "Библиотека ЕНУ", "name_i18n": {"ru": "Библиотека ЕНУ", "kk": "ЕҰУ Кітапханасы"}, "category": "library", "tags": ["indoor", "wifi"], "geo": {"lat": 51.1604358, "lon": 71.4652674}, "h3_r9": "89215382e97ffff", "description": "Библиотека ЕНУ — библиотека в помещении с Wi-Fi.", "description_source": "llm_generated", "address": "Пушкин көшесі, 11", "opening_hours": "Mo-Fr 09:00-19:00; Sa 09:00-14:00; Su off", "website": "https://library.enu.kz", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
-{"id": "osm:node/6698615689", "name": "Restobar D51", "name_i18n": {"ru": "Restobar D51", "en": "Restobar D51"}, "category": "bar", "tags": ["indoor", "late_open", "night", "wifi"], "geo": {"lat": 51.1476868, "lon": 71.4156581}, "h3_r9": "89215382077ffff", "address": "Қорғалжын тас жолы, 2", "opening_hours": "Mo-Su 16:00-04:00", "phone": "+77775552060", "wheelchair": "unknown", "indoor": true, "popularity": 0.13, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
+{"id": "osm:way/241241552", "name": "Библиотека ЕНУ", "name_i18n": {"ru": "Библиотека ЕНУ", "kk": "ЕҰУ Кітапханасы"}, "category": "library", "tags": ["indoor", "wifi"], "geo": {"lat": 51.1604358, "lon": 71.4652674}, "h3_r9": "89215382e97ffff", "address": "Пушкин көшесі, 11", "opening_hours": "Mo-Fr 09:00-19:00; Sa 09:00-14:00; Su off", "website": "https://library.enu.kz", "wheelchair": "unknown", "indoor": true, "popularity": 0.15, "sources": ["osm"], "data_confidence": 0.75, "fetched_at": "2026-10-18"}
 ```

@@ -35,7 +35,7 @@ def test_expo_sphere_is_a_museum_within_20_min(pois, landmarks, origin: str) -> 
     sphere = next(p for p in pois if p.id == "osm:way/454857501")
     # data/manual/overrides.json: the sphere is a museum; hours only with a source
     assert sphere.category == "museum" and "manual" in sphere.sources
-    assert sphere.opening_hours is None or sphere.website
+    assert sphere.opening_hours and sphere.website  # hours only with a source link
     assert haversine_m(g["lat"], g["lon"], sphere.geo.lat, sphere.geo.lon) < TWENTY_MIN_STRAIGHT_M
 
 
@@ -46,3 +46,12 @@ def test_no_duplicate_landmark_pois(pois) -> None:
         assert len(same) <= 1
         if same:
             assert "manual" not in same[0].sources  # came through its own OSM tags
+
+
+def test_alem_ai_record_from_official_site(pois) -> None:
+    sphere = next(p for p in pois if p.id == "osm:way/454857501")
+    assert sphere.opening_hours == "Tu-Su 10:00-18:30; Mo off"
+    assert sphere.website and sphere.website.startswith("https://alem.ai")
+    assert sphere.description_source == "manual" and "wikidata" in sphere.sources
+    dump = sphere.model_dump_json().casefold()
+    assert "energy" not in dump and "энерги" not in dump  # the old museum is gone

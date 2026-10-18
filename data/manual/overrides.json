@@ -1,8 +1,20 @@
 {
   "osm:way/454857501": {
+    "name": "Alem.ai (бывш. Нур Алем)",
+    "name_i18n": {
+      "ru": "Alem.ai (бывш. Нур Алем)",
+      "kk": "Alem.ai (бұрынғы Нұр Әлем)",
+      "en": "Alem.ai (formerly Nur Alem)"
+    },
     "category": "museum",
-    "note": "Шар Нур Алем (в OSM: Alem.ai, office), по Wikidata Q123643894 после EXPO-2017 стал музеем. Часы работы не указаны: нет официального источника. Добавить opening_hours можно только вместе со ссылкой в source.",
-    "source": null
+    "opening_hours": "Tu-Su 10:00-18:30; Mo off",
+    "website": "https://alem.ai/",
+    "tags_add": ["interactive", "kids"],
+    "kids_friendly": true,
+    "description": "Бывший шар Нур Алем, теперь международный центр ИИ Alem.ai. На первом этаже — Музей Сингулярности: иммерсивная выставка и интерактивные зоны. Билет 2 500 ₸, дети до 7 лет бесплатно.",
+    "sources_add": ["wikidata"],
+    "source": "https://alem.ai/",
+    "note": "Официальный сайт alem.ai, проверено 18.10.2026: Музей Сингулярности ВТ–ВС 10:00–18:30, ПН — технический день; билет 2 500 ₸, дети до 7 лет бесплатно. Описание из Wikidata (музей энергии будущего) устарело и заменено."
   },
   "osm:way/242373803": {
     "category": "fast_food",

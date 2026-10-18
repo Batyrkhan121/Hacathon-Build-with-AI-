@@ -35,16 +35,18 @@ def test_wikidata_fills_missing_descriptions_and_caches(tmp_path: Path) -> None:
 
     def fake_fetch(ids: list[str]) -> dict[str, str]:
         asked.append(ids)
-        return {"Q1": "музей в Астане"}
+        return {"Q1": "музей золота сарматов и древней истории Великой степи",
+                "Q3": "музей в Астане, Казахстан"}  # short: empty for a card
 
     cache = tmp_path / "wd.json"
     out, note = wikidata_step(pois, qids, cache, fetch=fake_fetch)
     assert asked == [["Q1", "Q3"]]  # Q2 already has an OSM description
-    assert out[0].description == "музей в Астане" and out[0].description_source == "wikidata"
+    assert out[0].description.startswith("музей золота сарматов")
+    assert out[0].description_source == "wikidata"
     assert out[0].sources == ["osm", "wikidata"]
     assert out[1].description == "Из OSM"
-    assert out[2].description is None
-    assert "1 местам" in note
+    assert out[2].description is None  # the short Wikidata line was not taken
+    assert "1 местам" in note and "не взяты: 1" in note
 
     asked.clear()
     wikidata_step(pois, qids, cache, fetch=fake_fetch)
@@ -75,14 +77,14 @@ def test_llm_top_n_by_popularity_with_validation(tmp_path: Path) -> None:
     cache = tmp_path / "desc.json"
     out, note = llm_step(pois, 2, cache, "fake-model", describe=fake)
     assert [it["poi_id"] for it in seen[0]] == ["osm:node/1", "osm:node/2"]
-    assert set(seen[0][0]) == {"poi_id", "name", "category", "tags"}
+    assert set(seen[0][0]) == {"poi_id", "name", "other_names", "category", "tags"}
     by_id = {p.id: p for p in out}
     assert by_id["osm:node/1"].description_source == "llm_generated"
     assert by_id["osm:node/1"].sources == ["osm"]  # generated text is not a fact source
     assert by_id["osm:node/2"].description is None  # hours/price text rejected
     assert by_id["osm:node/4"].description == "есть"
     assert "osm:node/999" not in by_id
-    assert "отклонено проверкой на часы, цены и рейтинги: 1" in note
+    assert "пересказ названия и тегов): 1" in note
 
     seen.clear()
     llm_step(pois, 2, cache, "fake-model", describe=fake)
@@ -122,7 +124,8 @@ def test_only_notable_places_get_generated_text(tmp_path: Path) -> None:
 
     def fake(items: list[dict]) -> list[PlaceDescription]:
         asked.extend(it["poi_id"] for it in items)
-        return [PlaceDescription(poi_id=it["poi_id"], text="Городской парк для прогулок.")
+        return [PlaceDescription(poi_id=it["poi_id"],
+                                 text="Парк разбит вокруг пруда с фонтанами и аллеей скульптур.")
                 for it in items]
 
     out, note = llm_step([cafe, playground, park, old_bar, osm_cafe], None,
@@ -140,7 +143,7 @@ def test_only_notable_places_get_generated_text(tmp_path: Path) -> None:
 def test_check_allows_plain_words() -> None:
     assert clean_sentence("Крупный торговый центр в центре города.")
     assert clean_sentence("Памятник «Астана Жұлдызы» — звезда на набережной.")
-    assert clean_sentence("Сцена театра под открытым небом.")
+    assert clean_sentence("Сцена театра на набережной Есиля.")
     assert clean_sentence("Цена билета — 2000.") is None
     assert clean_sentence("Отель на 5 звёзд.") is None
 
@@ -179,3 +182,38 @@ def test_cache_only_mode_applies_cache_without_asking(tmp_path: Path, monkeypatc
     monkeypatch.setattr(config.Settings, "has_llm", property(lambda self: False))
     (out,), note = llm_step([museum, poi(111, 0.4)][:1], None, cache, "m")
     assert out.description == "Небольшой музей истории." and "только из кэша" in note
+
+
+def test_restating_name_category_tags_is_kept_as_null(tmp_path: Path) -> None:
+    seifullin = poi(120, 0.6, name="Музей Сакена Сейфуллина", tags=["indoor"])
+    baiterek = poi(121, 0.9, name="Байтерек", category="monument", tags=["history", "outdoor"])
+    unknown = poi(122, 0.1, name="Неизвестный памятник", category="monument")
+
+    def fake(items: list[dict]) -> list[PlaceDescription]:
+        answers = {
+            "osm:node/120": "Музей Сакена Сейфуллина — музей, расположенный в помещении.",
+            "osm:node/121": "Монумент в честь переноса столицы с панорамой Левого берега "
+                            "с высоты 97 метров.",
+            "osm:node/122": None,  # the model is not sure
+        }
+        return [PlaceDescription(poi_id=it["poi_id"], text=answers[it["poi_id"]])
+                for it in items]
+
+    cache = tmp_path / "d.json"
+    out, note = llm_step([seifullin, baiterek, unknown], None, cache, "m", describe=fake)
+    by_id = {p.id: p for p in out}
+    assert by_id["osm:node/120"].description is None  # restatement -> null
+    assert by_id["osm:node/121"].description.startswith("Монумент в честь")
+    assert by_id["osm:node/122"].description is None
+    assert "модель не уверена (null): 1" in note and "пересказ названия" in note
+
+    asked: list[str] = []
+    llm_step([unknown], None, cache, "m",
+             describe=lambda items: asked.extend(i["poi_id"] for i in items) or [])
+    assert asked == []  # a declined place is not asked again
+
+
+def test_amenities_and_addresses_are_rejected() -> None:
+    assert clean_sentence("Уютное кафе с Wi-Fi и парковкой.") is None
+    assert clean_sentence("Памятник стоит на проспекте Республики.") is None
+    assert clean_sentence("Здание по ул. Бейбитшилик, д. 5.") is None

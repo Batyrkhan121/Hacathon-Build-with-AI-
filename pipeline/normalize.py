@@ -525,7 +525,7 @@ def finalize(pois: Sequence[POI], landmarks: Sequence[Mapping]) -> list[POI]:
 
 
 Edge = tuple[tuple[float, float], tuple[float, float]]
-Footprint = tuple[str, tuple[float, float, float, float], list[Edge]]
+Footprint = tuple[str, tuple[float, float, float, float], list[Edge], bool]  # .., is building
 
 
 def mall_footprints(payload: Mapping) -> list[Footprint]:
@@ -546,7 +546,8 @@ def mall_footprints(payload: Mapping) -> list[Footprint]:
         lats = [pt[0] for e in edges for pt in e]
         lons = [pt[1] for e in edges for pt in e]
         bbox = (min(lats), min(lons), max(lats), max(lons))
-        out.append((f"osm:{el['type']}/{el['id']}", bbox, edges))
+        is_building = "building" in (el.get("tags") or {})
+        out.append((f"osm:{el['type']}/{el['id']}", bbox, edges, is_building))
     return out
 
 
@@ -562,19 +563,24 @@ def inside(lat: float, lon: float, edges: Sequence[Edge]) -> bool:
 
 
 def mark_inside_malls(pois: Sequence[POI], outlines: Mapping | None) -> tuple[list[POI], int]:
-    """indoor=True for places whose indoor is unknown and whose point lies inside a mall
-    footprint from OSM (e.g. rides inside Khan Shatyr). Known values are never changed."""
+    """indoor=True for places whose point lies inside a mall footprint from OSM (e.g. rides
+    inside Khan Shatyr). Inside a mall *building* this beats the category default (Fame City,
+    a theme park, or a playground under the roof); inside a mall area that is not a building
+    only an unknown value is filled."""
     if not outlines:
         return list(pois), 0
     malls = mall_footprints(outlines)
     out: list[POI] = []
     marked = 0
     for p in pois:
-        if p.indoor is None and p.category != "mall":
+        if p.indoor is not True and p.category != "mall":
             lat, lon = p.geo.lat, p.geo.lon
             if any(
-                s <= lat <= n and w <= lon <= e and inside(lat, lon, edges)
-                for _, (s, w, n, e), edges in malls
+                (is_building or p.indoor is None)
+                and s <= lat <= n
+                and w <= lon <= e
+                and inside(lat, lon, edges)
+                for _, (s, w, n, e), edges, is_building in malls
             ):
                 tags = sorted({*p.tags, "indoor"} - {"outdoor"})
                 p = p.model_copy(update={"indoor": True, "tags": tags})
