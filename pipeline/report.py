@@ -72,7 +72,8 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         "## Пешеходный граф",
         "Файл `data/processed/walk_graph.npz` (контракт: docs/ARCHITECTURE.md, раздел 5), "
         "собирает `python -m pipeline.walk_graph`. Источник — дороги и тропинки OSM, по "
-        "которым можно идти пешком (без motorway/trunk, foot=no, access=private).",
+        "которым можно идти пешком (без motorway/trunk, foot=no и access=private; частная "
+        "дорога остаётся, если foot=yes/designated/permissive разрешает пешехода).",
         f"- Снимок OSM: {meta.get('osm_snapshot') or '—'}"
         + (f" (плитки из разных снимков: {', '.join(meta['osm_snapshots'])}; указан самый старый)"
            if len(meta.get("osm_snapshots") or []) > 1 else "")
