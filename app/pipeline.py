@@ -364,14 +364,16 @@ LLM_REASONS: dict[str, dict[str, str]] = {
            "invalid_output": "invalid model output", "bad_request": "request error",
            "bug": "internal error"},
 }
+# Reasons in brackets are for failures only. An empty GEMINI_API_KEY is a deliberate choice
+# (video takes run with it), so "no_key" has no text: plain «поиск: по словам», no warning.
 EMBED_REASONS: dict[str, dict[str, str]] = {
-    "ru": {"no_key": "нет ключа Gemini", "quota": "лимит запросов Gemini",
+    "ru": {"quota": "лимит запросов Gemini", "minute_quota": "минутный лимит Gemini",
            "daily_quota": "дневная квота Gemini", "network": "нет связи с Gemini",
            "error": "ошибка Gemini", "bad_vector": "некорректный вектор запроса"},
-    "kk": {"no_key": "Gemini кілті жоқ", "quota": "Gemini сұраулар лимиті",
+    "kk": {"quota": "Gemini сұраулар лимиті", "minute_quota": "Gemini минуттық лимиті",
            "daily_quota": "Gemini күндік квотасы", "network": "Gemini-мен байланыс жоқ",
            "error": "Gemini қатесі", "bad_vector": "сұрау векторы дұрыс емес"},
-    "en": {"no_key": "no Gemini key", "quota": "Gemini rate limit",
+    "en": {"quota": "Gemini rate limit", "minute_quota": "Gemini per-minute limit",
            "daily_quota": "Gemini daily quota", "network": "no connection to Gemini",
            "error": "Gemini error", "bad_vector": "invalid query vector"},
 }
@@ -384,7 +386,8 @@ HOURS_DROP_NAMES: dict[str, dict[str, str]] = {
     "en": {"closed": "closed", "closed_partial": "not open today",
            "closing_soon": "closing soon", "night": "not open at night"},
 }
-SEMANTIC_DOWN_KINDS = frozenset({"quota", "daily_quota", "network", "error", "bad_vector"})
+SEMANTIC_DOWN_KINDS = frozenset({"quota", "minute_quota", "daily_quota", "network", "error",
+                                 "bad_vector"})
 
 
 class InvalidRequest(ValueError):
