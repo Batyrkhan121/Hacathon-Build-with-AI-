@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-18 15:41 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-18 15:57 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -24,18 +24,18 @@
 | mall | 49 | 20% |
 | park | 40 | 2% |
 | sport | 23 | 9% |
-| attraction | 21 | 10% |
+| attraction | 20 | 10% |
 | religious | 17 | 6% |
 | library | 10 | 60% |
 | cinema | 9 | 78% |
+| museum | 9 | 22% |
 | theatre | 9 | 0% |
 | gallery | 8 | 0% |
-| museum | 8 | 12% |
 | nightlife | 3 | 33% |
 | entertainment | 3 | 33% |
 
 ## Полнота полей
-- `opening_hours`: 27%.
+- `opening_hours`: 28%.
 - `wheelchair` указан: 5%.
 - адрес: 14%; сайт или телефон: 19%.
 - тег `wikidata` в OSM: 1% (15).
@@ -58,9 +58,10 @@
 | 51.138, 71.440 | Монумент «Байтерек» | 65 | 34% | 50 |
 | 51.125, 71.472 | Мечеть «Хазрет Султан» | 58 | 24% | 36 |
 
-Вывод для слайда «ограничения»: больше всего данных в ячейке 51.162, 71.442 (156 POI на ≈5 км²); в 17 из 46 ячеек не больше 3 POI. Часы работы известны у 27% мест — у остальных карточка пишет «нет данных о часах, проверьте перед визитом».
+Вывод для слайда «ограничения»: больше всего данных в ячейке 51.162, 71.442 (156 POI на ≈5 км²); в 17 из 46 ячеек не больше 3 POI. Часы работы известны у 28% мест — у остальных карточка пишет «нет данных о часах, проверьте перед визитом».
 
 ## Обогащение и индекс
+- Ручные правки (data/manual/overrides.json): 1 мест.
 - Wikidata: описания добавлены 16 местам (из 17 с тегом).
 - Описания Claude пропущены: нет ANTHROPIC_API_KEY (или LLM_ENABLED=false).
 - Индекс пропущен: нет GEMINI_API_KEY: индекс не строится, retrieval лексический.
