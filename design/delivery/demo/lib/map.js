@@ -45,7 +45,7 @@ function stopIcon(rank, ideaSource) {
   });
 }
 
-// Ответ сервера: старт (context.origin), номерные места и мини-маршрут следами (он приблизительный).
+// Ответ сервера: старт (context.origin), номерные места и мини-маршрут линией со следами (он приблизительный).
 // Подписи кнопок зума Leaflet на языке интерфейса (по умолчанию они английские).
 export function setZoomTitles(zoomIn, zoomOut) {
   if (!map) return;
@@ -72,11 +72,12 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   }
   if (answer.route?.path?.length >= 2) {
     const latlngs = answer.route.path.map((p) => [p.lat, p.lon]);
+    L.polyline(latlngs, { color: '#ffffff', weight: 11, opacity: .95, interactive: false }).addTo(answerLayer);
     routeLine = L.polyline(latlngs, {
-      // Retain geometry for fitBounds; only footsteps are visible.
-      opacity: 0,
-      interactive: false,
+      className: 'qadam-route-line', color: '#9dbbe9', weight: 7,
+      opacity: .95, lineCap: 'round', lineJoin: 'round',
     }).addTo(answerLayer);
+    routeLine.bindTooltip(routeLabel, { sticky: true });
     stepPath = latlngs;
     pts.push(...latlngs);
   }
@@ -133,10 +134,12 @@ export function showRoute(rank, directLabel) {
   }
   const marker = stopMarkers.get(rank);
   if (!marker || !originPoint) return;
+  L.polyline([originPoint, marker.getLatLng()], { color: '#ffffff', weight: 11, opacity: .95, interactive: false }).addTo(directLayer);
   const line = L.polyline([originPoint, marker.getLatLng()], {
-    opacity: 0,
-    interactive: false,
+    className: 'qadam-route-line', color: '#9dbbe9', weight: 7,
+    opacity: .95, lineCap: 'round', lineJoin: 'round',
   }).addTo(directLayer);
+  line.bindTooltip(directLabel, { sticky: true });
   stepPath = [originPoint, marker.getLatLng()];
   drawRouteSteps();
   map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: !reducedMotion() });
@@ -279,7 +282,7 @@ function drawRouteSteps() {
       const point = L.point(segment.a.x + dx * d, segment.a.y + dy * d);
       if (stops.some(stop => stop.distanceTo(point) < 32)) continue;
       const side = index++ % 2 ? 1 : -1;
-      const offset = point.add(L.point(-dy * 5 * side, dx * 5 * side));
+      const offset = point.add(L.point(-dy * 1.5 * side, dx * 1.5 * side));
       const progress = (walked + d) / total;
       const icon = L.divIcon({
         className: 'route-step', iconSize: [12, 23], iconAnchor: [6, 11.5],
