@@ -578,13 +578,14 @@ class TestRealData:
             "query": "Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
             "location": {"landmark_id": "baiterek"}, "at": "2026-10-19T14:00:00+05:00",
             "lang": "ru", "use_llm": False}), real_deps)
-        assert ("До вылета 120 мин: дорога до аэропорта ≈35 мин (оценка) и запас 60 мин — "
-                "на прогулку 25 мин. Выезжайте в аэропорт не позже 14:25.") in a.warnings
+        assert any("До вылета 120 мин" in w and "оставляют до 25 мин" in w
+                   and "выезд — 14:25" in w and "не гарантирует" in w for w in a.warnings)
         assert seen == [(25, 15)]  # planned on the walk budget, tourist walks ≤ 15 min
         assert a.intent.time_budget_min == 120  # what the user said is kept
         assert 1 <= len(a.cards) <= 2
         assert all(c.walk_min <= 15 for c in a.cards)
-        assert "время на прогулку 25 мин (120 − 35 дорога − 60 запас)" in a.data_used.filters
+        assert ("время на прогулку до 25 мин; до вылета 120 мин "
+                "(допущения: 35 дорога, 60 запас)") in a.data_used.filters
         assert not any("Заложите время" in w for w in a.warnings)  # replaced by the plan
         if a.route is not None:
             assert len(a.route.stop_ids) <= 2
@@ -618,13 +619,13 @@ class TestRealData:
         assert real_deps.llm.calls == ["QueryIntent"]  # no generation was paid for
         enough = recommend(req("я турист, до вылета 110 минут", at="2026-10-19T14:00:00+05:00",
                                use_llm=False), real_deps)
-        assert enough.cards and any("не позже 14:15" in w for w in enough.warnings)
+        assert enough.cards and any("выезд — 14:15" in w for w in enough.warnings)
 
     def test_departure_override_is_a_flight(self, real_deps: Deps) -> None:
         a = recommend(req("что посмотреть рядом?", at="2026-10-19T14:00:00+05:00",
                           use_llm=False, overrides={"departure_in_min": 150}), real_deps)
         assert a.intent.tourist and a.intent.time_budget_min == 150
-        assert any("на прогулку 55 мин" in w and "не позже 14:55" in w for w in a.warnings)
+        assert any("оставляют до 55 мин" in w and "выезд — 14:55" in w for w in a.warnings)
 
     def test_hub_and_tourist_walks_are_short_without_widening(
         self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch
@@ -714,7 +715,9 @@ class TestRealCore:
         night_tags = {"late_open", "24_7", "night"}
         for card in a.cards:
             assert card.open_status == "open" or night_tags & set(card.tags), card.title
-            assert card.walk_min <= 15
+            if card.walk_min > 15:
+                assert any("лучше доехать на такси" in w for w in a.warnings)
+                assert "пешком до 15 мин" not in a.data_used.filters
         day = recommend(real_req("кофе", "khan_shatyr"), real_deps)
         assert not any("ночь" in f for f in day.data_used.filters)
 

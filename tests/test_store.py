@@ -12,6 +12,7 @@ import pytest
 from app.config import Settings, get_settings
 from app.schemas import POI
 from app.store import load_landmarks, load_pois, load_store
+from pipeline.build_index import docs_hash
 
 from .conftest import FIXTURES, ROOT
 
@@ -35,7 +36,11 @@ def write_index(index_dir: Path, ids: list[str], matrix: np.ndarray, **meta: obj
     index_dir.mkdir(parents=True, exist_ok=True)
     np.save(index_dir / "embeddings.npy", matrix.astype(np.float32))
     (index_dir / "ids.json").write_text(json.dumps(ids), encoding="utf-8")
-    info = {"model": "test-embed", "dim": DIM, "count": len(ids), "created_at": "2026-10-18"}
+    by_id = {p.id: p for p in load_pois(SYNTHETIC)}
+    info = {
+        "model": "test-embed", "dim": DIM, "count": len(ids), "created_at": "2026-10-18",
+        "docs_sha256": docs_hash([by_id[poi_id] for poi_id in ids]),
+    }
     info.update(meta)
     (index_dir / "meta.json").write_text(json.dumps(info), encoding="utf-8")
 
@@ -90,7 +95,7 @@ def test_load_store_without_index_is_lexical(tmp_path: Path) -> None:
 
 def test_load_store_aligns_embeddings_by_ids(tmp_path: Path) -> None:
     pois = load_pois(SYNTHETIC)
-    ids = [p.id for p in pois][::-1][:-1]  # reversed order, first POI missing
+    ids = [p.id for p in pois][::-1]  # valid index in a different order
     matrix = np.zeros((len(ids), DIM), dtype=np.float32)
     for row, poi_id in enumerate(ids):
         matrix[row, int(poi_id.rsplit("/", 1)[1]) % DIM] = 2.0  # not normalised on purpose
@@ -101,13 +106,67 @@ def test_load_store_aligns_embeddings_by_ids(tmp_path: Path) -> None:
     assert store.embeddings.shape == (14, DIM)
     assert store.embed_model == "test-embed"
     for i, poi in enumerate(store.pois):
-        if poi.id == "test:poi/1":
-            assert not store.embeddings[i].any()  # missing row stays zero
-            continue
         expected = np.zeros(DIM, dtype=np.float32)
         expected[int(poi.id.rsplit("/", 1)[1]) % DIM] = 1.0
         np.testing.assert_allclose(store.embeddings[i], expected)
-    assert any("без эмбеддинга" in w for w in store.warnings)
+    assert store.warnings == []
+
+
+def test_load_store_rejects_index_missing_a_poi(tmp_path: Path) -> None:
+    ids = [p.id for p in load_pois(SYNTHETIC)][1:]
+    write_index(tmp_path / "index", ids, np.ones((len(ids), DIM)))
+    store = load_store(make_settings(tmp_path))
+    assert store.embeddings is None
+    assert any("состав POI изменился" in w for w in store.warnings)
+
+
+def test_load_store_rejects_index_without_document_fingerprint(tmp_path: Path) -> None:
+    ids = [p.id for p in load_pois(SYNTHETIC)]
+    write_index(tmp_path / "index", ids, np.ones((len(ids), DIM)))
+    meta_path = tmp_path / "index" / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["docs_sha256"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    store = load_store(make_settings(tmp_path))
+    assert store.embeddings is None
+    assert store.embed_model is None
+    assert any("нет docs_sha256" in w and "лексически" in w for w in store.warnings)
+
+
+@pytest.mark.parametrize("changes", [
+    {"description": "Описание изменилось после построения вектора."},
+    {"tags": ["indoor", "quiet"]},
+    {"category": "museum"},
+])
+def test_load_store_rejects_vectors_for_old_documents(
+    tmp_path: Path, changes: dict[str, object],
+) -> None:
+    pois = load_pois(SYNTHETIC)
+    ids = [p.id for p in pois]
+    write_index(tmp_path / "index", ids, np.ones((len(ids), DIM)))
+    changed = [pois[0].model_copy(update=changes), *pois[1:]]
+    path = tmp_path / "changed.jsonl"
+    path.write_text("\n".join(p.model_dump_json() for p in changed), encoding="utf-8")
+    store = load_store(make_settings(tmp_path), poi_path=path)
+    assert len(store.pois) == len(pois)
+    assert store.embeddings is None
+    assert any("тексты POI изменились" in w and "лексически" in w for w in store.warnings)
+
+
+def test_load_store_accepts_fresh_builder_index(tmp_path: Path) -> None:
+    from pipeline.build_index import build_index
+
+    pois = load_pois(SYNTHETIC)
+    result = build_index(
+        pois, tmp_path / "index", model="test-embed", dim=DIM,
+        embed=lambda texts: [[1.0] * DIM for _ in texts],
+        cache_path=tmp_path / "embed-cache.npz",
+    )
+    assert result.status == "built"
+    store = load_store(make_settings(tmp_path))
+    assert store.embeddings is not None
+    assert store.embeddings.shape == (len(pois), DIM)
+    assert store.warnings == []
 
 
 @pytest.mark.parametrize("meta", [{"dim": 8}, {"model": "other-model"}])

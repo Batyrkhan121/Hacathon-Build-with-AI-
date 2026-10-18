@@ -2,7 +2,7 @@
 
 Requirements:
 - client: `anthropic.Anthropic(api_key=settings.anthropic_api_key,
-  timeout=settings.llm_timeout_s, max_retries=2, default_headers=settings.anthropic_headers)`
+  timeout=settings.llm_timeout_s, max_retries=0, default_headers=settings.anthropic_headers)`
   (the header carries ANTHROPIC_WORKSPACE_ID for keys not scoped to a workspace);
 - structured output into Pydantic models:
   `client.messages.parse(model=..., max_tokens=..., system=..., messages=[...],
@@ -13,8 +13,8 @@ Requirements:
   `effort` only; thinking is adaptive by default, keep effort "low" for latency;
 - refusal fallback on the Claude API: `client.beta.messages.parse(...,
   betas=["server-side-fallback-2026-07-01"], fallbacks="default")`;
-- timeout settings.llm_timeout_s, SDK retries (max_retries=2), then the fallback model,
-  then LLMUnavailable;
+- one shared request_budget (20 s default); primary and fallback divide remaining time,
+  with no online SDK retries. A bounded worker pool enforces wall time even if an SDK stalls;
 - disk cache data/cache/llm/<sha256>.json keyed by (model, system, prompt, schema name)
   so preset demo scenarios are instant and survive quota problems;
 - embeddings (Anthropic has no embeddings API): Gemini via google-genai, only when
@@ -45,6 +45,8 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -58,13 +60,18 @@ from app.config import Settings
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+R = TypeVar("R")
 Effort = Literal["low", "medium", "high"]
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_TOKENS = 8192  # adaptive thinking shares this budget; cards need ~500 output tokens
-SDK_RETRIES = 2  # primary model; the fallback model gets one retry
-FALLBACK_RETRIES = 1
-TOTAL_BUDGET_FACTOR = 3.0  # do not start the fallback model after 3 x llm_timeout_s
+SDK_RETRIES = 0  # online requests share one wall-clock deadline; no hidden SDK retries
+FALLBACK_RETRIES = 0
+REQUEST_BUDGET_S = 20.0
+MAX_PROVIDER_WORKERS = 8
+QUERY_EMBED_TIMEOUT_S = 2.0
+_request_state = threading.local()
+_provider_slots = threading.BoundedSemaphore(MAX_PROVIDER_WORKERS)
 NETWORK_COOLDOWN_S = 60.0
 AUTH_COOLDOWN_S = 300.0
 CACHE_VERSION = 1
@@ -96,6 +103,72 @@ def user_data_block(text: str) -> str:
 
 class LLMUnavailable(RuntimeError):
     """Raised when the LLM cannot answer (no key, quota, timeout, refusal, invalid output)."""
+
+
+class ProviderTimeout(LLMUnavailable):
+    """The shared request deadline or an individual provider deadline expired."""
+
+
+@contextmanager
+def request_budget(timeout_s: float = REQUEST_BUDGET_S) -> Iterator[None]:
+    """Share a monotonic deadline across sequential providers in one sync request thread.
+
+    Nested scopes cannot extend an outer deadline. Workers receive a timeout explicitly;
+    thread-local request state is deliberately not inherited by detached SDK workers.
+    """
+    previous = getattr(_request_state, "deadline", None)
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    _request_state.deadline = min(previous, deadline) if previous is not None else deadline
+    try:
+        yield
+    finally:
+        _request_state.deadline = previous
+
+
+def remaining_budget(max_seconds: float) -> float:
+    deadline = getattr(_request_state, "deadline", None)
+    if deadline is None:
+        return max(0.0, max_seconds)
+    return max(0.0, min(max_seconds, deadline - time.monotonic()))
+
+
+def provider_call(fn: Callable[[], R], timeout_s: float) -> R:
+    """Bound wall time even when an SDK ignores its socket timeout.
+
+    Python cannot cancel a running sync SDK call. Timed-out workers are daemon threads;
+    their results are discarded, and their slot is held until the call exits. The global
+    cap prevents repeated requests from accumulating unbounded workers. Saturation fails
+    immediately into the existing deterministic fallback, without queueing more calls.
+    """
+    timeout_s = remaining_budget(timeout_s)
+    if timeout_s <= 0:
+        raise ProviderTimeout("request time budget spent")
+    slots = _provider_slots
+    if not slots.acquire(blocking=False):
+        raise LLMUnavailable("provider workers busy")
+    done = threading.Event()
+    result: list[tuple[bool, Any]] = []
+
+    def run() -> None:
+        try:
+            result.append((True, fn()))
+        except Exception as exc:  # noqa: BLE001 - forward failures to the request thread
+            result.append((False, exc))
+        finally:
+            slots.release()
+            done.set()
+
+    try:
+        threading.Thread(target=run, daemon=True, name="qadam-provider").start()
+    except RuntimeError:
+        slots.release()
+        raise LLMUnavailable("provider worker unavailable") from None
+    if not done.wait(timeout_s):
+        raise ProviderTimeout("provider time budget spent")
+    success, value = result[0]
+    if not success:
+        raise value
+    return value
 
 
 class _ModelFailed(Exception):
@@ -173,18 +246,29 @@ class LLMClient:
             return obj
 
         started = time.monotonic()
-        budget = TOTAL_BUDGET_FACTOR * self.settings.llm_timeout_s
+        budget = remaining_budget(min(self.settings.llm_timeout_s, REQUEST_BUDGET_S))
+        deadline = started + budget
         reasons: list[str] = []
         all_network = True
-        for i, model in enumerate(self._models()):
-            if i > 0 and time.monotonic() - started > budget:
+        models = self._models()
+        for i, model in enumerate(models):
+            remaining = remaining_budget(deadline - time.monotonic())
+            if remaining <= 0:
                 reasons.append(f"{model}: skipped, time budget spent")
                 break
+            # Leave time for the fallback model when the primary stalls.
+            attempt_timeout = remaining * 0.7 if i + 1 < len(models) else remaining
             try:
-                obj, served = self._call(
-                    model, system, prompt, schema, effort,
-                    retries=SDK_RETRIES if i == 0 else FALLBACK_RETRIES,
+                obj, served = provider_call(
+                    lambda model=model, attempt_timeout=attempt_timeout: self._call(
+                        model, system, prompt, schema, effort,
+                        retries=SDK_RETRIES, timeout_s=attempt_timeout,
+                    ),
+                    attempt_timeout,
                 )
+            except ProviderTimeout:
+                reasons.append(f"{model}: timeout")
+                continue
             except _HardFailure as exc:
                 self._cool_down(AUTH_COOLDOWN_S, str(exc))
                 raise LLMUnavailable(str(exc)) from exc
@@ -212,10 +296,11 @@ class LLMClient:
         effort: Effort,
         *,
         retries: int,
+        timeout_s: float,
     ) -> tuple[T, str]:
         import anthropic
 
-        client = self._get_client().with_options(max_retries=retries)
+        client = self._get_client().with_options(max_retries=retries, timeout=timeout_s)
         try:
             resp = client.beta.messages.parse(
                 model=model,
@@ -322,7 +407,11 @@ class LLMClient:
         if not self.settings.has_embeddings or not text.strip():
             return None
         try:
-            return self._embed([text], "RETRIEVAL_QUERY")[0]
+            timeout_s = remaining_budget(QUERY_EMBED_TIMEOUT_S)
+            return provider_call(
+                lambda: self._embed([text], "RETRIEVAL_QUERY", online_timeout_s=timeout_s)[0],
+                timeout_s,
+            )
         except Exception as exc:  # noqa: BLE001 - embeddings are optional, lexical works
             log.warning("embed_query failed (%s), retrieval goes lexical", type(exc).__name__)
             return None
@@ -341,7 +430,9 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             raise LLMUnavailable(f"embedding failed: {type(exc).__name__}") from exc
 
-    def _embed(self, texts: list[str], task_type: str) -> np.ndarray:
+    def _embed(
+        self, texts: list[str], task_type: str, *, online_timeout_s: float | None = None
+    ) -> np.ndarray:
         dim = self.settings.embed_dim
         out = np.zeros((len(texts), dim), dtype=np.float32)
         keys = [self._embed_key(t, task_type) for t in texts]
@@ -354,20 +445,29 @@ class LLMClient:
                 out[i] = vec
         for start in range(0, len(missing), EMBED_BATCH):
             idx = missing[start : start + EMBED_BATCH]
-            vectors = self._embed_batch([texts[i] for i in idx], task_type)
+            vectors = self._embed_batch(
+                [texts[i] for i in idx], task_type, online_timeout_s=online_timeout_s
+            )
             for i, vec in zip(idx, vectors, strict=True):
                 out[i] = vec
                 self._embed_cache_write(keys[i], vec)
         return out
 
-    def _embed_batch(self, texts: list[str], task_type: str) -> np.ndarray:
+    def _embed_batch(
+        self, texts: list[str], task_type: str, *, online_timeout_s: float | None = None
+    ) -> np.ndarray:
         from google.genai import types
 
         config = types.EmbedContentConfig(
-            task_type=task_type, output_dimensionality=self.settings.embed_dim
+            task_type=task_type, output_dimensionality=self.settings.embed_dim,
+            http_options=types.HttpOptions(
+                timeout=max(1, int(online_timeout_s * 1000)),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ) if online_timeout_s is not None else None,
         )
         pause = EMBED_PAUSE_S
-        for attempt in range(1, EMBED_ATTEMPTS + 1):
+        attempts = 1 if online_timeout_s is not None else EMBED_ATTEMPTS
+        for attempt in range(1, attempts + 1):
             try:
                 resp = self._get_genai().models.embed_content(
                     model=self.settings.embed_model, contents=texts, config=config
@@ -378,7 +478,7 @@ class LLMClient:
             except LLMUnavailable:
                 raise
             except Exception as exc:  # noqa: BLE001 - retried, then surfaced as LLMUnavailable
-                if attempt == EMBED_ATTEMPTS:
+                if attempt == attempts:
                     raise LLMUnavailable(f"Gemini embed failed: {type(exc).__name__}") from exc
                 log.warning("Gemini embed attempt %d failed (%s), retrying", attempt,
                             type(exc).__name__)

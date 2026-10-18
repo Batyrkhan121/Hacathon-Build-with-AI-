@@ -123,8 +123,14 @@ def _candidate_view(c: Candidate, intent: QueryIntent) -> dict[str, Any]:
     if c.hours.closes_in_min is not None:
         view["closes_in_min"] = c.hours.closes_in_min
     if poi.description:
-        view["description"] = poi.description[:MAX_DESCRIPTION_CHARS]
         view["description_source"] = poi.description_source or "unknown"
+        # Generated enrichment is not independent evidence about an actual place.
+        # Keep provenance, but don't invite the model to repeat invented specifics.
+        if poi.description_source not in (None, "llm_generated"):
+            view["description"] = poi.description[:MAX_DESCRIPTION_CHARS]
+    missing = sorted(set(intent.must_tags) - set(poi.tags))
+    if missing:
+        view["unconfirmed_requested_tags"] = missing
     if poi.wheelchair != "unknown" or intent.wheelchair:
         view["wheelchair"] = poi.wheelchair  # "unknown" matters when access was asked for
     if poi.kids_friendly is not None:

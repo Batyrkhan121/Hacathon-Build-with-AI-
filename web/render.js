@@ -274,7 +274,8 @@ function renderRoute(route, byId, ctx, originName) {
             { class: 'tl-name' },
             h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
             h('strong', { text: cardTitle(card) }),
-            h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
+            // total_min включает visit_min_low; диапазон остаётся в отдельной карточке.
+            h('span', { class: 'tl-visit', text: ` · ${t('route.visit', { min: card.visit_min_low })}` }),
           ),
         ),
       );

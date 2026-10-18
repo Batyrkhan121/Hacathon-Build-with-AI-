@@ -286,6 +286,48 @@ def test_template_visit_fits_budget(cands: list[Candidate]) -> None:
     assert all(c.visit_min_low <= c.visit_min_high for c in cards)
 
 
+def test_one_template_card_reserves_walk_time() -> None:
+    candidate = cand(make_poi("one", "cafe"), distance=300)
+    cards = template_cards([candidate], intent(time_budget_min=15), ctx())
+    assert len(cards) == 1
+    assert candidate.walk_min + cards[0].visit_min_high <= 15
+
+
+def test_template_drops_a_place_without_time_to_visit() -> None:
+    candidate = cand(make_poi("far", "cafe"), distance=1000)
+    assert template_cards([candidate], intent(time_budget_min=10), ctx()) == []
+
+
+def test_excessive_llm_visit_reverts_to_feasible_template() -> None:
+    candidate = cand(make_poi("one", "cafe"), distance=300)
+    response = DraftResponse(summary="", cards=[draft(candidate.poi.id,
+        todo="Spend two hours here.", visit_min_low=120, visit_min_high=180)])
+    cards, warnings = finalize(response, [candidate], intent(time_budget_min=20), ctx())
+    assert len(cards) == 1
+    assert cards[0].walk_min + cards[0].visit_min_high <= 20
+    assert "two hours" not in cards[0].what_to_do
+    assert cards[0].idea_source == "poi_data"
+    assert warnings
+
+
+def test_visit_finishes_before_closing() -> None:
+    closing = HoursVerdict(status="open", confidence="high", note="closes soon",
+                           closes_in_min=35)
+    candidate = cand(make_poi("one", "museum"), closing, distance=300)
+    cards = template_cards([candidate], intent(time_budget_min=120), ctx())
+    assert len(cards) == 1
+    assert cards[0].walk_min + cards[0].visit_min_high <= 35
+
+
+def test_generated_description_cannot_be_marked_as_verified_poi_text() -> None:
+    candidate = cand(make_poi("one", "museum", description="Generated exhibit idea",
+                              description_source="llm_generated"))
+    response = DraftResponse(summary="", cards=[draft(candidate.poi.id, idea_source="poi_data")])
+    cards, _ = finalize(response, [candidate], intent(), ctx())
+    assert cards[0].idea_source == "generated"
+    assert template_cards([candidate], intent(), ctx())[0].idea_source == "poi_data"
+
+
 # --------------------------------------------------------- review follow-ups
 
 
@@ -323,7 +365,8 @@ def test_sanitize_summary(cands: list[Candidate]) -> None:
 
 def test_template_visit_leaves_room_for_a_route() -> None:
     cards = template_cards([cand(make_poi("1", "mall"))], intent(time_budget_min=60), ctx())
-    assert (cards[0].visit_min_low, cards[0].visit_min_high) == (20, 60)
+    assert cards[0].visit_min_low == 20
+    assert cards[0].visit_min_high + cards[0].walk_min == 60
 
 
 # ------------------------------------------------ distinct titles (wave 3, QUALITY)

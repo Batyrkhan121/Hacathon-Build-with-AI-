@@ -268,6 +268,49 @@ def departure_phrase(text: str) -> bool:
     return bool(_DEPARTURE_RE.search(_normalise(text)))
 
 
+def _departure_match(t: str) -> re.Match[str] | None:
+    duration = (rf"(?:{_NUM}\s*(?:{_U_MIN}|{_U_HOUR})"
+                r"|полтора часа|полчаса|час|an hour|one hour|two hours|three hours"
+                r"|бір сағат|екі сағат|үш сағат)")
+    flight = r"(?:вылет|рейс|самолет|посадк)\w*"
+    patterns = (
+        rf"{flight}\s+через\s+(?P<duration>{duration})",
+        rf"(?:до|перед)\s+{flight}\s*(?:осталось\s+)?(?P<duration>{duration})",
+        rf"(?P<duration>{duration})\s+(?:до|перед)\s+{flight}",
+        rf"(?:flight|plane|departure)\s+(?:is\s+|leaves\s+)?in\s+(?P<duration>{duration})",
+        rf"(?P<duration>{duration})\s+(?:before|until)\s+(?:my\s+|the\s+|our\s+)?"
+        r"(?:flight|departure|plane)",
+        rf"(?:ұшуға|ұшаққа|рейске)\s+(?:дейін\s+)?(?P<duration>{duration})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, t)
+        if match:
+            return match
+    return None
+
+
+def departure_minutes(text: str) -> int | None:
+    """Read the flight duration without imposing the activity budget's 600-minute cap."""
+    match = _departure_match(_normalise(text))
+    if match is None:
+        return None
+    duration = match.group("duration")
+    numeric = _SINGLE_RE.fullmatch(duration)
+    return (_to_minutes(numeric.group(1), numeric.group(2)) if numeric
+            else _time_budget(duration))
+
+
+def activity_minutes_before_flight(text: str) -> int | None:
+    """Independent activity duration, regardless of whether the flight is mentioned first."""
+    t = _normalise(text)
+    match = _departure_match(t)
+    if match is None:
+        return None
+    remaining = t[:match.start()] + " " + t[match.end():]
+    _, remaining = _walk_minutes(remaining)
+    return _time_budget(remaining)
+
+
 def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> QueryIntent:
     """Explicit UI filters always win over the parsed intent.
 

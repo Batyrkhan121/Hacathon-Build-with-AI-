@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -64,10 +66,12 @@ class FakeAnthropic:
         self.outcomes = outcomes  # model -> queue of responses / exceptions
         self.calls: list[dict[str, Any]] = []
         self.retries: list[int] = []
+        self.timeouts: list[float] = []
         self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self._parse))
 
     def with_options(self, **kw: Any) -> FakeAnthropic:
         self.retries.append(kw.get("max_retries"))
+        self.timeouts.append(kw.get("timeout"))
         return self
 
     def _parse(self, **kw: Any) -> Any:
@@ -76,6 +80,8 @@ class FakeAnthropic:
         item = queue.pop(0) if queue else AssertionError(f"unexpected call {kw['model']}")
         if isinstance(item, BaseException):
             raise item
+        if callable(item):
+            return item()
         return item
 
 
@@ -307,6 +313,78 @@ def test_real_client_is_built_lazily_with_settings(tmp_path: Path, monkeypatch) 
     assert seen["default_headers"] == {"anthropic-workspace-id": "ws_1"}
 
 
+def test_stalled_primary_still_returns_fallback_within_budget(tmp_path: Path) -> None:
+    release = threading.Event()
+    finished = threading.Event()
+
+    def stalled():
+        release.wait(1)
+        finished.set()
+        return ok(Capital(city="late primary"))
+
+    llm, fake = make_client(tmp_path, {
+        "claude-sonnet-5-5": [stalled],
+        "claude-haiku-5-5": [ok(Capital(city="fallback"), model="claude-haiku-5-5")],
+    }, llm_timeout_s=0.1)
+    started = time.monotonic()
+    try:
+        assert call(llm).city == "fallback"
+        assert time.monotonic() - started < 0.5
+        assert fake.retries == [0, 0]
+        assert 0 < fake.timeouts[1] < fake.timeouts[0] <= 0.1
+        assert llm.last_model == "claude-haiku-5-5"
+    finally:
+        release.set()
+        assert finished.wait(1)
+
+
+def test_shared_request_budget_covers_sequential_calls(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {
+        "claude-sonnet-5-5": [ok(Capital(city="first"))],
+    })
+    with llm_mod.request_budget(0.05):
+        assert call(llm).city == "first"
+        # Model a prior provider consuming all remaining time without sleeping.
+        llm_mod._request_state.deadline = time.monotonic() - 1
+        with pytest.raises(LLMUnavailable, match="time budget"):
+            call(llm, "second")
+    assert len(fake.calls) == 1
+    assert llm_mod.remaining_budget(1) == 1
+
+
+def test_provider_slots_remain_bounded_after_timeout(monkeypatch) -> None:
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(llm_mod, "_provider_slots", slots)
+    release = threading.Event()
+    finished = threading.Event()
+
+    def stalled():
+        release.wait(1)
+        finished.set()
+        return "late"
+
+    try:
+        with pytest.raises(llm_mod.ProviderTimeout):
+            llm_mod.provider_call(stalled, 0.02)
+        with pytest.raises(LLMUnavailable, match="busy"):
+            llm_mod.provider_call(lambda: "must not be queued", 0.02)
+    finally:
+        release.set()
+        assert finished.wait(1)
+    # Worker releases its slot before signaling done; wait on the slot itself.
+    assert slots.acquire(timeout=1)
+    slots.release()
+    assert llm_mod.provider_call(lambda: "ready", 0.1) == "ready"
+
+
+def test_nested_budget_cannot_extend_outer_deadline() -> None:
+    with llm_mod.request_budget(0):
+        with llm_mod.request_budget(20):
+            with pytest.raises(llm_mod.ProviderTimeout):
+                llm_mod.provider_call(lambda: "never called", 1)
+    assert llm_mod.remaining_budget(1) == 1
+
+
 # ------------------------------------------------------------------- embeddings
 
 
@@ -355,8 +433,18 @@ def test_embed_query_is_normalised_and_cached(tmp_path: Path) -> None:
 
 def test_embed_query_failure_returns_none(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(llm_mod.time, "sleep", lambda _s: None)
-    llm = make_embedder(tmp_path, FakeGenai(fail_times=99))
+    fake = FakeGenai(fail_times=99)
+    llm = make_embedder(tmp_path, fake)
     assert llm.embed_query("кофе") is None
+    assert len(fake.calls) == 1  # online embeddings never retry inside a user request
+
+
+def test_embed_query_skips_provider_after_shared_deadline(tmp_path: Path) -> None:
+    fake = FakeGenai()
+    llm = make_embedder(tmp_path, fake)
+    with llm_mod.request_budget(0):
+        assert llm.embed_query("кофе") is None
+    assert fake.calls == []
 
 
 def test_embed_query_wrong_dim_returns_none(tmp_path: Path) -> None:

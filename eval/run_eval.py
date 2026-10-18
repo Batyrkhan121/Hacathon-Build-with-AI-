@@ -703,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--mock", action="store_true", help="use web/mock/answer_sample.json")
     group.add_argument("--url", help="live API base URL, e.g. http://localhost:8000")
     ap.add_argument("--no-llm", action="store_true", help="send use_llm=false in every request")
+    ap.add_argument("--strict", action="store_true", help="exit nonzero if any scenario fails")
     ap.add_argument("--only", help="comma-separated scenario ids, e.g. S1,E3")
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent)
     ap.add_argument("--scenarios", type=Path, default=SCENARIOS_PATH)
@@ -757,7 +758,7 @@ def main(argv: list[str] | None = None) -> int:
     for n in notes:
         print(f"note: {n}")
     print(f"EVAL {mode}: {passed}/{len(results)} -> {args.out / 'report.md'}")
-    return 0
+    return 1 if args.strict and passed != len(results) else 0
 
 
 if __name__ == "__main__":

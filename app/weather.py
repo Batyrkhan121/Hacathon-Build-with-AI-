@@ -2,7 +2,7 @@
 
 GET https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..
     &current=temperature_2m,precipitation,wind_speed_10m,is_day&wind_speed_unit=ms
-- timeout 5 s, cache 15 min per rounded origin (2 decimals) in memory;
+- total provider budget 2 s, cache 15 min per rounded origin (2 decimals) in memory;
 - if `at` differs from now by more than 3 hours (demo "time machine") -> return None;
 - any failure -> None (the answer then says "погода неизвестна").
 outdoor_ok = temp >= -5 and precipitation < 0.5 and wind < 12 (tune later).
@@ -21,16 +21,17 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.hours import ASTANA_TZ
+from app.llm import provider_call
 from app.schemas import GeoPoint, Lang, WeatherInfo
 
 log = logging.getLogger(__name__)
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-TIMEOUT_S = 5.0
-ATTEMPTS = 2
+TIMEOUT_S = 2.0
+ATTEMPTS = 1
 RETRY_PAUSE_S = 0.5
 CACHE_TTL_S = 15 * 60
-FAILURE_TTL_S = 60  # while Open-Meteo is down, do not pay 2 x 5 s on every request
+FAILURE_TTL_S = 60  # while Open-Meteo is down, do not pay its timeout on every request
 MAX_SKEW = timedelta(hours=3)
 MIN_OUTDOOR_TEMP_C = -5.0
 MAX_OUTDOOR_PRECIP_MM = 0.5
@@ -51,7 +52,7 @@ def get_weather(origin: GeoPoint, at: datetime) -> WeatherInfo | None:
             ttl = CACHE_TTL_S if hit[1] is not None else FAILURE_TTL_S
             if time.monotonic() - hit[0] < ttl:
                 return hit[1]
-        info = _to_info(_fetch(*key))
+        info = _to_info(provider_call(lambda: _fetch(*key), TIMEOUT_S))
     except Exception as exc:  # noqa: BLE001 - weather is optional context
         log.warning("weather unavailable: %s", type(exc).__name__)
         info = None
