@@ -22,6 +22,7 @@ Notes:
   recommendations cannot starve /api/health. At most MAX_CONCURRENT_LLM requests use the LLM
   at once; the rest are answered on the deterministic path (fast, no quota) with a warning.
 - Request bodies on /api/* are capped at MAX_BODY_BYTES (413); a real request is < 2 KB.
+- Request validation errors return fixed metadata: raw input must not reach responses or logs.
 - An unexpected error in /api/recommend is logged by type and stack frames only: exception
   messages may contain the request body (query + cell), which must never reach the logs.
 """
@@ -40,7 +41,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.exceptions import ResponseValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -295,6 +296,17 @@ def create_app(deps: Deps | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     app.add_middleware(ApiGuard)
+
+    @app.exception_handler(RequestValidationError)
+    async def request_invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # input/ctx may contain private data or NaN; even loc/msg can echo user input.
+        # Do not serialize or log the errors themselves, or let their serialization fail.
+        log.warning("request validation failed (%d errors)", len(exc.errors()))
+        return JSONResponse(status_code=422, content={"detail": [{
+            "type": "request_validation",
+            "loc": ["body"],
+            "msg": "Неверный формат запроса.",
+        }]})
 
     @app.exception_handler(ResponseValidationError)
     async def response_invalid(request: Request, exc: ResponseValidationError) -> JSONResponse:
