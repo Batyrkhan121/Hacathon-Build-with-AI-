@@ -186,3 +186,117 @@ def test_coverage_meta_marks_a_partial_graph(tmp_path: Path) -> None:
     assert cov["tiles_loaded"] == ["walk_tile_1", "walk_tile_4"]
     assert cov["tiles_partial"] == ["walk_tile_1"] and len(cov["tiles_missing"]) == 7
     assert cov["covered_bboxes"][1] == [51.11, 71.35, 51.19, 71.5]  # the centre tile
+
+
+CROSSINGS = {
+    "osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"},
+    "elements": [
+        n(20, 0, 0), n(21, 0, 1), n(22, 0, 2), n(30, -1, 1), n(31, 1, 1), n(41, 1.5, 1),
+        n(42, 2, 1), n(50, 0, 3, highway="traffic_signals", crossing="traffic_signals"),
+        n(51, 0, 4), n(60, 0, 5, highway="crossing"), n(61, 0, 6),
+        w(200, [20, 21, 22], highway="residential"),
+        # the crossing type is only on the way: it goes to node 21 where the way meets the road
+        w(201, [30, 21, 31], highway="footway", footway="crossing", crossing="traffic_signals"),
+        # no road node: the middle node 41 becomes the crossing; markings=no -> unmarked
+        w(202, [31, 41, 42], highway="footway", footway="crossing", crossing="uncontrolled",
+          **{"crossing:markings": "no"}),
+        w(203, [22, 50, 51], highway="footway"),
+        # an untyped highway=crossing node takes the way's type
+        w(204, [51, 60, 61], highway="footway", footway="crossing", crossing="unmarked"),
+    ],
+}
+
+
+def test_crossing_type_from_way_tags_and_every_crossing_segment_ends_at_one() -> None:
+    graph, stats = build_graph([CROSSINGS])
+    flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
+    assert flags[21] == NODE_CROSSING | NODE_SIGNALS
+    assert flags[41] == NODE_CROSSING | NODE_UNMARKED
+    assert flags[50] == NODE_CROSSING | NODE_SIGNALS  # traffic_signals + crossing=traffic_signals
+    assert flags[60] == NODE_CROSSING | NODE_UNMARKED
+    assert flags[20] == flags[31] == 0
+    assert stats["crossings_from_way_tags"] == 3
+    for k in np.flatnonzero(graph.edge_flags & EDGE_CROSSING):
+        ends = graph.node_flags[graph.edge_u[k]] | graph.node_flags[graph.edge_v[k]]
+        assert ends & NODE_CROSSING, k
+
+
+@pytest.mark.parametrize("payload", [PAYLOAD, CROSSINGS])
+def test_edge_length_never_below_straight_line_of_stored_ends(payload: dict) -> None:
+    graph, _ = build_graph([payload])
+    la, lo = np.radians(graph.node_lat.astype(float)), np.radians(graph.node_lon.astype(float))
+    u, v = graph.edge_u, graph.edge_v
+    a = np.sin((la[v] - la[u]) / 2) ** 2 + np.cos(la[u]) * np.cos(la[v]) * np.sin(
+        (lo[v] - lo[u]) / 2) ** 2
+    straight = 2 * 6_371_000.0 * np.arcsin(np.sqrt(a))
+    assert (graph.edge_len_m.astype(float) >= straight).all()
+
+
+def test_meta_has_format_version_and_steps(built, tmp_path: Path) -> None:
+    graph, stats = built
+    meta = save_graph(graph, {}, {}, stats, tmp_path / "g.npz", tmp_path / "m.json",
+                      poi_total=0, landmark_total=0, osm_snapshot="2026-10-19")
+    assert meta["format_version"] == 1 and meta["steps"] == 1
+
+
+MORE_CROSSINGS = {
+    "osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"},
+    "elements": [
+        n(80, 0, 0), n(81, 0, 1), n(82, 2, 0), n(83, 2, 1),
+        n(90, 3, 1, highway="crossing", crossing="marked"), n(91, 4, 1), n(92, 5, 1),
+        n(93, 4, 2), n(94, 6, 1, highway="crossing", crossing="uncontrolled"), n(95, 7, 1),
+        n(96, 8, 1), n(97, 7, 0), n(98, 7, 2),
+        w(300, [80, 81], highway="footway"), w(301, [82, 83], highway="footway"),
+        # two nodes, no road, no crossing node: a new node in the middle carries the type
+        w(302, [81, 83], highway="footway", footway="crossing", crossing="traffic_signals"),
+        # 91-92 is the approach of a crossing whose node is 90: no crossing bit there
+        w(303, [83, 90, 91, 92], highway="footway", footway="crossing", crossing="marked"),
+        w(304, [91, 93], highway="footway"),
+        # a second carriageway (road through 95) of a crossing whose mapped node is 94
+        w(305, [92, 94, 95, 96], highway="footway", footway="crossing", crossing="uncontrolled"),
+        w(306, [97, 95, 98], highway="residential"),
+    ],
+}
+
+
+def test_new_middle_node_approach_segments_and_second_carriageway() -> None:
+    graph, stats = build_graph([MORE_CROSSINGS])
+    ids = graph.node_osm_id.tolist()
+    flags = dict(zip(ids, graph.node_flags.tolist(), strict=True))
+    new = [i for i in ids if i < 0]
+    assert len(new) == 1 and flags[new[0]] == NODE_CROSSING | NODE_SIGNALS
+    k = ids.index(new[0])
+    assert graph.node_lat[k] == pytest.approx(LAT0 + DLAT, abs=1e-6)  # between 81 and 83
+    assert stats["crossing_nodes_added"] == 1
+    assert flags[95] == NODE_CROSSING and flags[94] == NODE_CROSSING and flags[91] == 0
+    assert graph.edge_flags[edge_index(graph, 91, 92)] == EDGE_FOOTWAY
+    assert graph.edge_flags[edge_index(graph, 90, 91)] == EDGE_FOOTWAY | EDGE_CROSSING
+    assert stats["crossing_approach_segments"] == 1
+    for e in np.flatnonzero(graph.edge_flags & EDGE_CROSSING):
+        assert (graph.node_flags[graph.edge_u[e]] | graph.node_flags[graph.edge_v[e]]) & 1, e
+
+
+def test_meta_license_extent_and_size_check_keeps_previous_graph(
+    built, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pipeline.walk_graph as wg
+
+    graph, stats = built
+    npz, meta_path = tmp_path / "g.npz", tmp_path / "m.json"
+    meta = save_graph(graph, {}, {}, stats, npz, meta_path, poi_total=0, landmark_total=0,
+                      osm_snapshot="2026-10-19")
+    assert meta["license"].startswith("ODbL 1.0") and meta["nodes_outside_bbox"] == 0
+    s, w, n_, e = meta["nodes_bbox"]
+    assert 51.03 <= s <= n_ <= 51.27 and 71.2 <= w <= e <= 71.65
+    before = npz.read_bytes()
+    monkeypatch.setattr(wg, "MAX_FILE_BYTES", 10)
+    with pytest.raises(ValueError):
+        save_graph(graph, {}, {}, stats, npz, meta_path, poi_total=0, landmark_total=0,
+                   osm_snapshot="2026-10-19")
+    assert npz.read_bytes() == before and not list(tmp_path.glob("*.tmp.npz"))
+
+
+def test_server_timeout_below_the_http_client_timeout() -> None:
+    from pipeline.fetch_osm import TIMEOUT_S
+
+    assert f"[timeout:{int(TIMEOUT_S) - 10}]" in walk_query("51.03,71.35,51.11,71.5")
