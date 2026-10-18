@@ -39,7 +39,21 @@ function stopIcon(rank, ideaSource) {
 }
 
 // Ответ сервера: старт (context.origin), номерные места и мини-маршрут пунктиром (он приблизительный).
-export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel }) {
+// Подписи кнопок зума Leaflet на языке интерфейса (по умолчанию они английские).
+export function setZoomTitles(zoomIn, zoomOut) {
+  if (!map) return;
+  const set = (sel, text) => {
+    const a = map.getContainer().querySelector(sel);
+    if (a) {
+      a.title = text;
+      a.setAttribute('aria-label', text);
+    }
+  };
+  set('.leaflet-control-zoom-in', zoomIn);
+  set('.leaflet-control-zoom-out', zoomOut);
+}
+
+export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel, markerLabel }) {
   if (!map) return;
   clearAnswer();
   const pts = [];
@@ -65,12 +79,17 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
     const ll = [card.geo.lat, card.geo.lon];
     const marker = L.marker(ll, {
       icon: stopIcon(card.rank, card.idea_source),
-      title: `${card.rank}. ${card.title}`,
-      alt: `${card.rank}. ${card.title}`,
+      // Цвет метки (золото / лаванда) дублируем словами: «Данные POI» или «Идея ИИ».
+      title: markerLabel(card),
+      alt: markerLabel(card),
       riseOnHover: true,
     })
       .bindPopup(popupFor(card), { closeButton: false })
       .on('click', () => onSelect(card.rank))
+      // С клавиатуры Leaflet шлёт keypress (Enter открывает попап), а не click.
+      .on('keypress', (e) => {
+        if (e.originalEvent?.key === 'Enter' || e.originalEvent?.keyCode === 13) onSelect(card.rank);
+      })
       .addTo(answerLayer);
     stopMarkers.set(card.rank, marker);
     pts.push(ll);

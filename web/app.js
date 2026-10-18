@@ -3,17 +3,24 @@ import { t, getLang, setLang, applyI18n, onLangChange, formatNumber } from './i1
 import { fetchLandmarks, fetchMeta, recommend, isMock } from './api.js';
 import * as mapView from './map.js';
 import * as view from './render.js';
+import { astanaClock, atIso, shortDay } from './time.js';
 
 const PRESETS = [
   { id: 'S1', landmark: 'mega_silk_way', time: '15:00' },
   { id: 'S2', landmark: 'expo', time: '11:00' },
   { id: 'S3', landmark: 'khan_shatyr', time: '12:00', flags: { with_kids: true } },
   // S4: турист в центре (у аэропорта в данных почти пусто), сервер учитывает дорогу в NQZ.
-  { id: 'S4', landmark: 'baiterek', time: '16:00' },
-  { id: 'S5', landmark: 'baiterek', time: '23:30' },
+  { id: 'S4', landmark: 'baiterek', time: '16:00', flags: { tourist: true }, departure: 120 },
+  { id: 'S5', landmark: 'baiterek', time: '23:30', flags: { night: true } },
 ];
 const BUDGETS = [30, 60, 120];
-const FLAGS = ['with_kids', 'wheelchair', 'indoor_only', 'group'];
+// Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
+const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
+const FILTER_FLAGS = ['indoor_only'];
+const FLAGS = [...MODES, ...FILTER_FLAGS];
+const MODE_ICON = { tourist: '✈', night: '🌙', with_kids: '🧒', wheelchair: '♿', group: '👥' };
+const DEPARTURES = [90, 120, 180, 240]; // минут до вылета (контракт: 30–1440)
+const DEFAULT_DEPARTURE = 120;
 const GROUP_SIZE = 4; // «нас 3–5»
 const TIMES = [null, '10:00', '19:00', '23:30'];
 const DEFAULT_LANDMARK = 'expo';
@@ -26,8 +33,10 @@ const state = {
   location: { type: 'landmark', id: DEFAULT_LANDMARK },
   whereMsg: null, // { key, kind } — сообщение под «Где я»
   budget: null,
-  flags: { with_kids: false, wheelchair: false, indoor_only: false, group: false },
+  flags: Object.fromEntries(FLAGS.map((f) => [f, false])),
+  departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
+  day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
   inflight: null,
@@ -50,7 +59,11 @@ const els = {
   presets: $('presets'),
   budgetChips: $('budget-chips'),
   flagChips: $('flag-chips'),
+  modeChips: $('mode-chips'),
+  departure: $('departure'),
+  departureChips: $('departure-chips'),
   filterHint: $('filter-hint'),
+  dayChips: $('day-chips'),
   timeChips: $('time-chips'),
   timeInput: $('time-input'),
   results: $('results'),
@@ -63,21 +76,6 @@ const els = {
 };
 
 // ------------------------------------------------------------------ helpers
-
-function astanaNow() {
-  // Астана = UTC+5 круглый год; не зависим от часового пояса браузера.
-  return new Date(Date.now() + 5 * 3600 * 1000);
-}
-
-function astanaClock() {
-  return astanaNow().toISOString().slice(11, 16);
-}
-
-function atIso(time) {
-  if (!time) return null;
-  const date = astanaNow().toISOString().slice(0, 10);
-  return `${date}T${time}:00+05:00`;
-}
 
 function landmarkById(id) {
   return state.landmarks.find((l) => l.id === id) || null;
@@ -105,6 +103,14 @@ function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+// Название старта того запроса, на который пришёл ответ (форма к этому времени могла измениться).
+function requestOriginName() {
+  const loc = state.lastRequest?.location;
+  if (!loc) return '';
+  if (loc.h3_cell) return t('map.myArea');
+  return landmarkName(landmarkById(loc.landmark_id)) || loc.landmark_id;
+}
+
 function whereLabel() {
   if (state.location.type === 'cell') return t('map.myArea');
   return landmarkName(landmarkById(state.location.id)) || state.location.id;
@@ -121,10 +127,16 @@ function buildRequest(query, useLlm = true) {
   if (state.flags.wheelchair) overrides.wheelchair = true;
   if (state.flags.indoor_only) overrides.indoor_only = true;
   if (state.flags.group) overrides.group_size = GROUP_SIZE;
+  // Выключенный режим не шлём совсем (а не false): иначе он перебил бы то, что понял парсер.
+  if (state.flags.tourist) {
+    overrides.tourist = true;
+    overrides.departure_in_min = state.departure;
+  }
+  if (state.flags.night) overrides.night = true;
   return {
     query,
     location,
-    at: atIso(state.time),
+    at: atIso(state.time, state.day),
     lang: getLang(),
     overrides: Object.keys(overrides).length ? overrides : null,
     want_route: true,
@@ -160,7 +172,9 @@ async function submit({ useLlm = true } = {}) {
     state.lastAnswer = answer;
     state.lastError = null;
     renderAnswer();
-    setStatus(t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1) }));
+    setStatus(
+      t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1), n: answer.cards.length }),
+    );
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
     state.lastRequest = body;
@@ -221,6 +235,8 @@ function setStatus(text) {
 function showFormError(text) {
   els.formError.textContent = text;
   els.formError.hidden = !text;
+  if (text) els.query.setAttribute('aria-invalid', 'true');
+  else els.query.removeAttribute('aria-invalid');
 }
 
 function revealResults() {
@@ -237,6 +253,7 @@ function renderAnswer({ redrawMap = true } = {}) {
   view.renderAnswer(els.answer, answer, {
     request: state.lastRequest,
     meta: state.meta,
+    originName: requestOriginName(),
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
@@ -257,6 +274,8 @@ function renderAnswer({ redrawMap = true } = {}) {
     routeLabel: route
       ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
       : '',
+    markerLabel: (card) =>
+      `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
   });
 }
 
@@ -265,6 +284,11 @@ function renderError() {
     canRetryNoAi: state.lastRequest?.use_llm !== false,
     onRetry: () => submit({ useLlm: state.lastRequest?.use_llm !== false }),
     onRetryNoAi: () => submit({ useLlm: false }),
+    onShorten: () => {
+      els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+      els.query.focus();
+      els.query.select();
+    },
   });
 }
 
@@ -323,25 +347,52 @@ function renderChips() {
       }),
     ),
   );
-  els.flagChips.replaceChildren(
-    ...FLAGS.map((f) =>
-      chip(t(`flag.${f}`), state.flags[f], () => {
-        state.flags[f] = !state.flags[f];
+  const toggle = (f) => () => {
+    state.flags[f] = !state.flags[f];
+    filtersChanged();
+  };
+  els.flagChips.replaceChildren(...FILTER_FLAGS.map((f) => chip(t(`flag.${f}`), state.flags[f], toggle(f))));
+  els.modeChips.replaceChildren(
+    ...MODES.map((f) => {
+      const b = chip(t(`flag.${f}`), state.flags[f], toggle(f));
+      b.prepend(Object.assign(document.createElement('span'), { className: 'chip-icon', textContent: MODE_ICON[f] }));
+      b.firstChild.setAttribute('aria-hidden', 'true');
+      return b;
+    }),
+  );
+  els.departure.hidden = !state.flags.tourist;
+  els.departureChips.replaceChildren(
+    ...DEPARTURES.map((m) =>
+      chip(t(`departure.${m}`), state.departure === m, () => {
+        state.departure = m;
         filtersChanged();
       }),
     ),
   );
+  els.dayChips.replaceChildren(
+    ...[0, 1].map((d) =>
+      chip(`${t(d ? 'when.tomorrow' : 'when.today')} · ${shortDay(d)}`, state.day === d, () => {
+        state.day = d;
+        filtersChanged();
+      }),
+    ),
+  );
+  // «Сейчас» завтра = то же время суток, но следующего дня.
+  const nowLabel = state.day ? t('when.sameTime') : t('when.now');
   els.timeChips.replaceChildren(
     ...TIMES.map((time) =>
-      chip(time ? time : `${t('when.now')} · ${astanaClock()}`, state.time === time, () => {
+      chip(time ? time : `${nowLabel} · ${astanaClock()}`, state.time === time, () => {
         state.time = time;
         filtersChanged();
       }),
     ),
   );
   els.timeInput.value = state.time || '';
-  els.filterHint.hidden = !state.flags.wheelchair;
-  els.filterHint.textContent = state.flags.wheelchair ? t('hint.wheelchair') : '';
+  const hints = [];
+  if (state.flags.tourist) hints.push(t('hint.tourist'));
+  if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
+  els.filterHint.hidden = !hints.length;
+  els.filterHint.textContent = hints.join(' ');
 }
 
 function filtersChanged() {
@@ -496,7 +547,8 @@ function applyPreset(p) {
   autoGrow();
   state.budget = null;
   FLAGS.forEach((f) => (state.flags[f] = Boolean(p.flags?.[f])));
-  state.time = p.time;
+  state.departure = p.departure || DEFAULT_DEPARTURE;
+  state.time = p.time; // день (сегодня/завтра) пресет не трогает
   setLocation({ type: 'landmark', id: p.landmark });
   state.activePreset = p.id;
   renderChips();
@@ -567,6 +619,7 @@ function syncLangButtons() {
   document.querySelectorAll('.lang button').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.lang === getLang()));
   });
+  mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
 }
 
 function renderAll() {
@@ -581,6 +634,7 @@ async function init() {
   syncLangButtons();
   els.mockPill.hidden = !isMock;
   if (!mapView.initMap(document.getElementById('map'))) els.mapFallback.hidden = false;
+  mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
   if (!window.h3) {
     els.geoBtn.disabled = true;
     els.pickBtn.disabled = true;
