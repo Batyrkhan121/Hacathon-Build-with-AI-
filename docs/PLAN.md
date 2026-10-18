@@ -172,7 +172,7 @@
 
 | Дорожка | Файлы |
 |---|---|
-| DATA | `pipeline/walk_graph.py`, `data/processed/walk_graph.*`, `tests/test_pipeline_walk_graph.py` |
+| DATA (T93) | `pipeline/walk_graph.py`, `data/processed/walk_graph.*`, `tests/test_pipeline_walk_graph.py`; секция «Пешеходный граф» в `pipeline/report.py` и `data/processed/REPORT.md` (только чтение walk_graph_meta.json) |
 | T91, сессия в D:\core, ветка `feat/walkgraph` от main | `app/walkgraph.py`, `app/route.py`, маршрутная часть `app/pipeline.py`, `tests/test_{walkgraph,route}.py` и маршрутные тесты в `tests/test_pipeline.py` |
 | FEATURES | до вливания T91 не трогает `app/walkgraph.py`, `app/route.py` и `app/pipeline.py`; в остальном код-фриз |
 | POLISH | `web/**` |
