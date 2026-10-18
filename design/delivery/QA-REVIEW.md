@@ -63,3 +63,8 @@ node capture.cjs
 ### Интеграция search motion 03
 
 Проверены 3 языка, 360px/1440px, загрузка SVG, отсутствие overflow, reduced motion, отмена с ожиданием после неё (поздний результат не появляется), исчезновение следов после ответа. 7 дополнительных проверок без ошибок JavaScript. Базовые 33 UX-проверки прошли. Обновлён screens/09-loading.png. Проверка в Chrome с эмуляцией размеров, реальные устройства не использовались.
+
+
+### Route footsteps
+
+Chrome/Playwright: следы и SVG загружаются; zoom меняет размещение (5 → 14 следов); слой aria-hidden, без событий ввода; reduced motion отключает animation; mobile 390px без overflow; переход к home удаляет следы. Ошибок JavaScript нет. Просмотрены desktop/mobile screenshots.

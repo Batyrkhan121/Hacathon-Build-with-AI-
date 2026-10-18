@@ -12,6 +12,8 @@ let cellLayer;
 let answerLayer;
 let directLayer;
 let routeLine = null;
+let stepLayer;
+let stepPath = [];
 let originPoint = null;
 const stopMarkers = new Map(); // rank -> marker
 let pickHandler = null;
@@ -25,6 +27,11 @@ export function initMap(el) {
   cellLayer = L.layerGroup().addTo(map);
   answerLayer = L.layerGroup().addTo(map);
   directLayer = L.layerGroup().addTo(map);
+  map.createPane('routeSteps');
+  map.getPane('routeSteps').style.zIndex = '410';
+  map.getPane('routeSteps').style.pointerEvents = 'none';
+  stepLayer = L.layerGroup().addTo(map);
+  map.on('zoomend viewreset resize', drawRouteSteps);
   return true;
 }
 
@@ -73,6 +80,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
       lineCap: 'round',
     }).addTo(answerLayer);
     routeLine.bindTooltip(routeLabel, { sticky: true });
+    stepPath = latlngs;
     pts.push(...latlngs);
   }
   for (const card of answer.cards) {
@@ -96,6 +104,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   }
   if (pts.length) {
     map.fitBounds(L.latLngBounds(pts), { padding: [48, 48], maxZoom: 16, animate: !reducedMotion() });
+    drawRouteSteps();
   }
 }
 
@@ -103,6 +112,8 @@ export function clearAnswer() {
   answerLayer?.clearLayers();
   directLayer?.clearLayers();
   stopMarkers.clear();
+  stepPath = [];
+  stepLayer?.clearLayers();
   routeLine = null;
 }
 
@@ -132,6 +143,8 @@ export function showRoute(rank, directLabel) {
     lineCap: 'round',
   }).addTo(directLayer);
   line.bindTooltip(directLabel, { sticky: true });
+  stepPath = [originPoint, marker.getLatLng()];
+  drawRouteSteps();
   map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: !reducedMotion() });
 }
 
@@ -248,4 +261,39 @@ export function reducedMotion() {
 export function showLandmarkHints(landmarks) {
  if (!map || !window.L) return;
  for (const lm of landmarks) L.circleMarker([lm.geo.lat,lm.geo.lon],{radius:3,color:'#6b7280',weight:1,fillColor:'#ffffff',fillOpacity:1,interactive:false}).addTo(map);
+}
+
+// Decorative footsteps follow the approximate route; they never represent live location.
+// Space in screen pixels and rebuild on zoom, keeping both route ends and stops clear.
+function drawRouteSteps() {
+  stepLayer?.clearLayers();
+  if (!map || stepPath.length < 2) return;
+  const points = stepPath.map(p => map.project(L.latLng(p)));
+  const stops = [...stopMarkers.values()].map(m => map.project(m.getLatLng()));
+  if (originPoint) stops.push(map.project(L.latLng(originPoint)));
+  const segments = points.slice(1).map((p, i) => ({ a: points[i], b: p, length: points[i].distanceTo(p) }));
+  const total = segments.reduce((sum, s) => sum + s.length, 0);
+  if (total < 64) return;
+  const spacing = Math.max(32, total / 120);
+  let walked = 0, index = 0;
+  for (const segment of segments) {
+    if (segment.length < 1) continue;
+    const dx = (segment.b.x - segment.a.x) / segment.length;
+    const dy = (segment.b.y - segment.a.y) / segment.length;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    for (let d = spacing / 2; d < segment.length; d += spacing) {
+      const point = L.point(segment.a.x + dx * d, segment.a.y + dy * d);
+      if (stops.some(stop => stop.distanceTo(point) < 32)) continue;
+      const side = index++ % 2 ? 1 : -1;
+      const offset = point.add(L.point(-dy * 5 * side, dx * 5 * side));
+      const progress = (walked + d) / total;
+      const icon = L.divIcon({
+        className: 'route-step', iconSize: [12, 23], iconAnchor: [6, 11.5],
+        html: `<span style="transform:rotate(${angle}deg)"><img src="../assets/search-sole.svg" alt="" style="--step-delay:${(progress * 2.4).toFixed(3)}s;--step-side:${side}" width="10" height="21"></span>`,
+      });
+      const marker = L.marker(map.unproject(offset), { icon, pane: 'routeSteps', interactive: false, keyboard: false }).addTo(stepLayer);
+      marker.getElement()?.setAttribute('aria-hidden', 'true');
+    }
+    walked += segment.length;
+  }
 }
