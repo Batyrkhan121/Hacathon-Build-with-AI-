@@ -217,3 +217,44 @@ def test_amenities_and_addresses_are_rejected() -> None:
     assert clean_sentence("Уютное кафе с Wi-Fi и парковкой.") is None
     assert clean_sentence("Памятник стоит на проспекте Республики.") is None
     assert clean_sentence("Здание по ул. Бейбитшилик, д. 5.") is None
+
+
+def test_unanswered_places_are_counted(tmp_path: Path) -> None:
+    pois = [poi(130, 0.5), poi(131, 0.4), poi(132, 0.3)]
+
+    def partial(items: list[dict]) -> list[PlaceDescription]:  # one answer plus junk
+        return [PlaceDescription(poi_id="osm:node/130", text="Музей древних рукописей и печатей."),
+                PlaceDescription(poi_id="osm:node/999", text="Чужой.")]
+
+    out, note = llm_step(pois, None, tmp_path / "d.json", "m", describe=partial)
+    assert "Без ответа модели (отказ, пусто или чужие id): 2" in note
+    asked: list[str] = []
+    llm_step(pois, None, tmp_path / "d.json", "m",
+             describe=lambda items: asked.extend(i["poi_id"] for i in items) or [])
+    assert asked == ["osm:node/131", "osm:node/132"]  # unanswered ones are asked again
+
+
+def test_wikidata_cache_ttl_and_refresh(tmp_path: Path) -> None:
+    import json
+    import time
+
+    cache = tmp_path / "wd.json"
+    now = time.time()
+    cache.write_text(json.dumps({
+        "Q1": {"text": "", "at": now - 8 * 86400},  # empty and 8 days old: ask again
+        "Q2": {"text": "", "at": now - 86400},  # empty but fresh: keep
+        "Q3": "старый формат строкой",  # legacy entry: read as fresh
+    }), encoding="utf-8")
+    pois = [poi(1), poi(2), poi(3)]
+    qids = {"osm:node/1": "Q1", "osm:node/2": "Q2", "osm:node/3": "Q3"}
+    asked: list[list[str]] = []
+
+    def fetch(ids: list[str]) -> dict[str, str]:
+        asked.append(ids)
+        return {}
+
+    wikidata_step(pois, qids, cache, fetch=fetch)
+    assert asked == [["Q1"]]
+    asked.clear()
+    wikidata_step(pois, qids, cache, fetch=fetch, refresh=True)
+    assert asked == [["Q1", "Q2", "Q3"]]

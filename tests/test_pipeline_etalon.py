@@ -92,3 +92,14 @@ def test_missing_places_become_manual_pois_once() -> None:
     out2, outcome2 = apply_etalon(out, rows, "2026-10-18")
     assert [p.id for p in out2] == [p.id for p in out]
     assert "найдено в данных OSM 1 из 4" in headline(outcome2.results)
+
+
+def test_unknown_etalon_category_is_reported() -> None:
+    from pipeline.etalon import apply_etalon, render
+
+    rows = [{"name": "Новый музей", "lat": "51.1", "lon": "71.4", "category": "Музееей",
+             "source": "https://example.kz"}]
+    out, outcome = apply_etalon([], rows, "2026-10-18")
+    assert out[0].category == "other"
+    assert outcome.unknown_categories == [("Новый музей", "Музееей")]
+    assert "Категория не распознана" in render(outcome)

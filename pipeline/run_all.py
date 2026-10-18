@@ -39,6 +39,7 @@ def run(
     limit: int | None = None,
     deadline: str | None = None,
     force: bool = False,
+    skip_index: bool = False,
 ) -> list[str]:
     """Returns the notes that went into REPORT.md."""
     settings = get_settings()
@@ -64,6 +65,15 @@ def run(
     pois = normalize.finalize(
         normalize.normalize_payloads(normalize.load_payloads(paths), stats),
         normalize.load_landmarks(settings.landmarks_path),
+    )
+    wheelchair = stats.get("wheelchair_other") or {}
+    notes.append(
+        "Нормализация не взяла: без имени (кроме площадок) "
+        f"{stats.get('unnamed', 0)}, без координат {stats.get('no_point', 0)}, вне наших "
+        f"категорий {stats.get('no_category', 0)}; склеено дублей {stats.get('duplicates', 0)}; "
+        "нестандартный wheelchair → unknown: "
+        + (", ".join(f"{v} ×{n}" for v, n in sorted(wheelchair.items())) or "нет")
+        + "."
     )
     if stats.get("stale"):
         former = stats.get("stale_pois") or []
@@ -99,16 +109,28 @@ def run(
     else:
         try:
             enrich = importlib.import_module("pipeline.enrich")
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if exc.name != "pipeline.enrich":
+                raise  # a dependency inside enrich is missing: that is a real error
             notes.append("Обогащение описаниями ещё не подключено (pipeline/enrich.py).")
         else:
-            notes.extend(enrich.run(limit=limit))
+            # the area decides which raw chunks give OSM wikidata tags
+            notes.extend(enrich.run(limit=limit, area=area))
             pois = load_pois()
 
-    idx = build_index.build_index(pois, settings.index_dir)
-    log.info("index: %s (%s)", idx.status, idx.reason)
-    if idx.status == "skipped":
-        notes.append(f"Индекс пропущен: {idx.reason}.")
+    if skip_index:
+        # no embedding calls (e.g. the Gemini quota is saved for live queries); an index
+        # that no longer matches poi.jsonl is flagged instead of being trusted silently
+        if "устарел" in build_index.index_status(settings.index_dir, pois):
+            build_index.mark_stale(
+                settings.index_dir, "пересборка отложена (--skip-index), данные изменились"
+            )
+        notes.append("Индекс не пересобирался (--skip-index).")
+    else:
+        idx = build_index.build_index(pois, settings.index_dir)
+        log.info("index: %s (%s)", idx.status, idx.reason)
+        if idx.status == "skipped":
+            notes.append(f"Индекс пропущен: {idx.reason}.")
 
     out = report.write_report(area, notes=notes)
     log.info("report -> %s; total %.0f s", out, time.time() - started)
@@ -123,6 +145,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--limit", type=int, default=None, help="top-N POI for LLM descriptions")
     parser.add_argument("--deadline", default=None, help="HH:MM: stop retrying tiles after it")
     parser.add_argument("--force", action="store_true", help="ignore the 24 h raw cache")
+    parser.add_argument("--skip-index", action="store_true", help="no embedding requests")
     args = parser.parse_args(argv)
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -133,6 +156,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         limit=args.limit,
         deadline=args.deadline,
         force=args.force,
+        skip_index=args.skip_index,
     )
     for note in notes:
         print("NOTE", note)

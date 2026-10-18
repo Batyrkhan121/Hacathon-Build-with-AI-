@@ -105,3 +105,41 @@ def test_daily_quota_is_not_retried_and_reported_briefly(tmp_path: Path) -> None
     assert calls == [1]
     assert res.status == "skipped" and "дневная квота Gemini" in res.reason
     assert "без вектора 1 текстов" in res.reason and "{" not in res.reason
+
+
+def test_failed_rebuild_marks_the_old_index_stale(tmp_path: Path) -> None:
+    import hashlib
+
+    pois = [make_poi(i) for i in range(3)]
+    index = tmp_path / "index"
+    build_index(pois, index, embed=fake_embedder([]), cache_path=tmp_path / "c.npz",
+                model="fake", dim=4)
+    meta = json.loads((index / "meta.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "ok" and meta["count"] == 3
+    ids_hash = hashlib.sha256("\n".join(p.id for p in pois).encode("utf-8")).hexdigest()
+    assert meta["ids_sha256"] == ids_hash and meta["docs_sha256"]
+
+    def broken(batch: list[str]) -> list[list[float]]:
+        raise RuntimeError("network down")
+
+    more = [*pois, make_poi(9)]
+    res = build_index(more, index, embed=broken, cache_path=tmp_path / "c.npz",
+                      model="fake", dim=4)
+    assert res.status == "skipped"
+    meta = json.loads((index / "meta.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "stale" and "network down" in meta["stale_reason"]
+    assert meta["count"] == 3  # the old index is kept for lexical+semantic fallback, but flagged
+    status = index_status(index, more)
+    assert "устарел" in status and "не пересобран (" in status and "network down" in status
+
+
+def test_zero_vector_fails_loudly(tmp_path: Path) -> None:
+    import pytest
+
+    def zeros(batch: list[str]) -> list[list[float]]:
+        return [[0.0, 0.0, 0.0, 0.0] for _ in batch]
+
+    with pytest.raises(ValueError, match="нулевой"):
+        build_index([make_poi(1)], tmp_path / "index", embed=zeros,
+                    cache_path=tmp_path / "c.npz", model="fake", dim=4)
+    assert not (tmp_path / "index" / "meta.json").exists()

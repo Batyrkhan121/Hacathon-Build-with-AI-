@@ -49,3 +49,15 @@ def test_report_warns_about_partial_chunks() -> None:
     cut = PAYLOAD | {"remark": "runtime error: Query timed out"}
     text = build_report(normalize_payload(cut), [cut], LANDMARKS)
     assert "Неполные ответы Overpass (remark): zone_test" in text
+
+
+def test_report_states_age_of_oldest_chunk_and_mall_outlines() -> None:
+    old = PAYLOAD | {"qadam": PAYLOAD["qadam"] | {"chunk": "zone_old",
+                                                   "fetched_at_unix": 1792314269 - 3 * 86400}}
+    when = datetime.fromtimestamp(1792314269 + 2 * 3600, ASTANA_TZ)
+    text = build_report(normalize_payload(PAYLOAD), [PAYLOAD, old], LANDMARKS,
+                        generated_at=when, outlines_meta={"fetched_at_unix": 1792314269})
+    assert "самый старый кусок zone_old" in text and "(74 ч назад)" in text
+    assert "Контуры ТРЦ: скачаны" in text and "(2 ч назад)" in text
+    none = build_report(normalize_payload(PAYLOAD), [PAYLOAD], LANDMARKS, generated_at=when)
+    assert "Контуры ТРЦ: не скачаны" in none

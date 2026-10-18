@@ -22,7 +22,14 @@ from app.config import get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
 from pipeline.fetch_osm import area_chunks, is_partial
-from pipeline.normalize import fetched_date, haversine_m, load_payloads, osm_base, raw_files
+from pipeline.normalize import (
+    fetched_date,
+    haversine_m,
+    load_outlines,
+    load_payloads,
+    osm_base,
+    raw_files,
+)
 
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
@@ -61,11 +68,20 @@ def build_report(
     missing_chunks: Sequence[str] | None = None,
     notes: Sequence[str] = (),
     generated_at: datetime | None = None,
+    outlines_meta: Mapping | None = None,
 ) -> str:
-    """`missing_chunks`: city tiles not on disk; None when the build is not the whole city."""
+    """`missing_chunks`: city tiles not on disk; None when the build is not the whole city.
+    `outlines_meta`: the `qadam` block of data/raw/osm_mall_outlines.json, if any."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
-    when = (generated_at or datetime.now(ASTANA_TZ)).strftime("%Y-%m-%d %H:%M (UTC+5)")
+    now = generated_at or datetime.now(ASTANA_TZ)
+    when = now.strftime("%Y-%m-%d %H:%M (UTC+5)")
+
+    def age(stamp: float) -> str:
+        at = datetime.fromtimestamp(stamp, ASTANA_TZ)
+        hours = int((now - at).total_seconds() // 3600)
+        return f"{at.strftime('%Y-%m-%d %H:%M')} ({hours} ч назад)"
+
     metas = [p.get("qadam", {}) for p in payloads]
     endpoints = Counter(m.get("endpoint", "?") for m in metas)
     stamps = [m["fetched_at_unix"] for m in metas if m.get("fetched_at_unix")]
@@ -90,6 +106,18 @@ def build_report(
         lo = datetime.fromtimestamp(min(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
         hi = datetime.fromtimestamp(max(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
         lines.append(f"- Время выгрузки: {lo} … {hi} (UTC+5).")
+        oldest = min((m for m in metas if m.get("fetched_at_unix")),
+                     key=lambda m: m["fetched_at_unix"])
+        lines.append(
+            f"- Возраст данных: самый старый кусок {oldest.get('chunk') or oldest.get('area')} "
+            f"скачан {age(oldest['fetched_at_unix'])}; при сбое выгрузки берутся файлы с диска."
+        )
+    outline_stamp = (outlines_meta or {}).get("fetched_at_unix")
+    lines.append(
+        f"- Контуры ТРЦ: скачаны {age(outline_stamp)}."
+        if outline_stamp
+        else "- Контуры ТРЦ: не скачаны — проверка «внутри ТРЦ» (indoor) не работала."
+    )
     lines.append(
         "- Зеркала Overpass: " + ", ".join(f"{u} ({c})" for u, c in endpoints.most_common()) + "."
     )
@@ -230,7 +258,11 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
     missing = missing_astana_chunks(raw_dir) if area == "astana" else None
     all_notes = [*notes, index_status(settings.index_dir, pois)]
     out = out or settings.poi_path.parent / "REPORT.md"
-    text = build_report(pois, payloads, landmarks, missing_chunks=missing, notes=all_notes)
+    outlines = load_outlines(raw_dir) if area != "fixture" else None
+    text = build_report(
+        pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
+        outlines_meta=(outlines or {}).get("qadam"),
+    )
     out.write_text(text, encoding="utf-8")
     return out
 
