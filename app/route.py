@@ -22,6 +22,7 @@ route exactly as before (path_source="straight").
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import Counter
 from collections.abc import Set as AbstractSet
@@ -30,6 +31,8 @@ from itertools import combinations, permutations
 from app import walkgraph
 from app.geo import haversine_m, walk_minutes
 from app.schemas import Candidate, GeoPoint, Lang, MiniRoute, RouteCrossing, RouteLeg
+
+log = logging.getLogger(__name__)
 
 DEFAULT_VISIT_MIN = 20  # when the card has no estimate for a stop
 MAX_ROUTE_STOPS = 3  # MiniRoute.stop_ids allows at most 3
@@ -281,7 +284,29 @@ def _plan_on_graph(
     origin_landmark: str | None,
     note: str,
 ) -> MiniRoute | None:
-    """plan_route on the graph; None (-> straight route) on any failure."""
+    """plan_route on the graph; None (-> straight route) on any failure, a bug included."""
+    try:
+        return _plan_on_graph_unsafe(origin, stops, budget_min, visit_min, max_stops, loop=loop,
+                                     graph=graph, mode=mode, origin_landmark=origin_landmark,
+                                     note=note)
+    except Exception as exc:  # noqa: BLE001 - the straight route is always there
+        log.error("walk graph route failed (%s): straight segments", type(exc).__name__)
+        return None
+
+
+def _plan_on_graph_unsafe(
+    origin: GeoPoint,
+    stops: list[Candidate],
+    budget_min: int | None,
+    visit_min: dict[str, int],
+    max_stops: int,
+    *,
+    loop: bool,
+    graph: walkgraph.WalkGraph,
+    mode: walkgraph.Mode,
+    origin_landmark: str | None,
+    note: str,
+) -> MiniRoute | None:
     unique: list[Candidate] = []
     for cand in stops:
         if all(cand.poi.id != u.poi.id for u in unique):
@@ -311,7 +336,24 @@ def _fit_walk_on_graph(
     origin_landmark: str | None,
 ) -> list[Candidate] | None:
     """The picked walk checked with graph minutes: drop the lowest-scored stop until it fits.
-    None (-> keep the straight pick) when the graph fails."""
+    None (-> keep the straight pick) when the graph fails, a bug included."""
+    try:
+        return _fit_walk_on_graph_unsafe(origin, picked, budget_min, loop, graph, mode,
+                                         origin_landmark)
+    except Exception as exc:  # noqa: BLE001 - the straight pick is always there
+        log.error("walk graph check of the walk failed (%s): straight pick", type(exc).__name__)
+        return None
+
+
+def _fit_walk_on_graph_unsafe(
+    origin: GeoPoint,
+    picked: list[Candidate],
+    budget_min: int,
+    loop: bool,
+    graph: walkgraph.WalkGraph,
+    mode: walkgraph.Mode,
+    origin_landmark: str | None,
+) -> list[Candidate] | None:
     deadline = time.perf_counter() + walkgraph.ROUTE_LIMIT_S
     visits = {c.poi.id: walk_visit_minutes(c) for c in picked}
     current = list(picked)

@@ -322,9 +322,9 @@ def test_budget_is_checked_with_graph_minutes(tmp_path) -> None:  # type: ignore
     g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
     east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
     visits = {"test:poi/east": 10, "test:poi/north": 10}
-    straight = plan_route(at(0, -5), [east, north], 29, visits)
-    assert straight is not None and len(straight.stop_ids) == 2  # straight: 25 of 29 min
-    graph = plan_route(at(0, -5), [east, north], 29, visits, graph=g)
+    straight = plan_route(at(0, -5), [east, north], 27, visits)
+    assert straight is not None and len(straight.stop_ids) == 2  # straight: 25 of 27 min
+    graph = plan_route(at(0, -5), [east, north], 27, visits, graph=g)  # graph: 28 min
     assert graph is not None and graph.path_source == "graph"
     assert graph.stop_ids == ["test:poi/east"]  # by the graph the 2nd stop breaks the budget
 
@@ -333,7 +333,7 @@ def test_plan_walk_checks_the_budget_on_the_graph(tmp_path) -> None:  # type: ig
     g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
     east = cand_at("east", at(200, -5), score=0.9)
     north = cand_at("north", at(0, 135), score=0.5)  # 100 m north of the far sidewalk
-    budget = 55  # straight loop 52 min, on the graph 56 min
+    budget = 52  # two stops: straight loop 52 min, on the graph 53 min
     by_line = plan_walk(at(0, -5), [east, north], budget)
     on_graph = plan_walk(at(0, -5), [east, north], budget, graph=g)
     assert len(by_line) == 2
@@ -346,3 +346,24 @@ def test_graph_note_languages() -> None:
         graph = route_note(lang, graph=True)
         assert graph != straight and "OSM" in graph
     assert "лестниц" in route_note("ru", graph=True, wheelchair=True)
+
+
+
+def test_graph_search_crash_gives_exactly_the_straight_route(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from app.walkgraph import WalkGraph
+
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
+    visits = {"test:poi/east": 10, "test:poi/north": 10}
+
+    def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("bug in the search")
+
+    monkeypatch.setattr(WalkGraph, "_search", boom)
+    on_graph = plan_route(at(0, -5), [east, north], 27, visits, graph=g)
+    plain = plan_route(at(0, -5), [east, north], 27, visits)
+    assert on_graph == plain and on_graph is not None and on_graph.path_source == "straight"
+    walk = plan_walk(at(0, -5), [east, north], 55, graph=g)
+    assert [c.poi.id for c in walk] == [c.poi.id for c in plan_walk(at(0, -5), [east, north], 55)]

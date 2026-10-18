@@ -143,6 +143,8 @@ TEXTS: dict[str, dict[str, str]] = {
                    "поблизости.",
         "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
         "no_match": "Точного совпадения по запросу нет — показано, что есть рядом.",
+        "graph_over_limit": "По тротуарам до мест дольше {v} мин пешком — показаны "
+                            "ближайшие из найденных.",
         "airport_plan": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
                         "{res} мин — на прогулку {w} мин. Выезжайте в аэропорт не позже {hhmm}.",
         "airport_now": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
@@ -211,6 +213,8 @@ TEXTS: dict[str, dict[str, str]] = {
                    "көрсетілді.",
         "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
         "no_match": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
+        "graph_over_limit": "Тротуарлармен орындарға дейін {v} минуттан ұзақ жаяу — "
+                            "табылғандардың ең жақындары көрсетілді.",
         "airport_plan": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
                         "қор — серуенге {w} мин. Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
         "airport_now": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
@@ -272,6 +276,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
         "sparse": "Few places nearby in the open data ({n}) — a short list.",
         "no_match": "No exact match for your request — showing what is nearby.",
+        "graph_over_limit": "Along the footways the places are over {v} min on foot — "
+                            "the nearest found are shown.",
         "airport_plan": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
                         "{res}-min reserve leaves {w} min for a walk. Leave for the airport no "
                         "later than {hhmm}.",
@@ -624,11 +630,18 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             gen_candidates = picked + [c for c in candidates if c not in picked
                                        and route.walk_eligible(c, wanted)]
 
-    # T91: minutes on the cards of the places that may be shown come from the graph too
-    # (ranking is untouched: it already happened with the straight estimate)
+    # T91: distance and minutes on the cards of the places that may be shown come from the
+    # graph too, both of them (ranking is untouched: it happened with the straight estimate);
+    # the walking limit (max_walk_min, transport hub) is then checked with the graph minutes
     if graph is not None and gen_candidates:
         gen_candidates = _graph_minutes(graph, ctx, gen_candidates, search_intent, walk_mode,
                                         request_id)
+        within = [c for c in gen_candidates
+                  if not plan_intent.max_walk_min or c.walk_min <= plan_intent.max_walk_min]
+        if within:
+            gen_candidates = within
+        else:
+            warn.append(t["graph_over_limit"].format(v=plan_intent.max_walk_min))
 
     # 6. cards
     cards: list[Card] = []
@@ -1042,8 +1055,10 @@ def _graph_minutes(
     mode: walkgraph.Mode,
     request_id: str,
 ) -> list[Candidate]:
-    """walk_min of these candidates by the graph (one search from the start) and their
-    reasons («≈N мин пешком») rebuilt to match; any problem -> the straight minutes."""
+    """distance_m and walk_min of these candidates along the graph (one search from the
+    start), their reasons («≈N мин пешком») rebuilt to match. A card shows both values from
+    the same source: where the graph is not usable for a place (lengths_from leaves it out)
+    both stay straight. Any problem -> the straight values."""
     try:
         lengths = graph.lengths_from(ctx.origin, {c.poi.id: c.poi.geo for c in candidates},
                                      mode, origin_landmark=ctx.landmark_id)
@@ -1054,7 +1069,7 @@ def _graph_minutes(
                 out.append(cand)
                 continue
             minutes = max(1, math.ceil(metres / walkgraph.WALK_M_PER_MIN - 1e-9))
-            moved = cand.model_copy(update={"walk_min": minutes})
+            moved = cand.model_copy(update={"walk_min": minutes, "distance_m": round(metres)})
             moved.matched = retrieval.explain(moved, intent, ctx)
             out.append(moved)
         return out

@@ -14,6 +14,10 @@ docs/ARCHITECTURE.md §5 (built by DATA, pipeline/walk_graph.py). Only numpy and
 - These weights only choose the path. Minutes shown to the user are the length at 75 m/min:
   walk_min = ceil(length / 75), minimum 1 (docs/ARCHITECTURE.md §5).
 - One route (all its legs) gets ROUTE_LIMIT_S; past it the search gives up (None).
+- A leg falls back to the straight segment (minutes x1.3, as before) when the graph only
+  adds its binding links (straight <= link_a + link_b: both points hang on the same far
+  node) or makes an absurd detour (> DETOUR_MAX_X x straight + DETOUR_MAX_ADD_M). Review
+  on the real graph: «Chaplin 71 м · 9 мин», Хан Шатыр -> Fame City (3 м) = 165 м.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.geo import haversine_m
+from app.geo import haversine_m, walk_minutes
 from app.schemas import GeoPoint
 
 log = logging.getLogger(__name__)
@@ -45,6 +49,8 @@ MAJOR_ROAD_X = 1.3
 UNLIT_NIGHT_X = 1.5
 CROSSING_S: dict[str, float] = {"signals": 20.0, "marked": 10.0, "unmarked": 40.0}
 UNMARKED_CAREFUL_S = 60.0  # in a wheelchair or with kids
+DETOUR_MAX_X = 3.0  # graph longer than 3 x straight + 200 m -> the straight segment
+DETOUR_MAX_ADD_M = 200.0
 
 NODE_CROSSING, NODE_SIGNALS, NODE_LOWERED_KERB, NODE_UNMARKED = 1, 2, 4, 8
 EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING = 1, 2, 4, 8, 16
@@ -90,10 +96,26 @@ class GraphPath:
     cost_s: float  # search cost with penalties (not shown to the user)
     crossings: list[Crossing]
     steps: int  # stair edges on the path
+    straight: bool = False  # a straight segment instead of the graph (see the module doc)
 
     @property
     def walk_min(self) -> int:
+        if self.straight:  # the same rule as a straight route: x1.3 detour factor
+            return walk_minutes(self.length_m)
         return max(1, math.ceil(self.length_m / WALK_M_PER_MIN - 1e-9))
+
+
+def graph_beats_straight(direct_m: float, graph_m: float, links_m: float) -> bool:
+    """Use the graph length only when it is a real path, not a binding artefact or a detour."""
+    if direct_m <= links_m:  # both points hang on far nodes: the graph adds only the links
+        return False
+    return graph_m <= DETOUR_MAX_X * direct_m + DETOUR_MAX_ADD_M
+
+
+def straight_path(a: GeoPoint, b: GeoPoint) -> GraphPath:
+    direct = haversine_m(a, b)
+    return GraphPath(points=[(a.lat, a.lon), (b.lat, b.lon)], length_m=direct,
+                     cost_s=direct / SPEED_M_S, crossings=[], steps=0, straight=True)
 
 
 def crossing_kind(flags: int) -> str | None:
@@ -327,8 +349,15 @@ class WalkGraph:
         na, nb = self._bind(a, *a_ref), self._bind(b, *b_ref)
         if na is None or nb is None:
             return None
+        direct = haversine_m(a, b)
+        links = haversine_m(a, self.point(na)) + haversine_m(self.point(nb), b)
+        if direct <= links:  # no need to search: the graph would only add the two links
+            return straight_path(a, b)
         found = self._search(na, nb, mode, deadline)
-        return None if found is None else self._path(a, b, na, nb, found)
+        if found is None:
+            return None
+        path = self._path(a, b, na, nb, found)
+        return path if graph_beats_straight(direct, path.length_m, links) else straight_path(a, b)
 
     # ------------------------------------------------------------ public
 
@@ -390,7 +419,9 @@ class WalkGraph:
     ) -> dict[str, float]:
         """Walking length (m) from origin to each target (keys are POI ids) in one search.
 
-        Targets that cannot be bound or reached are left out; over the time limit -> {}.
+        Targets that cannot be bound or reached are left out, and so are those where the graph
+        is only a binding artefact or an absurd detour (graph_beats_straight): the caller keeps
+        the straight estimate for them. Over the time limit -> {}.
         """
         start = self._bind(origin, None, origin_landmark)
         if start is None or not targets:
@@ -420,7 +451,11 @@ class WalkGraph:
             if v in left:
                 left.discard(v)
                 for key in goal_of[v]:
-                    out[key] = link0 + length[v] + haversine_m(self.point(v), targets[key])
+                    link_t = haversine_m(self.point(v), targets[key])
+                    metres = link0 + length[v] + link_t
+                    if graph_beats_straight(haversine_m(origin, targets[key]), metres,
+                                            link0 + link_t):
+                        out[key] = metres
             pops += 1
             if pops % _CHECK_EVERY == 0 and time.perf_counter() > deadline:
                 log.warning("walk graph: card times over %.0f ms, straight", limit_s * 1000)

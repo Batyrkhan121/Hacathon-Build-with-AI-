@@ -70,16 +70,16 @@ def graph(tmp_path: Path, nodes, edges, **kw) -> WalkGraph:  # type: ignore[no-u
     return g
 
 
-# A road between two sidewalks (y=0 and y=30); the only way across is at x=200.
+# A road between two sidewalks (y=0 and y=30); the only way across is at x=100.
 STREET = {
     "S0": (0, 0, 0), "S1": (100, 0, 0), "S2": (200, 0, 0),
     "N0": (0, 30, 0), "N1": (100, 30, 0), "N2": (200, 30, 0),
-    "C": (200, 15, CROSSING | SIGNALS),
+    "C": (100, 15, CROSSING | SIGNALS),
 }
 STREET_EDGES = [
     ("S0", "S1", FOOTWAY | LIT), ("S1", "S2", FOOTWAY | LIT),
     ("N0", "N1", FOOTWAY | LIT), ("N1", "N2", FOOTWAY | LIT),
-    ("S2", "C", CROSS_SEG | LIT), ("C", "N2", CROSS_SEG | LIT),
+    ("S1", "C", CROSS_SEG | LIT), ("C", "N1", CROSS_SEG | LIT),
 ]
 
 
@@ -90,7 +90,7 @@ def test_path_goes_round_a_road_without_a_crossing(tmp_path: Path) -> None:
     g = graph(tmp_path, STREET, STREET_EDGES)
     path = g.route(at(0, -5), at(0, 35))
     assert path is not None
-    assert path.length_m == pytest.approx(5 + 200 + 30 + 200 + 5, abs=2)
+    assert path.length_m == pytest.approx(5 + 100 + 30 + 100 + 5, abs=2)
     assert [c.kind for c in path.crossings] == ["signals"]
     assert path.points[0] == pytest.approx((at(0, -5).lat, at(0, -5).lon))
     assert path.points[-1] == pytest.approx((at(0, 35).lat, at(0, 35).lon))
@@ -223,6 +223,30 @@ def test_loaded_once(tmp_path: Path) -> None:
     assert load_graph(path) is load_graph(path)
 
 
+# ---------------------------------------- review BLOCK: binding far, points near
+
+
+def test_near_points_bound_far_away_get_the_straight_leg(tmp_path: Path) -> None:
+    """Two places 3 m apart bound to one node 80 m away: ≈3 m, not ≈160 m (E4 Fame City)."""
+    g = graph(tmp_path, {"A": (0, 0, 0), "B": (500, 0, 0)}, [("A", "B", FOOTWAY)])
+    path = g.route(at(80, 0), at(80, 3))
+    assert path is not None
+    assert path.length_m == pytest.approx(3, abs=0.5)
+    assert path.straight and path.walk_min == 1 and path.crossings == []
+    assert "x" not in g.lengths_from(at(80, 0), {"x": at(80, 3)})  # card keeps the straight
+
+
+def test_detour_over_three_times_plus_200_m_gets_the_straight_leg(tmp_path: Path) -> None:
+    nodes = {"A": (0, 0, 0), "A2": (0, 600, 0), "B2": (60, 600, 0), "B": (60, 0, 0)}
+    edges = [("A", "A2", FOOTWAY), ("A2", "B2", FOOTWAY), ("B2", "B", FOOTWAY)]
+    g = graph(tmp_path, nodes, edges)  # graph 1260 m > 3 x 60 + 200 = 380 m
+    path = g.route(at(0, 0), at(60, 0))
+    assert path is not None and path.straight
+    assert path.length_m == pytest.approx(60, abs=1)
+    assert path.walk_min == 2  # the straight rule: ceil(60 x 1.3 / 75)
+    assert "b" not in g.lengths_from(at(0, 0), {"b": at(60, 0)})
+
+
 # ------------------------------------------------------- legs and many targets
 
 
@@ -238,7 +262,7 @@ def test_lengths_from_one_search(tmp_path: Path) -> None:
     g = graph(tmp_path, STREET, STREET_EDGES)
     lengths = g.lengths_from(at(0, -5), {"a": at(200, -5), "b": at(0, 35), "far": at(0, -400)})
     assert lengths["a"] == pytest.approx(5 + 200 + 5, abs=2)
-    assert lengths["b"] == pytest.approx(440, abs=3)
+    assert lengths["b"] == pytest.approx(240, abs=3)
     assert "far" not in lengths  # cannot be snapped: the caller keeps the straight estimate
 
 
@@ -253,14 +277,18 @@ def test_real_graph_median_route_under_100_ms() -> None:
     g = load_graph(REAL)
     assert g is not None
     rng = np.random.default_rng(19)
-    nodes = rng.choice(len(g.node_lat), size=60, replace=False)
+    lat, lon = g.node_lat, g.node_lon
+    kx = M_PER_DEG * math.cos(math.radians(float(lat.mean())))
     times = []
-    for a, b in zip(nodes[::2], nodes[1::2], strict=True):
-        start, end = g.point(int(a)), g.point(int(b))
-        if math.dist((start.lat, start.lon), (end.lat, end.lon)) * M_PER_DEG > 2500:
-            continue  # card / route distances are within the 2.5 km search radius
+    for a in rng.choice(len(lat), size=40, replace=False):
+        # the second point near the first: card / route distances are 0.3-2 km
+        d = np.hypot((lat - lat[a]) * M_PER_DEG, (lon - lon[a]) * kx)
+        near = np.flatnonzero((d >= 300) & (d <= 2000))
+        if not len(near):
+            continue
+        b = int(rng.choice(near))
         t0 = time.perf_counter()
-        g.route(start, end)
+        g.route(g.point(int(a)), g.point(b))
         times.append(time.perf_counter() - t0)
-    assert times
+    assert len(times) >= 20
     assert statistics.median(times) < 0.1
