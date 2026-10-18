@@ -25,6 +25,10 @@ from app.schemas import Candidate, DraftResponse, QueryIntent, SearchContext
 
 PROMPT_NAME = "generate_cards"
 MAX_DESCRIPTION_CHARS = 300
+# Placeholder names the DATA lane gives to unnamed OSM objects (110 of 111 playgrounds):
+# the model must describe such a place by type + distance, not by a made-up name.
+GENERIC_NAMES = frozenset({"детская площадка", "площадка", "кафе", "cafe", "столовая", "парк",
+                           "сквер", "playground"})
 LANG_NAMES = {"ru": "ru (русский)", "kk": "kk (қазақ тілі, казахский)", "en": "en (English)"}
 WEEKDAYS_RU = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
@@ -109,13 +113,15 @@ def _candidate_view(c: Candidate, intent: QueryIntent) -> dict[str, Any]:
         "hours_note": c.hours.note,
         "hours_confidence": c.hours.confidence,
     }
+    if poi.name.strip().lower() in GENERIC_NAMES and not poi.name_i18n:
+        view["name_is_generic"] = True
     if c.hours.closes_in_min is not None:
         view["closes_in_min"] = c.hours.closes_in_min
     if poi.description:
         view["description"] = poi.description[:MAX_DESCRIPTION_CHARS]
         view["description_source"] = poi.description_source or "unknown"
-    if poi.wheelchair != "unknown":
-        view["wheelchair"] = poi.wheelchair
+    if poi.wheelchair != "unknown" or intent.wheelchair:
+        view["wheelchair"] = poi.wheelchair  # "unknown" matters when access was asked for
     if poi.kids_friendly is not None:
         view["kids_friendly"] = poi.kids_friendly
     if poi.indoor is not None:

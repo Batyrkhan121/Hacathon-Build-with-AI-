@@ -21,6 +21,7 @@ import pytest
 
 from app import geo, hours, retrieval, route, validate, weather
 from app.config import Settings, get_settings
+from app.generate import build_prompt
 from app.llm import LLMUnavailable
 from app.pipeline import Deps, InvalidRequest, UnknownLandmarkError, recommend
 from app.schemas import (
@@ -455,3 +456,58 @@ def test_real_core_if_implemented(deps: Deps, monkeypatch: pytest.MonkeyPatch) -
         assert card.poi_id in deps.store.by_id
         if card.open_status == "open":
             assert card.open_confidence in {"high", "medium"}
+
+
+# ------------------------------------------------- real data (DATA lane, main)
+
+REAL_POI = Path(__file__).resolve().parent.parent / "data" / "processed" / "poi.jsonl"
+
+
+@pytest.fixture(scope="module")
+def real_pois() -> list[POI]:
+    if not REAL_POI.exists():
+        pytest.skip("data/processed/poi.jsonl not present")
+    with REAL_POI.open(encoding="utf-8") as fh:
+        return [POI.model_validate_json(line) for line in fh if line.strip()]
+
+
+@pytest.fixture
+def real_deps(real_pois: list[POI], landmarks: dict[str, Landmark], tmp_path: Path) -> Deps:
+    return Deps(store=make_store(real_pois, landmarks), llm=FakeLLM(),
+                settings=make_settings(tmp_path))
+
+
+@pytest.mark.usefixtures("core_fakes")
+class TestRealData:
+    def test_s4_airport_is_not_empty(self, real_deps: Deps) -> None:
+        """3 cafes and no sights near the airport: relax categories instead of failing."""
+        a = recommend(RecommendRequest.model_validate({
+            "query": "Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
+            "location": {"landmark_id": "airport_nqz"}, "use_llm": False}), real_deps)
+        assert a.cards, a.warnings
+        assert a.intent.tourist and "attraction" in a.intent.categories  # what was asked
+        assert all(c.category == "cafe" for c in a.cards)  # what exists there
+        assert any("Под запрошенный тип мест" in w for w in a.warnings)
+        assert any("транспортного узла" in w for w in a.warnings)
+        assert not any("категории:" in f for f in a.data_used.filters)  # what was applied
+
+    def test_hours_and_wheelchair_gaps_are_counted(self, real_deps: Deps) -> None:
+        a = recommend(req("кафе для коляски", use_llm=False), real_deps)
+        assert a.cards
+        if any(c.open_status == "unknown" for c in a.cards):
+            assert any("нет данных о часах работы" in w for w in a.warnings)
+        assert any(w.startswith("Доступность для коляски подтверждена для ") for w in a.warnings)
+
+    def test_unnamed_playgrounds_are_flagged_for_the_model(self, real_deps: Deps) -> None:
+        a = recommend(req("с ребёнком на площадку", use_llm=False), real_deps)
+        assert a.cards and all(c.category == "playground" for c in a.cards)
+        cands = fake_retrieve(real_deps.store, a.intent, a.context, None)
+        assert '"name_is_generic": true' in build_prompt(a.intent, a.context, cands)
+
+    def test_sparse_area_warns(self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(geo, "radius_for", lambda intent: 150)
+        a = recommend(RecommendRequest.model_validate({
+            "query": "кофе", "location": {"landmark_id": "airport_nqz"}, "use_llm": False}),
+            real_deps)
+        assert 0 < len(a.cards) < 3
+        assert any("Рядом мало мест в открытых данных" in w for w in a.warnings)

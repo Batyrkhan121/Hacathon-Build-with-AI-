@@ -159,5 +159,17 @@ def test_no_candidates_is_unavailable() -> None:
 
 def test_system_prompt_has_the_product_rules() -> None:
     system = load_prompt("generate_cards").lower()
-    for phrase in ("открыто сейчас", "<user_query>", "idea_source", "poi_id", "цены"):
+    for phrase in ("открыто сейчас", "<user_query>", "idea_source", "poi_id", "цены",
+                   "name_is_generic", "description"):
         assert phrase in system
+
+
+def test_generic_name_and_unknown_access_are_explicit(synthetic_pois: list[POI]) -> None:
+    unnamed = synthetic_pois[0].model_copy(update={"name": "Детская площадка", "name_i18n": {},
+                                                   "wheelchair": "unknown"})
+    intent = QueryIntent(raw_query="площадка, я на коляске", wheelchair=True)
+    prompt = build_prompt(intent, context(), [candidate(unnamed)])
+    assert '"name_is_generic": true' in prompt
+    assert '"wheelchair": "unknown"' in prompt
+    plain = build_prompt(QueryIntent(raw_query="кофе"), context(), [candidate(synthetic_pois[1])])
+    assert "name_is_generic" not in plain

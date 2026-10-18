@@ -7,6 +7,8 @@ recommend():
  4. query_vec = llm.embed_query(...) or None
  5. retrieve(store, intent, ctx, query_vec, k=8)   app.retrieval (CORE)
     no candidates -> widen radius x1.5 once -> still none -> empty answer + helpful warning
+    (LLM lane addition: before giving up, retry once without the category filter, with a
+    warning — the airport zone has 3 cafes and no sights, S4 must not come back empty)
  6. draft_cards (LLM) -> finalize                  app.generate + app.validate (CORE)
     LLMUnavailable / use_llm=False -> template_cards
  7. plan_route for >= 2 cards when want_route      app.route (CORE)
@@ -69,6 +71,7 @@ DISCLAIMERS: dict[str, str] = {
     ),
 }
 TOP_K = 8
+SPARSE_MIN = 3  # fewer candidates than this -> "few places nearby" warning
 WIDEN_FACTOR = 1.5
 MAX_RADIUS_M = 5000  # SearchContext.radius_m upper bound
 
@@ -84,9 +87,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Поиск временно дал сбой — попробуйте ещё раз.",
         "landmark_mismatch": "В запросе упомянут ориентир «{name}», но подборка построена "
                              "от выбранной точки.",
-        "wheelchair": "Доступность для коляски подтверждена не для всех мест — уточните "
+        "wheelchair": "Доступность для коляски подтверждена для {k} из {n} мест — уточните "
                       "перед визитом.",
         "tourist": "Заложите время на дорогу в аэропорт и регистрацию.",
+        "tourist_hub": "Вы у транспортного узла: подборка — в пешей доступности, чтобы успеть "
+                       "к отправлению.",
+        "relaxed": "Под запрошенный тип мест рядом ничего нет в данных — показано, что есть "
+                   "поблизости.",
+        "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
         "route_over": "Маршрут не укладывается в заданное время — начните с первой карточки.",
         "summary_1": "Подборка по открытым данным: 1 идея рядом.",
         "summary_n": "Подборка по открытым данным: {n} идеи рядом.",
@@ -112,9 +120,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Іздеуде уақытша қате шықты — қайталап көріңіз.",
         "landmark_mismatch": "Сұрауда «{name}» аталған, бірақ іріктеме таңдалған нүктеден "
                              "жасалды.",
-        "wheelchair": "Арбамен кіру мүмкіндігі барлық орын үшін расталмаған — барар алдында "
+        "wheelchair": "Арбамен кіру {n} орынның {k}-інде ғана расталған — барар алдында "
                       "нақтылаңыз.",
         "tourist": "Әуежайға жол мен тіркеуге уақыт қалдырыңыз.",
+        "tourist_hub": "Сіз көлік торабындасыз: жөнелтуге үлгеру үшін іріктеме жаяу "
+                       "қашықтықта.",
+        "relaxed": "Сұралған түрдегі орын жақын жерде деректерде жоқ — маңайдағы бар орындар "
+                   "көрсетілді.",
+        "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
         "route_over": "Маршрут берілген уақытқа сыймайды — бірінші карточкадан бастаңыз.",
         "summary_1": "Ашық деректер бойынша жақын жерде 1 ұсыныс.",
         "summary_n": "Ашық деректер бойынша жақын жерде {n} ұсыныс.",
@@ -138,8 +151,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Search failed temporarily — please try again.",
         "landmark_mismatch": "Your message mentions “{name}”, but results are built from the "
                              "selected starting point.",
-        "wheelchair": "Wheelchair access is not confirmed for every place — check before you go.",
+        "wheelchair": "Wheelchair access is confirmed for {k} of {n} places — check before you go.",
         "tourist": "Leave time to get to the airport and check in.",
+        "tourist_hub": "You are at a transport hub: picks are within walking distance so you "
+                       "make your departure.",
+        "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
+        "sparse": "Few places nearby in the open data ({n}) — a short list.",
         "route_over": "The route does not fit your time — start with the first card.",
         "summary_1": "1 nearby idea picked from open data.",
         "summary_n": "{n} nearby ideas picked from open data.",
@@ -220,15 +237,24 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if req.use_llm and deps.llm is not None and store.embeddings is not None:
         query_vec = deps.llm.embed_query(intent.raw_query)
 
-    # 5. retrieve, widen once
-    candidates, failed = _retrieve(store, intent, ctx, query_vec)
+    # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
+    #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
+    search_intent = intent
+    candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
     if not candidates and not failed:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
-            candidates, failed = _retrieve(store, intent, ctx, query_vec)
+            candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
+    if not candidates and not failed and intent.categories:
+        search_intent = intent.model_copy(update={"categories": []})
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        if candidates:
+            warn.append(t["relaxed"])
+    if 0 < len(candidates) < SPARSE_MIN:
+        warn.append(t["sparse"].format(n=len(candidates)))
 
     # 6. cards
     cards: list[Card] = []
@@ -237,8 +263,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     gen_model: str | None = None
     if candidates and llm is not None:
         try:
-            draft = draft_cards(intent, ctx, candidates, llm)
-            cards, fin_warnings = validate.finalize(draft, candidates, intent, ctx)
+            draft = draft_cards(search_intent, ctx, candidates, llm)
+            cards, fin_warnings = validate.finalize(draft, candidates, search_intent, ctx)
             warn.extend(fin_warnings)
             draft_ids = {d.poi_id for d in draft.cards}
             if any(c.poi_id in draft_ids for c in cards):
@@ -253,21 +279,22 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             cards = []
     if candidates and not cards:
         try:
-            cards = validate.template_cards(candidates, intent, ctx)
+            cards = validate.template_cards(candidates, search_intent, ctx)
         except Exception as exc:  # noqa: BLE001
             log.error("request %s: template_cards failed (%s)", request_id, type(exc).__name__)
             failed = True
     cards = cards[:3]
 
     # 7. route
-    mini_route = _route(ctx, cards, candidates, intent, req.want_route, request_id)
+    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route, request_id)
 
     # 8. warnings, data used, answer
     if failed and not cards:
         warn.append(t["search_error"])
     elif not cards:
         warn.append(t["nothing"])
-    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route))
+    hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
+    warn.extend(_context_warnings(t, intent, cards, candidates, mini_route, at_hub=hub))
     if summary is None:
         summary = _template_summary(t, len(cards))
 
@@ -283,7 +310,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
             weather=wx.summary if wx is not None else t["weather_unknown"],
-            filters=_filters(t, intent, ctx, req.use_llm),
+            filters=_filters(t, search_intent, ctx, req.use_llm),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -369,6 +396,8 @@ def _context_warnings(
     cards: list[Card],
     candidates: list[Candidate],
     mini_route: MiniRoute | None,
+    *,
+    at_hub: bool = False,
 ) -> list[str]:
     out: list[str] = []
     unknown = sum(1 for c in cards if c.open_status == "unknown")
@@ -380,10 +409,11 @@ def _context_warnings(
         out.append(t["night"])
     if intent.wheelchair and cards:
         wheel = {c.poi.id: c.poi.wheelchair for c in candidates}
-        if any(wheel.get(c.poi_id, "unknown") != "yes" for c in cards):
-            out.append(t["wheelchair"])
+        confirmed = sum(1 for c in cards if wheel.get(c.poi_id) == "yes")
+        if confirmed < len(cards):  # OSM marks wheelchair for ~1% of places
+            out.append(t["wheelchair"].format(k=confirmed, n=len(cards)))
     if intent.tourist and cards:
-        out.append(t["tourist"])
+        out.append(t["tourist_hub"] if at_hub else t["tourist"])
     if mini_route is not None and not mini_route.fits_budget:
         out.append(t["route_over"])
     return out
