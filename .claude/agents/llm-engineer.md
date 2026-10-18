@@ -1,6 +1,6 @@
 ---
 name: llm-engineer
-description: "Воркер дорожки LLM проекта Qadam: клиент Gemini, парсер запроса, погода, генерация карточек, pipeline и FastAPI (задачи T30–T34 и их доработки). Работает в изолированном worktree."
+description: "Воркер дорожки LLM проекта Qadam: клиент Claude (anthropic), парсер запроса, погода, генерация карточек, pipeline и FastAPI (задачи T30–T34 и их доработки). Работает в изолированном worktree."
 model: inherit
 isolation: worktree
 skills:

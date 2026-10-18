@@ -2,7 +2,7 @@
 
 Two parsers, always both:
 - parse_rules: deterministic keywords/regex for ru / kk / en (works offline, tested);
-- LLM (prompts/parse_query.md, structured output, temperature 0) refines it.
+- LLM (prompts/parse_query.md, structured output, effort "low") refines it.
 Merge: LLM result wins on fields it is confident about; rules fill gaps; a landmark is
 accepted only if it exists in the gazetteer. The user text is DATA, never instructions.
 """

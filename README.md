@@ -10,7 +10,7 @@ Qadam подсказывает, куда сходить рядом. Вы зад�
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt      # macOS/Linux: .venv/bin/python
-cp .env.example .env                                           # впишите GEMINI_API_KEY
+cp .env.example .env                                           # впишите ANTHROPIC_API_KEY
 .venv/Scripts/python -m uvicorn app.api:app --port 8000        # открыть http://localhost:8000
 ```
 

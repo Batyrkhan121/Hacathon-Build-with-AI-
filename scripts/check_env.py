@@ -2,9 +2,9 @@
 
 Usage:
     .venv/Scripts/python scripts/check_env.py          # local checks + network
-    .venv/Scripts/python scripts/check_env.py --llm    # + real Gemini calls (uses quota)
+    .venv/Scripts/python scripts/check_env.py --llm    # + real Claude (and Gemini embed) calls
 
-Prints OK / FAIL per check and never prints secrets. Exit code 1 if something failed.
+Prints OK / SKIP / FAIL per check and never prints secrets. Exit code 1 if something failed.
 """
 
 from __future__ import annotations
@@ -20,14 +20,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-Result = tuple[bool, str, str]
+Result = tuple[str, str, str]  # (status, name, detail), status in OK / SKIP / FAIL
+
+
+class Skip(Exception):
+    """Optional check that does not apply (e.g. no GEMINI_API_KEY -> lexical retrieval)."""
 
 
 def run(name: str, fn: Callable[[], str]) -> Result:
     try:
-        return True, name, fn() or ""
+        return "OK", name, fn() or ""
+    except Skip as exc:
+        return "SKIP", name, str(exc)
     except Exception as exc:  # noqa: BLE001 - a smoke test reports every failure
-        return False, name, f"{type(exc).__name__}: {exc}"
+        return "FAIL", name, f"{type(exc).__name__}: {exc}"
 
 
 def check_python() -> str:
@@ -37,8 +43,8 @@ def check_python() -> str:
 
 
 def check_packages() -> str:
-    mods = ["fastapi", "uvicorn", "pydantic", "dotenv", "httpx", "numpy", "h3", "google.genai",
-            "yaml", "pytest"]
+    mods = ["fastapi", "uvicorn", "pydantic", "dotenv", "httpx", "numpy", "h3", "anthropic",
+            "google.genai", "yaml", "pytest"]
     missing = []
     for mod in mods:
         try:
@@ -63,14 +69,16 @@ def check_contract() -> str:
 
 def check_dotenv() -> str:
     if not (ROOT / ".env").exists():
-        raise RuntimeError(".env missing -> copy .env.example to .env and set GEMINI_API_KEY")
+        raise RuntimeError(".env missing -> copy .env.example to .env and set ANTHROPIC_API_KEY")
     from app.config import get_settings
 
     s = get_settings()
-    if not s.gemini_api_key:
-        raise RuntimeError("GEMINI_API_KEY is empty in .env")
-    return (f"key set ({len(s.gemini_api_key)} chars); model={s.gemini_model}; "
-            f"fallback={s.gemini_fallback_model}; embed={s.embed_model}/{s.embed_dim}")
+    if not s.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is empty in .env")
+    embed = f"{s.embed_model}/{s.embed_dim}" if s.has_embeddings else "off (lexical)"
+    workspace = "set" if s.anthropic_workspace_id else "none"
+    return (f"key set ({len(s.anthropic_api_key)} chars); workspace={workspace}; "
+            f"model={s.claude_model}; fallback={s.claude_fallback_model}; embeddings={embed}")
 
 
 def http_check(url: str) -> Callable[[], str]:
@@ -89,38 +97,64 @@ def http_check(url: str) -> Callable[[], str]:
     return _check
 
 
-def _client():  # noqa: ANN202
-    from google import genai
+def _claude():  # noqa: ANN202
+    import anthropic
 
     from app.config import get_settings
 
-    return genai.Client(api_key=get_settings().gemini_api_key), get_settings()
+    s = get_settings()
+    client = anthropic.Anthropic(api_key=s.anthropic_api_key, timeout=s.llm_timeout_s,
+                                 max_retries=1, default_headers=s.anthropic_headers)
+    return client, s
 
 
-def check_models() -> str:
-    client, s = _client()
-    names = {getattr(m, "name", "").removeprefix("models/") for m in client.models.list()}
-    wanted = {"GEMINI_MODEL": s.gemini_model, "GEMINI_FALLBACK_MODEL": s.gemini_fallback_model,
-              "EMBED_MODEL": s.embed_model}
-    missing = {k: v for k, v in wanted.items() if v not in names}
+def check_claude_models() -> str:
+    import anthropic
+
+    client, s = _claude()
+    wanted = {"CLAUDE_MODEL": s.claude_model, "CLAUDE_FALLBACK_MODEL": s.claude_fallback_model}
+    missing = {}
+    for env_name, model in wanted.items():
+        try:
+            client.models.retrieve(model)
+        except anthropic.NotFoundError:
+            missing[env_name] = model
     if missing:
-        hint = sorted(n for n in names if "flash" in n or "embedding" in n)[:20]
-        raise RuntimeError(f"not available: {missing}. Available flash/embedding: {hint}")
-    return f"{len(names)} models visible; configured models available"
+        available = sorted(m.id for m in client.models.list())
+        raise RuntimeError(f"not available: {missing}. Available: {available}")
+    return f"{s.claude_model} + {s.claude_fallback_model} available"
 
 
-def check_generate() -> str:
-    client, s = _client()
-    resp = client.models.generate_content(
-        model=s.gemini_model, contents="Ответь одним словом: столица Казахстана?"
+def check_claude_structured() -> str:
+    from pydantic import BaseModel
+
+    class Capital(BaseModel):
+        city: str
+
+    client, s = _claude()
+    resp = client.messages.parse(
+        model=s.claude_model,
+        max_tokens=2000,
+        output_config={"effort": "low"},
+        messages=[{"role": "user", "content": "Столица Казахстана? Ответь JSON."}],
+        output_format=Capital,
     )
-    return f"{s.gemini_model}: '{(resp.text or '').strip()[:40]}'"
+    if resp.parsed_output is None:
+        raise RuntimeError(f"no parsed output, stop_reason={resp.stop_reason}")
+    return f"{s.claude_model}: city='{resp.parsed_output.city[:40]}'"
 
 
 def check_embed() -> str:
+    from app.config import get_settings
+
+    s = get_settings()
+    if not s.has_embeddings:
+        raise Skip("GEMINI_API_KEY not set -> no vector index, retrieval is lexical")
+
+    from google import genai
     from google.genai import types
 
-    client, s = _client()
+    client = genai.Client(api_key=s.gemini_api_key)
     resp = client.models.embed_content(
         model=s.embed_model,
         contents=["тихое кафе с розеткой у EXPO"],
@@ -136,7 +170,8 @@ def check_embed() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--llm", action="store_true", help="also call Gemini (uses quota)")
+    parser.add_argument("--llm", action="store_true",
+                        help="also call Claude and the optional Gemini embeddings (uses quota)")
     args = parser.parse_args()
 
     checks: list[tuple[str, Callable[[], str]]] = [
@@ -144,7 +179,7 @@ def main() -> int:
         ("packages", check_packages),
         ("git", check_git),
         ("contract import", check_contract),
-        (".env + GEMINI_API_KEY", check_dotenv),
+        (".env + ANTHROPIC_API_KEY", check_dotenv),
         ("net: Overpass API", http_check("https://overpass-api.de/api/status")),
         ("net: Wikidata", http_check(
             "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q1520"
@@ -156,16 +191,16 @@ def main() -> int:
     ]
     if args.llm:
         checks += [
-            ("gemini: models.list", check_models),
-            ("gemini: generate", check_generate),
-            ("gemini: embed", check_embed),
+            ("claude: models", check_claude_models),
+            ("claude: structured output", check_claude_structured),
+            ("gemini: embed (optional)", check_embed),
         ]
 
     results = [run(name, fn) for name, fn in checks]
     width = max(len(name) for _, name, _ in results)
-    for ok, name, detail in results:
-        print(f"[{'OK' if ok else 'FAIL'}] {name.ljust(width)}  {detail}")
-    failed = [name for ok, name, _ in results if not ok]
+    for status, name, detail in results:
+        print(f"[{status}] {name.ljust(width)}  {detail}")
+    failed = [name for status, name, _ in results if status == "FAIL"]
     print("\nALL OK" if not failed else f"\nFAILED: {', '.join(failed)}")
     return 1 if failed else 0
 
