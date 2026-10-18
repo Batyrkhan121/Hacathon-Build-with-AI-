@@ -1,6 +1,6 @@
 ---
 name: poi-data-pipeline
-description: "Сбор и подготовка датасета POI Астаны для Qadam. OpenStreetMap через Overpass → нормализация в app.schemas.POI → обогащение (Wikidata, описания Gemini с пометкой) → эмбеддинги в data/index. Используй в дорожке DATA (задачи T10–T14) и при любых правках pipeline/ или data/."
+description: "Сбор и подготовка датасета POI Астаны для Qadam. OpenStreetMap через Overpass → нормализация в app.schemas.POI → обогащение (Wikidata, описания Claude с пометкой) → эмбеддинги в data/index (Gemini, по желанию). Используй в дорожке DATA (задачи T10–T14) и при любых правках pipeline/ или data/."
 argument-hint: "[ID задачи, например T10]"
 ---
 
@@ -13,7 +13,7 @@ argument-hint: "[ID задачи, например T10]"
 ## Файлы дорожки
 - `pipeline/fetch_osm.py`: Overpass → `data/raw/osm_<area>.json`. Кэш: если файл свежее 24 ч, сеть не трогаем.
 - `pipeline/normalize.py`: сырые элементы → POI (категории, теги, флаги, confidence, дедупликация).
-- `pipeline/enrich.py`: описания. Порядок источников: OSM `description` → Wikidata → Gemini, только для топ-N без описания.
+- `pipeline/enrich.py`: описания. Порядок источников: OSM `description` → Wikidata → Claude, только для топ-N без описания.
 - `pipeline/build_index.py`: эмбеддинги → `embeddings.npy`, `ids.json`, `meta.json`.
 - `pipeline/run_all.py`: одна команда, идемпотентная. Флаги: `--area astana|fixture`, `--skip-fetch`, `--skip-enrich`, `--limit N`.
 - `tests/test_pipeline_normalize.py`: нормализация на маленьких сырых примерах, без сети.
@@ -91,10 +91,11 @@ out center tags;
 
 ## Обогащение
 - Wikidata: `wbgetentities`, до 50 id за раз, `props=descriptions|sitelinks`, `languages=ru|kk|en`. Используем, когда в OSM есть тег `wikidata`. Пишем `description_source="wikidata"`.
-- Gemini: только для топ-300 по popularity без описания. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ API берём из app/config.py.
+- Claude: только для топ-300 по popularity без описания. Вызываем `anthropic` прямо в `pipeline/enrich.py` (`client.messages.parse(model=settings.claude_model, ..., output_format=<Pydantic-модель>, output_config={"effort": "low"})`, без `temperature`), потому что T12 идёт параллельно с T30. В тестах сеть подменяем фейком. Промпт: одно предложение по-русски, только по переданным тегам и категории. Без цен, часов, событий и оценок. Пишем `description_source="llm_generated"`, кэш в `data/cache/descriptions.json`. Ключ `ANTHROPIC_API_KEY` берём из app/config.py; без ключа шаг пропускается с пометкой в REPORT.md.
 
 ## Индекс
 - Текст документа: `"{name}. {category_ru}. Теги: {tags}. {description}"`. Шаблон записать в meta.json.
+- Эмбеддинги делает Gemini, только если задан `GEMINI_API_KEY` (`settings.has_embeddings`): у Anthropic API эмбеддингов нет. Без ключа индекс не строим (см. ниже).
 - `google-genai`: `client.models.embed_content(model=settings.embed_model, contents=batch, config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionality=settings.embed_dim))`. Батчи по 100, кэш по sha256 текста. Затем L2-нормализация, float32.
 - `meta.json`: `{"model","dim","count","created_at","task_type","doc_template"}`. Порядок строк индекса совпадает с `ids.json`.
 - Индекс не собирается (нет ключа или квоты)? Пайплайн не падает. Пишем предупреждение в REPORT.md, retrieval работает лексически.

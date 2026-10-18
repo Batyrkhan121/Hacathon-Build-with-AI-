@@ -14,7 +14,7 @@
 ## Волна 0: фундамент (ИНТЕГРАТОР, основная папка)
 - [ ] **T00 Окружение.**
   - Git, Python ≥ 3.11, `.venv`, `pip install -r requirements.txt`.
-  - `.env` с `GEMINI_API_KEY`.
+  - `.env` с `ANTHROPIC_API_KEY` (`GEMINI_API_KEY` — по желанию, только для эмбеддингов).
   - `scripts/check_env.py --llm` должен показать ALL OK. Если модели из `.env` недоступны, выбрать из списка, который печатает скрипт.
 - [ ] **T01 Ревизия каркаса.**
   - Прочитать CLAUDE.md, ARCHITECTURE.md, PLAN.md, schemas.py и заглушки.
@@ -32,8 +32,8 @@
   - Сверить ориентиры в `data/landmarks.json` с OSM.
   - Сообщение «T10 READY».
 - [ ] **T11 Выгрузка Астаны.** `fetch_osm.py` (bbox, зеркала, повторы, кэш) + `normalize.py` → `data/processed/poi.jsonl` (≥ 1500) + REPORT.md.
-- [ ] **T12 Обогащение.** Wikidata, затем Gemini-описания для топ-300 (`llm_generated`, кэш).
-- [ ] **T13 Индекс.** `build_index.py` → `embeddings.npy`, `ids.json`, `meta.json` (модель и размерность из настроек).
+- [ ] **T12 Обогащение.** Wikidata, затем описания Claude для топ-300 (`llm_generated`, кэш).
+- [ ] **T13 Индекс.** `build_index.py` → `embeddings.npy`, `ids.json`, `meta.json` (модель и размерность из настроек). Эмбеддинги Gemini — только при `GEMINI_API_KEY`; без ключа индекс пропускается, retrieval лексический.
 - [ ] **T14 Одна команда + документ.**
   - `pipeline/run_all.py` + `docs/DATA.md`.
   - По желанию GitHub Action, обновление по кнопке или раз в неделю.
@@ -46,7 +46,7 @@
 - [ ] **T24 validate.py + тесты** (чужие id, факты из Candidate, запрещённые фразы, шаблонные карточки).
 
 ### LLM (`/rag-retrieval` + `/ecc:fastapi-patterns`)
-- [ ] **T30 llm.py + scripts/check_gemini.py** (structured output, повторы, запасная модель, кэш, эмбеддинги; тесты с фейком).
+- [ ] **T30 llm.py + scripts/check_llm.py** (Claude: structured output, повторы, запасная модель, refusal-fallback, кэш; эмбеддинги Gemini по желанию; тесты с фейком).
 - [ ] **T31 query_parser.py + тесты rules** (ru/kk/en, время, дети, коляска, ночь, турист, группа, ориентир).
 - [ ] **T32 weather.py** (Open-Meteo, кэш 15 мин, `None` при сбое; тест с моком).
 - [ ] **T33 generate.py + prompts/** (привязка к данным, защита от инъекций, язык, метки).
@@ -114,5 +114,5 @@
 - [ ] **T81 Слайды.** 7 слайдов из `docs/PITCH.md` → PDF.
 - [ ] **T82 Видео.** 2–3 мин по `docs/VIDEO.md` → YouTube, доступ по ссылке.
 - [ ] **T83 Публикация.**
-  - `/security-review`, `git log -p | grep -iE "AIza|api_key"` — должно быть пусто.
+  - `/security-review`, `git log -p | grep -E "AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}"` — должно быть пусто.
   - Репозиторий публичный, форма сдачи.

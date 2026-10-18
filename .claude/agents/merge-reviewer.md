@@ -19,8 +19,8 @@ color: red
    - карточки несут idea_source / facts_sources / open_confidence;
    - нет приёма/логирования сырых координат, нет логов «ячейка + текст запроса»;
    - у внешних вызовов есть таймаут и фолбэк; ошибки не глотаются молча (`except: pass`);
-   - нет секретов в коде и коммитах (`git diff main...<ветка> | grep -iE "api_key|AIza|secret"`).
-5. Тесты: новые модули покрыты; тесты не ходят в сеть (ищи httpx/requests/genai без моков в tests/).
+   - нет секретов в коде и коммитах (`git diff main...<ветка> | grep -E "AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}"`, плюс глазами строки с `api_key`/`secret`).
+5. Тесты: новые модули покрыты; тесты не ходят в сеть (ищи httpx/requests/anthropic/genai без моков в tests/).
 
 Ответ (≤ 25 строк):
 VERDICT: PASS | BLOCK

@@ -20,7 +20,7 @@
 | D2 | Один сервис FastAPI отдаёт и API, и `web/` (чистый JS + Leaflet) | Streamlit; React/Vite | Настоящее веб-приложение, без сборщика, один деплой, полный контроль над UX. Streamlit выглядит шаблонно, React — лишний тулчейн на сутки. |
 | D3 | Факты считает код, текст пишет LLM; валидатор и шаблонный запасной путь | Всё делает LLM | Нет галлюцинаций в расстояниях и часах. Демо не падает без квоты (критерии 1, 3, 6). |
 | D4 | Приватность: в браузере координаты переводятся в H3 r9, сервер не принимает lat/lon (`extra="forbid"`, тест) | Округление координат; хранение с согласием | Минимизация по закону РК № 94-V. Это наглядно в демо: рисуем ячейку на карте. |
-| D5 | Gemini через google-genai: structured output, запасная модель, дисковый кэш | OpenAI; локальные модели | Хакатон Google (Build with AI), есть structured output и эмбеддинги в одном SDK. Модели задаются в .env, проверка — `scripts/check_env.py --llm`. |
+| D5 | Claude через `anthropic` SDK: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`; structured output в Pydantic (`messages.parse`), дисковый кэш. Эмбеддинги — Gemini (google-genai), по желанию, только при `GEMINI_API_KEY` | Gemini для всего (прежняя версия D5); OpenAI; локальные модели | Решение команды 18.10: ключ Anthropic. У Anthropic нет API эмбеддингов, поэтому векторный индекс опционален, а без него retrieval лексический (запасной путь заложен в D1/D3). Модели задаются в .env, проверка — `scripts/check_env.py --llm`. |
 | D6 | Основа — OSM (Overpass), плюс Wikidata; LLM-описания с пометкой | 2GIS, Google Places | Сбор автоматизирован, лицензия ODbL. 2GIS запрещает хранение. Google Places — опция позже. |
 | D7 | Контракт до кода + дорожки в worktree + интегратор | Все правят всё; разбиение по людям | Параллельная работа без конфликтов, у каждого файла один владелец (§6). |
 
@@ -40,7 +40,7 @@ retrieve: жёсткие фильтры (дистанция, категории,
         → скор = Σ WEIGHTS × части → MMR-разнообразие → top-8 Candidate
    │
    ▼
-draft_cards (Gemini, JSON по схеме)  ── LLMUnavailable / use_llm=false ──► template_cards
+draft_cards (Claude, JSON по схеме)  ── LLMUnavailable / use_llm=false ──► template_cards
    │
    ▼
 finalize: id ∈ кандидаты, факты из Candidate, «открыто сейчас» только при open/high, метки
@@ -62,7 +62,7 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 | `retrieval.py` | CORE | фильтры, скоринг, MMR | `retrieve`, `lexical_relevance`, `WEIGHTS` |
 | `route.py` | CORE | мини-маршрут | `plan_route` |
 | `validate.py` | CORE | защита от ошибок LLM, шаблонные карточки | `finalize`, `template_cards` |
-| `llm.py` | LLM | Gemini: JSON, эмбеддинги, кэш | `LLMClient.generate_structured`, `embed_query`, `embed_documents` |
+| `llm.py` | LLM | Claude: JSON по схеме, кэш; эмбеддинги Gemini (опционально) | `LLMClient.generate_structured`, `embed_query`, `embed_documents` |
 | `query_parser.py` | LLM | текст → намерение | `parse_query`, `parse_rules`, `apply_overrides`, `detect_lang` |
 | `weather.py` | LLM | погода | `get_weather` |
 | `generate.py` | LLM | черновики карточек | `draft_cards` (+ `prompts/*.md`) |
@@ -110,8 +110,9 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 ## 7. Риски и что с ними делаем
 | Риск | Что делаем |
 |---|---|
-| Квоты или недоступность Gemini | Запасная модель, дисковый кэш пресетов, путь `use_llm=false`. Биллинг включить заранее. |
-| Неверные имена моделей или форма вызова SDK | `scripts/check_env.py --llm` и `scripts/check_gemini.py` в первый же час, модели задаются в .env. |
+| Лимиты, отказ (`refusal`) или недоступность Claude | Запасная модель (Haiku), server-side fallback, дисковый кэш пресетов, путь `use_llm=false`. Баланс API пополнить заранее. |
+| Нет эмбеддингов (нет `GEMINI_API_KEY`) | Лексическая релевантность в retrieval; качество проверяем eval. Ключ Gemini можно добавить позже без изменения кода. |
+| Неверные имена моделей или форма вызова SDK | `scripts/check_env.py --llm` и `scripts/check_llm.py` в первый же час, модели задаются в .env. |
 | Overpass перегружен | Зеркала, повторы, кэш `data/raw/`, фикстур ≥ 40 POI (T10) в первые 40 минут. |
 | Мало часов работы в OSM | Честное `unknown/low` и предупреждения. В слайде об ограничениях: план с партнёрскими данными. |
 | Конфликты при мерже | Один владелец на файл, контракт меняет только интегратор, маленькие коммиты. |

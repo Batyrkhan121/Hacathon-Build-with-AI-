@@ -1,6 +1,6 @@
 ---
 name: rag-retrieval
-description: "RAG-ядро Qadam. Разбор запроса, контекст (H3, время, погода), жёсткие фильтры и скоринг кандидатов, генерация карточек в Gemini с привязкой к данным, валидация против галлюцинаций, мини-маршрут, FastAPI. Используй в дорожках CORE (T20–T24) и LLM (T30–T34) и при любой правке app/."
+description: "RAG-ядро Qadam. Разбор запроса, контекст (H3, время, погода), жёсткие фильтры и скоринг кандидатов, генерация карточек в Claude с привязкой к данным, валидация против галлюцинаций, мини-маршрут, FastAPI. Используй в дорожках CORE (T20–T24) и LLM (T30–T34) и при любой правке app/."
 argument-hint: "[ID задач, например T20-T24]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[ID задач, например T20-T24]"
 
 Аргументы: $ARGUMENTS
 
-Схема: запрос и место → `QueryIntent` + `SearchContext` → фильтры → скоринг → top-8 `Candidate` → Gemini пишет черновики (`DraftResponse`) → `validate.finalize` → `Card` (1–3) → маршрут → `Answer`.
+Схема: запрос и место → `QueryIntent` + `SearchContext` → фильтры → скоринг → top-8 `Candidate` → Claude пишет черновики (`DraftResponse`) → `validate.finalize` → `Card` (1–3) → маршрут → `Answer`.
 Сигнатуры уже объявлены в заглушках `app/*.py`, менять их нельзя. Модели берутся из `app/schemas.py`.
 
 ## Главный принцип
@@ -60,13 +60,16 @@ argument-hint: "[ID задач, например T20-T24]"
 
 ## LLM: внешние вызовы, у каждого есть запасной путь
 **llm.py (T30)**
-- `from google import genai`; `client.models.generate_content(model=..., contents=..., config=types.GenerateContentConfig(system_instruction=..., temperature=..., response_mime_type="application/json", response_schema=Schema))`, затем `resp.parsed` или `Schema.model_validate_json(resp.text)`.
-- Сначала проверь форму вызовов на установленной версии SDK: `scripts/check_gemini.py`, при сомнениях WebFetch ai.google.dev.
-- Таймаут, 2 повтора, затем `gemini_fallback_model`, затем `LLMUnavailable`.
+- `import anthropic`; `client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_s, max_retries=2)`; `client.messages.parse(model=settings.claude_model, max_tokens=..., system=..., messages=[{"role": "user", "content": prompt}], output_format=Schema, output_config={"effort": effort})`, затем проверь `resp.stop_reason` (`refusal`, `max_tokens` → `LLMUnavailable`) и бери `resp.parsed_output`.
+- Модели: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`. У Sonnet 5.5 `temperature`/`top_p` не задаём (400), управляем только `effort`; для скорости демо — `low`.
+- Отказы: `client.beta.messages.parse(..., betas=["server-side-fallback-2026-07-01"], fallbacks="default")`.
+- Сначала проверь форму вызовов на установленной версии SDK: `scripts/check_llm.py`, скилл `/claude-api`, при сомнениях WebFetch platform.claude.com.
+- Таймаут, повторы SDK, затем `claude_fallback_model`, затем `LLMUnavailable`.
+- Эмбеддинги: у Anthropic их нет. Gemini (`google-genai`, `embed_content`), только при `settings.has_embeddings`; иначе `embed_query` → `None`, retrieval лексический.
 - Дисковый кэш `data/cache/llm/` (на этом держатся демо-сценарии), эмбеддинги запросов тоже в кэш.
 
 **query_parser.py (T31)**
-- Сначала rules, всегда (ru/kk/en словари плюс regex времени). Потом LLM с temperature 0, schema = QueryIntent.
+- Сначала rules, всегда (ru/kk/en словари плюс regex времени). Потом LLM с effort `low`, schema = QueryIntent.
 - Слияние: LLM главнее; landmark принимаем, только если id есть в справочнике; `apply_overrides` применяется последним.
 - Язык: казахские буквы → kk, латиница → en, иначе ru.
 - Ключевые слова:
@@ -91,7 +94,7 @@ argument-hint: "[ID задач, например T20-T24]"
   - why: не больше двух предложений и со ссылкой на факт из кандидата;
   - what_to_do: конкретное действие на месте;
   - idea_source=generated, если совета нет в данных кандидата.
-- Температура 0.4. Карточки: 1, если кандидат один; 2–3, если кандидатов больше.
+- Effort `low` (поднимать до `medium` только по итогам eval). Карточки: 1, если кандидат один; 2–3, если кандидатов больше.
 
 **pipeline.py + api.py (T34)**
 - Порядок шагов см. в docstring `app/pipeline.py`.

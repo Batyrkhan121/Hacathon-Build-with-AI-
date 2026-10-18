@@ -10,9 +10,9 @@
 - Контракт данных: app/schemas.py
 
 ## Стек
-- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, google-genai (Gemini), httpx, pytest, ruff.
+- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, anthropic (Claude: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`), httpx, pytest, ruff. Эмбеддинги по желанию: google-genai (Gemini), только если задан `GEMINI_API_KEY`; без него retrieval лексический.
 - Фронтенд: папка web/, чистый HTML/CSS/JS. Leaflet и h3-js подключаем с CDN с точной версией, без сборщика. FastAPI отдаёт web/ по адресу "/".
-- Данные: OpenStreetMap (Overpass) → data/processed/poi.jsonl → data/index/. Обогащение через Wikidata, описания через Gemini (с пометкой).
+- Данные: OpenStreetMap (Overpass) → data/processed/poi.jsonl → data/index/. Обогащение через Wikidata, описания через Claude (с пометкой).
 - 2GIS и Яндекс не парсить: их оферты запрещают хранить данные.
 
 ## Команды
@@ -53,7 +53,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 |---|---|
 | DATA | `pipeline/**`, `data/**` (включая `data/landmarks.json`), `tests/fixtures/poi_sample.jsonl`, `tests/test_pipeline_*.py`, `docs/DATA.md`, `.github/workflows/**` |
 | CORE | `app/geo.py`, `app/hours.py`, `app/store.py`, `app/retrieval.py`, `app/route.py`, `app/validate.py`, `tests/test_{geo,hours,store,retrieval,route,validate}.py` |
-| LLM | `app/llm.py`, `app/query_parser.py`, `app/weather.py`, `app/generate.py`, `app/pipeline.py`, `app/api.py`, `prompts/**`, `scripts/check_gemini.py`, `tests/test_{llm,query_parser,weather,generate,pipeline,api}.py` |
+| LLM | `app/llm.py`, `app/query_parser.py`, `app/weather.py`, `app/generate.py`, `app/pipeline.py`, `app/api.py`, `prompts/**`, `scripts/check_llm.py`, `tests/test_{llm,query_parser,weather,generate,pipeline,api}.py` |
 | WEB | `web/**`, кроме `web/mock/answer_sample.json` |
 | EVAL | `eval/**`, `tests/test_eval*.py`, `docs/{CONCEPT,RAG,SCENARIOS,ETHICS,PITCH,VIDEO}.md` |
 | ИНТЕГРАТОР | `app/schemas.py`, `app/config.py`, `app/__init__.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_contract.py`, `tests/fixtures/poi_synthetic.jsonl`, `.gitignore`, `.env.example`, `.worktreeinclude`, `CLAUDE.md`, `README.md`, `docs/{TASK,ARCHITECTURE,PLAN,PROMPTS}.md`, `requirements.txt`, `pyproject.toml`, `.claude/**`, `scripts/check_env.py`, `web/mock/answer_sample.json`, `Dockerfile` |

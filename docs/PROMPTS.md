@@ -22,7 +22,7 @@
 Выполни задачи T00–T02 из docs/PLAN.md:
 0) Перенеси содержимое папки _claude_setup/ в .claude/ (там settings.json, skills/, agents/; если .claude/ уже есть — слей, ничего существующего не удаляя). Удали пустую _claude_setup/. Покажи дерево .claude/.
 1) Проверь git --version и python --version (нужен ≥ 3.11). Создай .venv и установи requirements.txt.
-2) Если файла .env нет — скопируй .env.example в .env и попроси меня вписать GEMINI_API_KEY. Сам .env не читай и не выводи.
+2) Если файла .env нет — скопируй .env.example в .env и попроси меня вписать ANTHROPIC_API_KEY (GEMINI_API_KEY — по желанию, для эмбеддингов). Сам .env не читай и не выводи.
 3) Запусти .venv/Scripts/python scripts/check_env.py --llm и покажи таблицу. Если какая-то модель из .env недоступна — предложи замену из списка, который печатает скрипт, и скажи, какую строку .env мне поменять.
 4) Прочитай CLAUDE.md, docs/ARCHITECTURE.md, docs/PLAN.md, app/schemas.py и все заглушки app/*.py. Найди несостыковки (сигнатуры, поля, владение файлами) и перечисли их. Исправь только явные ошибки.
 5) .venv/Scripts/python -m pytest -q должен пройти (контрактные тесты).
@@ -41,7 +41,7 @@
 /poi-data-pipeline T10-T14
 Ты — воркер дорожки DATA проекта Qadam (протокол воркера и владение файлами — CLAUDE.md).
 Сначала T10 — быстрый фикстур, не дольше 40 минут: реальные POI вокруг EXPO и Mega Silk Way → tests/fixtures/poi_sample.jsonl (≥ 40 записей, валидны по app.schemas.POI) + сверка координат ориентиров в data/landmarks.json с OSM. Закоммить и напиши крупно «T10 READY» — интегратор сразу заберёт это в main.
-Затем T11–T14 по порядку, коммит после каждой задачи. Сеть — только через кэш data/raw и data/cache, с зеркалами и ретраями. Ключ Gemini — через app/config.py.
+Затем T11–T14 по порядку, коммит после каждой задачи. Сеть — только через кэш data/raw и data/cache, с зеркалами и ретраями. Ключи (Claude для описаний, Gemini по желанию для эмбеддингов) — только через app/config.py.
 Перед отчётом: pytest и ruff зелёные. Отчёт — по формату CLAUDE.md + цифры из data/processed/REPORT.md.
 ```
 
@@ -57,8 +57,8 @@
 ### 1.3 · Новая worktree-сессия · LLM · режим Plan
 ```
 /rag-retrieval /ecc:fastapi-patterns T30-T34
-Ты — воркер дорожки LLM проекта Qadam (протокол — CLAUDE.md). Задачи T30–T34 из docs/PLAN.md: клиент Gemini, query_parser, weather, generate + prompts/, pipeline + api.
-Первым делом напиши scripts/check_gemini.py и проверь на установленной версии google-genai реальные вызовы: structured output в Pydantic, embed_content, имена моделей из .env. При сомнениях смотри ai.google.dev через WebFetch.
+Ты — воркер дорожки LLM проекта Qadam (протокол — CLAUDE.md). Задачи T30–T34 из docs/PLAN.md: клиент Claude, query_parser, weather, generate + prompts/, pipeline + api.
+Первым делом напиши scripts/check_llm.py и проверь на установленной версии anthropic реальные вызовы: messages.parse в Pydantic (QueryIntent, DraftResponse), effort, refusal-fallback, имена моделей из .env; эмбеддинги Gemini — только если задан GEMINI_API_KEY. Используй скилл /claude-api, при сомнениях смотри platform.claude.com через WebFetch.
 Модули CORE (retrieval, route, validate, geo, hours, store) пишет другая дорожка: в своих тестах подменяй их фейками по сигнатурам заглушек, в их файлы не лезь.
 Каждый внешний вызов — с таймаутом, ретраем, кэшем и фолбэком. Сначала покажи план из 10 пунктов и жди «ок». Коммит после каждой задачи.
 В конце: pytest + ruff, /ecc:fastapi-review app/api.py, отчёт.
@@ -170,7 +170,7 @@ run_eval.py должен уже сейчас работать в режиме --
 
 ### 4.1 · Основная · код-фриз
 ```
-Задача T80. Код-фриз: дальше только багфиксы. Прогони pytest, eval (с LLM и --no-llm), обнови docs/SCENARIOS.md итоговыми цифрами и ограничениями, README — «запуск за 3 команды» + ссылки на документы. Проверь, что .env не попал в историю: git log -p | grep -iE "AIza|api_key" — должно быть пусто. Закоммить "release: v1.0".
+Задача T80. Код-фриз: дальше только багфиксы. Прогони pytest, eval (с LLM и --no-llm), обнови docs/SCENARIOS.md итоговыми цифрами и ограничениями, README — «запуск за 3 команды» + ссылки на документы. Проверь, что .env не попал в историю: git log -p | grep -E "AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}" — должно быть пусто. Закоммить "release: v1.0".
 ```
 
 ### 4.2 · worktree · EVAL · слайды и видео

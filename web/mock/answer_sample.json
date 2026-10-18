@@ -201,7 +201,7 @@
     "candidates_considered": 8,
     "parser": "llm",
     "generation": "llm",
-    "model": "gemini-3.8-flash"
+    "model": "claude-sonnet-5-5"
   },
   "warnings": [
     "МОК-ДАННЫЕ для разработки UI — это не реальный ответ системы",
