@@ -1,5 +1,9 @@
 # QA проекта Qadam
 
+Исходные находки и результаты аудита ниже сохранены как история проверки до исправлений.
+Результат минимального исправления SEC-ERR-PRIV-02 в ветке `fix/security-error-privacy`
+добавлен в конце документа; остальные находки этой задачей не исправлялись.
+
 Дата: **18.10.2026**, Asia/Qyzylorda (UTC+5); итог подготовлен после 20:24.
 Продолжение QA: **18.10.2026, после 20:41**, перед работой подтверждена ветка **qa/security-audit**,
 HEAD и исходное состояние сохранены; на старте продолжения изменён только этот неотслеживаемый документ.
@@ -436,3 +440,97 @@ sanitized HTTP/browser/error/no-AI результаты, screenshots и `suite-e
 Изменён только `docs/QA.md`; код и зависимости не исправлялись, commit/push/reset/clean не выполнялись.
 Финальные `git status`, `git diff --name-only`, `git diff --check` проверены с учётом того,
 что новый неотслеживаемый документ не входит в обычный git diff.
+
+## Повторная проверка SEC-ERR-PRIV-02: минимальное исправление
+
+Дата: **18.10.2026, 21:22 UTC+5 (Asia/Qyzylorda)**.
+Перед началом проверены чистое рабочее дерево и пустой индекс в `qa/security-audit`.
+Создана ветка **fix/security-error-privacy** от **b451c6e7384a69082ca6212467c446a5be8d73b2**.
+Проверена незакоммиченная версия рабочего дерева на этой базе, а не новая опубликованная версия.
+Применимых AGENTS.md не найдено; прочитаны CLAUDE.md и таблица волны 3.
+
+Фиксация проверенного кода, SHA-256 исходных файлов:
+
+- `app/api.py`: `94b5424159b3ac2928f0d40b70e2449a8f39119ad79203297d2e50a5d1df962a`;
+- `tests/test_api.py`: `af05c09ea4ab20c4730ab7baebe2dbac1614a67dd4b6c023e3a18465b1ebee59`.
+
+Причина подтверждена повторным локальным воспроизведением до изменения кода.
+`Request.json()` использует стандартный `json.loads`, принимающий NaN/Infinity.
+После отклонения схемой стандартный обработчик FastAPI пытается вернуть `exc.errors()`
+в JSONResponse, включая исходный `input`. Starlette сериализует с `allow_nan=False`:
+нефинитное значение вызывает ValueError. Сформированная цепочка исключений содержит
+`RequestValidationError.__str__` с полным ошибочным входом; Uvicorn логирует её через exc_info.
+В исходном array-примере подтверждена одна строка лога с синтетическими query и H3.
+Это данные запроса в диагностике валидации, а не совпадение с литералом в строке тестового скрипта.
+
+Минимальная правка в [app/api.py:284](../app/api.py#L284): отдельный обработчик
+**только RequestValidationError** возвращает фиксированный `detail` со списком type/loc/msg.
+Из исключения используется только число ошибок для WARNING; input, ctx, body,
+произвольные loc/msg и строковое представление исключения не сериализуются и не логируются.
+Существующий access log метода/пути/статуса/времени сохраняется.
+Внутренние исключения pipeline и ResponseValidationError сохраняют отдельные безопасные **500**.
+Зависимости, контракт моделей и остальные компоненты не менялись.
+
+| ID | Проверка | Статус PASS/FAIL/BLOCKED | Ожидаемый и фактический результат | Доказательство | Серьёзность P0/P1/P2 | Владелец |
+|---|---|---|---|---|---|---|
+| ERR-RETEST-01 | Исходное воспроизведение и NaN/Infinity/-Infinity | PASS | До исправления 6 non-finite сценариев давали 500; после все 6 дают 422 с корректным JSON и фиксированным detail, включая `[synthetic request, NaN]` | Целевые pytest; независимые `baseline/http-recheck.sanitized.json` и `current/http-recheck.sanitized.json` | — | FEATURES |
+| ERR-RETEST-02 | Приватность ответов и обычных/exception logs | PASS | Marker и H3 отсутствуют каждый отдельно в проверенных ошибочных ответах и логах. Цепочек исключений при validation cases 0; generic WARNING и access422 сохраняются; input/ctx не отражаются | [tests/test_api.py:42](../tests/test_api.py#L42), [227](../tests/test_api.py#L227), [245](../tests/test_api.py#L245), [257](../tests/test_api.py#L257); current HTTP evidence | — | FEATURES |
+| ERR-RETEST-03 | Корректный контроль с конечным group_size=2 | PASS | HTTP 200, валидный Answer, rules/template; query/H3 отсутствуют в логах. Их штатное присутствие в успешных intent/context ответа не считается ошибкой | [tests/test_api.py:269](../tests/test_api.py#L269), независимый HTTP-контроль | — | FEATURES |
+| ERR-RETEST-04 | Ошибка приложения и неверный ответ pipeline | PASS | RuntimeError и ResponseValidationError дают прежний общий HTTP500, без текста запроса, H3, traceback или внутренних путей в ответе; технические сообщения сохраняются | [tests/test_api.py:330](../tests/test_api.py#L330), [348](../tests/test_api.py#L348); независимый настоящий HTTP | — | FEATURES |
+| ERR-RETEST-05 | Независимая проверка HTTP | PASS | **13/13**: 9 неверных запросов →422, корректный →200, большой →413, два вида внутренних ошибок →500; health до/после 200 | `independent_recheck.py current --browser`, `current/http-recheck.sanitized.json` | — | FEATURES |
+| ERR-RETEST-06 | Реальная форма Edge и обработка ошибки UI | PASS | API действительно вернул 422; UI показывает «Сервер не принял запрос: Неверный формат запроса.», без marker/H3; JS errors 0, есть кнопка повтора | `current/ui-safe-422.png`, metadata в HTTP evidence; ответ браузера не подменялся | — | POLISH |
+| ERR-RETEST-07 | Целевые регрессионные тесты | PASS | До фикса **8 failed / 3 passed**, после **11/11 passed**. Добавлены 10 случаев, усилен существующий RuntimeError500 test | `checks/red/pytest.summary.sanitized.json`, `checks/targeted/pytest.summary.sanitized.json` | — | FEATURES |
+| ERR-RETEST-08 | Полный существующий suite с новыми тестами | FAIL | **853 passed / 3 failed из 856**. Набор падающих тестов совпадает с первоначальным аудитом; новых регрессий нет, прежний QA-TEST-01 не исправлялся | `checks/full/pytest.summary.sanitized.json`; имена ниже | P2 | FEATURES |
+| ERR-RETEST-09 | Ruff проекта без cache | PASS | Ruff 0.17.1, exit 0, замечаний 0 | `checks/lint/ruff.summary.sanitized.json` | — | FEATURES / QUALITY; для остальных файлов владелец не определён |
+
+Три ранее известные неуспешные проверки: `tests/test_api.py::test_health`,
+`test_health_llm_off`, `test_health_explains_index_and_llm`. Во всех по-прежнему `no_key`:
+фикстура FakeLLM не задаёт синтетический ключ, хотя ожидания health предполагают его наличие.
+В этом исправлении фикстуры этих тестов и app/config.py не изменялись.
+
+Среда повторной проверки: Windows AMD64, Python 3.14.7, pytest 9.1.1,
+FastAPI 0.145.0, Starlette 1.8.0, Pydantic 2.14.1, Uvicorn 0.54.0.
+Использованы существующие TestClient, synthetic Store/CORE fakes, FakeLLM, caplog;
+для независимого реального HTTP — loopback Uvicorn и подменённые внешние сервисы.
+Реальных обращений к ИИ 0, попыток внешних соединений Python 0, чтений .env 0,
+записей тестового runner в репозиторий 0. Временные файлы и кэш находятся вне репозитория.
+Edge routing заблокировал 105 внешних запросов ресурсов; фоновые сокеты браузера на уровне ОС не аудировались.
+Продакшен и настоящие провайдеры не проверялись. Серверы после проверки остановлены.
+Более подробные причины ошибок ввода теперь не возвращаются клиенту: общий безопасный список
+сохраняет совместимость с `web/api.js`, но не раскрывает имена полей и исходные значения.
+
+Внешние артефакты:
+
+- `C:\Users\ermuk\AppData\Local\Temp\qadam-security-fix-20261018`: исходное воспроизведение
+  в `before/`, `run_checks.py`, результаты в `checks/red`, `checks/targeted`, `checks/full`, `checks/lint`;
+- `C:\Users\ermuk\AppData\Local\Temp\qadam-sec-err-before-c0562d76`: независимый snapshot
+  `api.before.py`, `baseline.sanitized.json`, `framework-source.safe.json`, `diagnose_before.py`;
+- `C:\Users\ermuk\AppData\Local\Temp\qadam-sec-err-independent-24f21a37`:
+  `independent_recheck.py`, `baseline/http-recheck.sanitized.json`,
+  `current/http-recheck.sanitized.json`, `current/ui-safe-422.png`.
+
+Владельцы изменений по таблице волны 3: `app/api.py` и `tests/test_api.py` — **FEATURES**;
+`docs/QA.md` — **владелец не определён**, обновление прямо разрешено пользователем.
+Результат SEC-ERR-PRIV-02: **PASS на проверенном рабочем дереве, подготовлено к ревью FEATURES**.
+Исходные FAIL/P1 и REQUEST выше сохранены. Commit, push и слияния в рамках исправления не выполнялись.
+
+### Продолжение проверки текущего исправления
+
+**18.10.2026, 23:01 UTC+5 (Asia/Qyzylorda)**, ветка `fix/security-error-privacy`,
+база `b451c6e`. SHA-256 `app/api.py` и `tests/test_api.py` совпадают с указанными выше:
+код исправления и регрессионные тесты за это продолжение не менялись.
+
+- Повторный полный pytest: **853 passed / 3 failed из 856**; падают те же
+  `test_health`, `test_health_llm_off`, `test_health_explains_index_and_llm` из-за `off (no_key)`.
+  Все проверки приватности в составе suite прошли.
+- Ruff 0.17.1 без cache: **PASS**, замечаний 0. `git diff --check`: **PASS**.
+- Независимое ревью текущего diff API и тестов: замечаний не найдено.
+  Обработчик использует фиксированный ответ, логирует только число ошибок;
+  сохранены отдельные проверки безопасных 500.
+- Изолированный runner: внешних сетевых попыток, чтений `.env` и попыток записи
+  в репозиторий **0**. Повторные HTTP/browser проверки в это продолжение не запускались.
+
+Результаты этого прогона: `C:\Users\ermuk\AppData\Local\Temp\qadam-security-fix-20261018\checks\`
+в каталогах `continue-full-20261018` и `continue-lint-20261018`.
+SEC-ERR-PRIV-02 остаётся **PASS на рабочем дереве, готово к ревью FEATURES**;
+QA-TEST-01 остаётся открытым. Commit, push и слияния не выполнялись.

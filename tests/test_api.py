@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterator
 from pathlib import Path
 
 import h3
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app import api
 from app.llm import LLMUnavailable
 from app.pipeline import Deps
-from app.schemas import POI, Answer, Landmark
+from app.schemas import POI, Answer, Landmark, RecommendRequest
 
 from .test_pipeline import FakeLLM, install_core_fakes, make_settings, make_store
 
@@ -35,6 +37,33 @@ def body(**kw: object) -> dict[str, object]:
     data: dict[str, object] = {"query": "кофе", "location": {"landmark_id": "expo"}}
     data.update(kw)
     return data
+
+
+def private_error_body(response: httpx.Response, caplog: pytest.LogCaptureFixture,
+                       marker: str, cell: str) -> dict:
+    def reject_constant(value: str) -> None:
+        pytest.fail(f"Non-finite value in error response: {value}")
+
+    data = json.loads(response.text, parse_constant=reject_constant)
+    for text in (response.text, caplog.text):
+        assert marker not in text
+        assert cell not in text
+    assert "traceback" not in response.text.casefold()
+    assert "site-packages" not in response.text
+    assert str(Path(__file__).resolve().parent.parent) not in response.text
+    return data
+
+
+def assert_safe_request_error(response: httpx.Response, caplog: pytest.LogCaptureFixture,
+                              marker: str, cell: str) -> None:
+    assert response.status_code == 422
+    data = private_error_body(response, caplog, marker, cell)
+    assert data == {"detail": [{"type": "request_validation", "loc": ["body"],
+                               "msg": "Неверный формат запроса."}]}
+    assert all("input" not in error and "ctx" not in error for error in data["detail"])
+    assert "request validation failed" in caplog.text
+    assert "POST /api/recommend -> 422" in caplog.text
+    assert not any(record.exc_info for record in caplog.records)
 
 
 def test_health(client: TestClient) -> None:
@@ -193,6 +222,65 @@ def test_invalid_payloads_422(client: TestClient, payload: dict) -> None:
     assert client.post("/api/recommend", json=payload).status_code == 422
 
 
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("shape", ["override", "array"])
+def test_nonfinite_request_errors_are_private_422(
+    client: TestClient, caplog: pytest.LogCaptureFixture, token: str, shape: str
+) -> None:
+    marker = "qa-private-nonfinite-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    payload = body(query=marker, location={"h3_cell": cell}, use_llm=False)
+    if shape == "override":
+        payload["overrides"] = {"group_size": float(token)}
+        raw = json.dumps(payload, allow_nan=True)
+    else:
+        raw = f"[{json.dumps(payload)}, {token}]"
+
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/recommend", content=raw,
+                               headers={"Content-Type": "application/json"})
+    assert_safe_request_error(response, caplog, marker, cell)
+
+
+def test_extra_field_name_is_not_echoed_in_request_error(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "qa-private-extra-field-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    payload = body(query=marker, location={"h3_cell": cell}, use_llm=False)
+    payload[f"{marker}_{cell}"] = True
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/recommend", json=payload)
+    assert_safe_request_error(response, caplog, marker, cell)
+
+
+def test_malformed_json_error_is_private_422(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "qa-private-malformed-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    raw = json.dumps(body(query=marker, location={"h3_cell": cell}, use_llm=False))[:-1]
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/recommend", content=raw,
+                               headers={"Content-Type": "application/json"})
+    assert_safe_request_error(response, caplog, marker, cell)
+
+
+def test_finite_override_control_still_returns_answer(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "qa-private-valid-control-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/recommend", json=body(
+            query=marker, location={"h3_cell": cell}, overrides={"group_size": 2}, use_llm=False))
+    assert response.status_code == 200
+    answer = Answer.model_validate(response.json())
+    assert answer.intent.group_size == 2
+    assert answer.data_used.generation == "template" and answer.data_used.parser == "rules"
+    assert marker not in caplog.text and cell not in caplog.text
+
+
 def test_absurd_time_is_422(client: TestClient) -> None:
     r = client.post("/api/recommend", json=body(at="0001-01-01T00:00:00+14:00"))
     assert r.status_code == 422 and "at вне" in r.json()["detail"]
@@ -242,19 +330,37 @@ def test_h3_cell_request(client: TestClient) -> None:
 def test_unexpected_error_is_500_without_leaking(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    secret = "секретный запрос"
+    marker = "qa-private-runtime-error-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
 
-    def boom(req: object, deps: object) -> None:
-        raise RuntimeError(f"bug while handling {secret}")
+    def boom(req: RecommendRequest, deps: Deps) -> None:
+        raise RuntimeError(f"bug while handling {req.query} at {req.location.h3_cell}")
 
     monkeypatch.setattr(api, "recommend", boom)
     with caplog.at_level(logging.INFO):
-        r = client.post("/api/recommend", json=body(query=secret))
+        r = client.post("/api/recommend", json=body(
+            query=marker, location={"h3_cell": cell}, use_llm=False))
     assert r.status_code == 500
-    assert secret not in r.text
-    logged = "\n".join(rec.getMessage() for rec in caplog.records)
-    assert "recommend failed: RuntimeError" in logged
-    assert secret not in logged
+    assert private_error_body(r, caplog, marker, cell) == {"detail": api.INTERNAL_ERROR}
+    assert "recommend failed: RuntimeError" in caplog.text
+
+
+def test_response_validation_error_remains_private_500(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "qa-private-response-error-marker"
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+
+    def invalid_answer(req: RecommendRequest, deps: Deps) -> dict:
+        return {"summary": req.query, "context": {"h3_cell": req.location.h3_cell}}
+
+    monkeypatch.setattr(api, "recommend", invalid_answer)
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/recommend", json=body(
+            query=marker, location={"h3_cell": cell}, use_llm=False))
+    assert response.status_code == 500
+    assert private_error_body(response, caplog, marker, cell) == {"detail": api.INTERNAL_ERROR}
+    assert "response validation failed" in caplog.text
 
 
 def test_access_log_has_no_body(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
