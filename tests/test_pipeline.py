@@ -1210,3 +1210,279 @@ class TestRealCore:
         if a.route is not None:
             assert a.route.legs[-1].to_id != "origin"
             assert "без обратной дороги" in a.route.note
+
+# ----------------------------------------------------- SEC-PRIV-01: real cache/API path
+
+
+class _CachePrivacySDK:
+    """SDK boundary fake; all application parsing, generation and CORE code stays real."""
+
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.calls: list[dict[str, Any]] = []
+        self.outputs: list[Any] = []
+        self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self._parse))
+
+    def with_options(self, **_kwargs: Any) -> _CachePrivacySDK:
+        return self
+
+    def _parse(self, **kwargs: Any) -> Any:
+        import hashlib
+        from types import SimpleNamespace
+
+        self.calls.append(kwargs)
+        prompt = kwargs["messages"][0]["content"]
+        text = prompt.split("<user_query>\n", 1)[1].split("\n</user_query>", 1)[0]
+        if kwargs["output_format"] is QueryIntent:
+            output = QueryIntent(raw_query=text, lang="en", categories=["cafe"], parser="llm")
+        else:
+            assert kwargs["output_format"] is DraftResponse
+            # This identity depends only on the prompt the model actually receives. It must
+            # be equal when two cells happen to produce the same generation prompt.
+            digest = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+            identity = digest.translate(str.maketrans("0123456789abcdef", "abcdefghijklmnop"))
+            echo = f"Variant {identity}. Echo {text}."
+            ids = re.findall(r'"id": "([^"]+)"', prompt)
+            assert ids
+            output = DraftResponse(summary=echo, cards=[CardDraft(
+                poi_id=ids[0], why=echo, what_to_do=echo, visit_min_low=20,
+                visit_min_high=30, idea_source="generated")])
+        self.outputs.append(output)
+        return SimpleNamespace(stop_reason="end_turn", parsed_output=output,
+                               model=kwargs["model"], content=[])
+
+
+def _privacy_settings(tmp_path: Path) -> Settings:
+    # Explicit synthetic configuration: these tests never obtain credentials from .env.
+    return Settings(
+        anthropic_api_key="synthetic-privacy-key", anthropic_workspace_id=None,
+        claude_model="synthetic-privacy-model", claude_fallback_model="",
+        gemini_api_key="synthetic-embedding-key", embed_model="synthetic-embedding",
+        embed_dim=4, llm_enabled=True, llm_timeout_s=1, h3_res=9,
+        data_dir=tmp_path / "data", poi_path=tmp_path / "data" / "poi.jsonl",
+        index_dir=tmp_path / "index", landmarks_path=tmp_path / "landmarks.json",
+        cache_dir=tmp_path / "cache", log_level="WARNING", contact="test@example.invalid",
+        openrouter_api_key=None, embed_provider="gemini")
+
+
+def _privacy_store(point: GeoPoint) -> Store:
+    poi = POI(
+        id="mock:privacy_cafe", name="Synthetic privacy cafe", category="cafe",
+        tags=["coffee", "indoor"], geo=point, address="Trusted Avenue 7",
+        website="https://example.invalid/trusted", opening_hours="24/7",
+        sources=["mock"], data_confidence=0.9, fetched_at="2026-10-18")
+    return make_store([poi], {}, embeddings=np.array([[1, 0, 0, 0]], dtype=np.float32),
+                      embed_model="synthetic-embedding")
+
+
+def _privacy_client(settings: Settings, store: Store) -> tuple[Any, Any, _CachePrivacySDK]:
+    from fastapi.testclient import TestClient
+
+    from app.api import create_app
+    from app.llm import LLMClient
+
+    from .test_llm import FakeGenai
+
+    llm = LLMClient(settings)
+    sdk = _CachePrivacySDK()
+    llm._client = sdk
+    llm._genai = FakeGenai()
+    return TestClient(create_app(Deps(store=store, llm=llm, settings=settings))), llm, sdk
+
+
+def _privacy_post(client: Any, query: str, cell: str, store: Store) -> Any:
+    from app.schemas import Answer
+
+    response = client.post("/api/recommend", json={
+        "query": query, "location": {"h3_cell": cell}, "at": DAYTIME,
+        "lang": "en", "want_route": False, "use_llm": True})
+    assert response.status_code == 200, response.text
+    answer = Answer.model_validate(response.json())
+    assert answer.data_used.parser == "llm"
+    assert answer.data_used.generation == "llm"
+    assert answer.intent.raw_query == query and answer.context.h3_cell == cell
+    assert len(answer.cards) == 1
+    card, poi = answer.cards[0], store.pois[0]
+    distance = geo.haversine_m(answer.context.origin, poi.geo)
+    verdict = hours.evaluate_hours(poi.opening_hours, answer.context.local_time, lang="en")
+    assert card.poi_id == poi.id and card.title == poi.name
+    assert card.geo == poi.geo and card.category == poi.category
+    assert card.distance_m == round(distance) and card.walk_min == geo.walk_minutes(distance)
+    assert (card.open_status, card.open_confidence, card.open_note) == (
+        verdict.status, verdict.confidence, verdict.note)
+    assert card.facts_sources == poi.sources and card.data_confidence == poi.data_confidence
+    assert card.address == poi.address and card.website == poi.website
+    assert card.tags == poi.tags and card.idea_source == "generated"
+    assert answer.summary.startswith("Variant ")
+    return answer
+
+
+def _privacy_scan(cache_dir: Path, secrets: list[str], *, preserved: set[Path] | None = None
+                  ) -> dict[str, bytes]:
+    files = {}
+    for path in cache_dir.rglob("*"):
+        relative = str(path.relative_to(cache_dir))
+        assert all(secret not in relative for secret in secrets)
+        if path.is_file() and path not in (preserved or set()):
+            content = path.read_bytes()
+            assert all(secret.encode() not in content for secret in secrets), path
+            files[relative] = content
+    return files
+
+
+def _privacy_watch_atomic_writes(monkeypatch: pytest.MonkeyPatch, cache_dir: Path
+                                ) -> dict[str, bytes]:
+    from app import llm as llm_mod
+
+    original_replace = llm_mod.os.replace
+    seen: dict[str, bytes] = {}
+
+    def replace(source: Any, destination: Any) -> None:
+        source_path = Path(source)
+        if source_path.is_relative_to(cache_dir):
+            # Inspect the temporary file before replacement, not just the final files.
+            relative = str(source_path.relative_to(cache_dir))
+            seen[relative] = source_path.read_bytes()
+        original_replace(source, destination)
+
+    monkeypatch.setattr(llm_mod.os, "replace", replace)
+    return seen
+
+
+def test_cache_privacy_real_api_repeat_restart_and_query_cell_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+    settings = _privacy_settings(tmp_path)
+    first_cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    second_cell = sorted(h3.grid_ring(first_cell, 1))[0]
+    centre = geo.h3_center(first_cell)
+    store = _privacy_store(GeoPoint(lat=centre.lat + 0.0005, lon=centre.lon + 0.0005))
+    first_query = f"coffee PRIVALPHAMARKER {first_cell}"
+    other_query = f"coffee PRIVBETAMARKER {first_cell}"
+    secrets = [first_query, other_query, "PRIVALPHAMARKER", "PRIVBETAMARKER",
+               first_cell, second_cell]
+    temporary_writes = _privacy_watch_atomic_writes(monkeypatch, settings.cache_dir)
+
+    client, llm, sdk = _privacy_client(settings, store)
+    with client:
+        first = _privacy_post(client, first_query, first_cell, store)
+        assert [call["output_format"] for call in sdk.calls] == [QueryIntent, DraftResponse]
+        echoed = sdk.outputs[-1]
+        assert all(first_query in text and first_cell in text for text in (
+            echoed.summary, echoed.cards[0].why, echoed.cards[0].what_to_do))
+        assert len(llm._genai.calls) == 1
+        clean_files = _privacy_scan(settings.cache_dir, secrets)
+        assert len(clean_files) == 1 and all(name.endswith(".npy") for name in clean_files)
+        assert temporary_writes and all(name.endswith(".tmp") for name in temporary_writes)
+        assert all(secret not in name for name in temporary_writes for secret in secrets)
+        assert all(secret.encode() not in content
+                   for content in temporary_writes.values() for secret in secrets)
+        embedding_file = next((settings.cache_dir / "embed").glob("*.npy"))
+        vector = np.load(embedding_file)
+        assert vector.dtype == np.float32 and vector.shape == (4,)
+        assert np.isfinite(vector).all() and np.linalg.norm(vector) == pytest.approx(1)
+
+        repeat = _privacy_post(client, first_query, first_cell, store)
+        assert repeat.summary == first.summary and repeat.cards == first.cards
+        assert len(sdk.calls) == 2  # both structured calls used this client's RAM cache
+        assert len(llm._genai.calls) == 1
+        assert _privacy_scan(settings.cache_dir, secrets) == clean_files
+
+    # A new app/client on the same directory must regenerate structured text. Numeric
+    # embedding vectors still survive restart and are actually read from their .npy cache.
+    restarted_client, restarted_llm, restarted_sdk = _privacy_client(settings, store)
+    with restarted_client:
+        restarted = _privacy_post(restarted_client, first_query, first_cell, store)
+        assert restarted.summary == first.summary and restarted.cards == first.cards
+        assert len(restarted_sdk.calls) == 2
+        assert restarted_llm._genai.calls == []
+        assert _privacy_scan(settings.cache_dir, secrets) == clean_files
+
+        other = _privacy_post(restarted_client, other_query, first_cell, store)
+        assert len(restarted_sdk.calls) == 4
+        assert other.summary != first.summary and other.cards[0].why != first.cards[0].why
+        assert other_query in restarted_sdk.outputs[-1].summary
+        assert "PRIVALPHAMARKER" not in restarted_sdk.outputs[-1].summary
+
+        moved = _privacy_post(restarted_client, first_query, second_cell, store)
+        assert len(restarted_sdk.calls) == 5  # parser is shared; full generation prompt differs
+        assert moved.summary != first.summary
+        assert restarted_sdk.calls[-1]["messages"] != sdk.calls[-1]["messages"]
+        assert moved.cards[0].distance_m != first.cards[0].distance_m
+        _privacy_scan(settings.cache_dir, secrets)
+
+
+def test_cache_privacy_equal_generation_prompts_in_different_cells_are_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+    settings = _privacy_settings(tmp_path)
+    first_cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    second_cell = sorted(h3.grid_ring(first_cell, 1))[0]
+    first_point, second_point = geo.h3_center(first_cell), geo.h3_center(second_cell)
+    store = _privacy_store(GeoPoint(lat=(first_point.lat + second_point.lat) / 2,
+                                   lon=(first_point.lon + second_point.lon) / 2))
+    query = f"coffee PRIVEQUALMARKER {first_cell}"
+    client, _llm, sdk = _privacy_client(settings, store)
+    with client:
+        first = _privacy_post(client, query, first_cell, store)
+        second = _privacy_post(client, query, second_cell, store)
+    assert first.context.origin != second.context.origin
+    assert first.cards == second.cards and first.summary == second.summary
+    assert first.cards[0].distance_m == second.cards[0].distance_m
+    # Coordinates and H3 are absent from generation prompts; equal rounded facts and
+    # query mean equal model inputs. A model cannot infer a hidden location distinction.
+    assert len(sdk.calls) == 2
+    assert [call["output_format"] for call in sdk.calls] == [QueryIntent, DraftResponse]
+    _privacy_scan(settings.cache_dir, [query, "PRIVEQUALMARKER", first_cell, second_cell])
+
+
+def test_cache_privacy_legacy_sensitive_record_is_ignored_and_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+    settings = _privacy_settings(tmp_path)
+    cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
+    store = _privacy_store(geo.h3_center(cell))
+    query = f"coffee PRIVLEGACYMARKER {cell}"
+    probe, _llm, sdk = _privacy_client(settings, store)
+    with probe:
+        expected = _privacy_post(probe, query, cell, store)
+    generation_call = sdk.calls[-1]
+    schema = generation_call["output_format"]
+    original_system = generation_call["system"][0]["text"]
+    # Precisely reproduce the v1 disk key, independent of any new in-memory key version.
+    schema_json = json.dumps(schema.model_json_schema(), sort_keys=True)
+    payload = {
+        "v": 1, "models": [settings.claude_model], "system": original_system,
+        "prompt": generation_call["messages"][0]["content"], "schema": schema.__name__,
+        "schema_sha": hashlib.sha256(schema_json.encode()).hexdigest(), "effort": "low"}
+    old_key = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode(
+        "utf-8")).hexdigest()
+    assert old_key == _llm._cache_key(original_system, payload["prompt"], schema, "low")
+    legacy = settings.cache_dir / "llm" / f"{old_key}.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    old_draft = sdk.outputs[-1].model_copy(update={"summary": f"OLDPRIVATE. Echo {query}."})
+    legacy_bytes = json.dumps({
+        "v": 1, "schema": "DraftResponse", "model": settings.claude_model,
+        "created_at": "2026-10-18T00:00:00+00:00", "output": old_draft.model_dump(mode="json"),
+    }, ensure_ascii=False).encode()
+    legacy.write_bytes(legacy_bytes)
+
+    restarted, restarted_llm, restarted_sdk = _privacy_client(settings, store)
+    with restarted:
+        answer = _privacy_post(restarted, query, cell, store)
+        repeat = _privacy_post(restarted, query, cell, store)
+    assert answer.summary == repeat.summary == expected.summary
+    assert len(restarted_sdk.calls) == 2  # neither parse nor generation trusted old disk data
+    assert restarted_llm._genai.calls == []  # the independent numeric cache remains usable
+    assert legacy.read_bytes() == legacy_bytes  # cleanup must be explicit, never automatic
+    files = _privacy_scan(settings.cache_dir, [query, "PRIVLEGACYMARKER", cell],
+                          preserved={legacy})
+    assert len(files) == 1 and all(name.endswith(".npy") for name in files)
+    assert list((settings.cache_dir / "llm").iterdir()) == [legacy]

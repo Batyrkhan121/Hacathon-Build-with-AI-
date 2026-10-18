@@ -125,60 +125,149 @@ def test_success_uses_documented_call_shape(tmp_path: Path) -> None:
     assert fake.retries == [llm_mod.SDK_RETRIES]
 
 
-def test_second_identical_call_is_served_from_disk_cache(tmp_path: Path) -> None:
-    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Астана"))]})
+def test_second_identical_call_is_served_from_memory_cache(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Astana"))]})
     call(llm)
     again = call(llm)
-    assert again.city == "Астана"
+    assert again.city == "Astana"
     assert len(fake.calls) == 1
     assert llm.last_model == "claude-sonnet-5-5 (cache)"
-    files = list((tmp_path / "cache" / "llm").glob("*.json"))
-    assert len(files) == 1
-    assert "Столица?" not in files[0].read_text(encoding="utf-8")  # prompt is never stored
+    assert not list(llm.settings.cache_dir.rglob("*"))
 
 
-def test_cache_never_stores_the_user_text(tmp_path: Path) -> None:
+def test_arbitrary_output_and_model_metadata_never_reach_disk(tmp_path: Path) -> None:
+    from app.schemas import CardDraft, DraftResponse
+
+    marker, cell = "SEC_PRIV_01_ECHO_b9c72e", "892e7b56003ffff"
+    prompt = f"Please find somewhere quiet: {marker} {cell}"
+    echo = f"{marker} / {cell}"  # a substring echo, not a full copy of the prompt
+    output = DraftResponse(
+        summary=echo,
+        cards=[CardDraft(poi_id="test:poi/1", why=echo, what_to_do=echo,
+                         visit_min_low=10, visit_min_high=20, idea_source="generated")],
+    )
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(output, model=echo)]})
+    first = llm.generate_structured(system="s", prompt=prompt, schema=DraftResponse)
+    assert first == output
+    assert llm.last_model == echo
+    again = llm.generate_structured(system="s", prompt=prompt, schema=DraftResponse)
+    assert again == output
+    assert llm.last_model == f"{echo} (cache)"
+    assert len(fake.calls) == 1
+    # No content, key, filename, metadata or temporary file is persisted.
+    assert not list(llm.settings.cache_dir.rglob("*"))
+
+
+def test_query_intent_nested_echo_is_only_cached_in_memory(tmp_path: Path) -> None:
     from app.schemas import QueryIntent
 
-    secret = "мой секретный запрос"
-    llm = LLMClient(make_settings(tmp_path))
-    llm._client = FakeAnthropic({"claude-sonnet-5-5": [ok(QueryIntent(raw_query=secret))]})
-    first = llm.generate_structured(system="s", prompt=secret, schema=QueryIntent)
-    assert first.raw_query == secret  # the live answer is untouched
-    (path,) = (tmp_path / "cache" / "llm").glob("*.json")
-    assert secret not in path.read_text(encoding="utf-8")
-    again = llm.generate_structured(system="s", prompt=secret, schema=QueryIntent)
-    assert again.raw_query == ""  # callers re-fill it (query_parser keeps the rules copy)
+    marker, cell = "SEC_PRIV_01_INTENT_61d0ca", "892e7b56003ffff"
+    prompt = f"Find coffee {marker} {cell}"
+    output = QueryIntent(raw_query=prompt, must_tags=[marker], avoid_tags=[cell],
+                         landmark_mention=f"{marker}/{cell}")
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(output)]})
+    assert llm.generate_structured(system="s", prompt=prompt, schema=QueryIntent) == output
+    assert llm.generate_structured(system="s", prompt=prompt, schema=QueryIntent) == output
+    assert len(fake.calls) == 1
+    assert not list(llm.settings.cache_dir.rglob("*"))
 
 
-def test_cache_survives_new_client_instance(tmp_path: Path) -> None:
-    llm, _ = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Астана"))]})
-    call(llm)
-    llm2, fake2 = make_client(tmp_path, {})
-    assert call(llm2).city == "Астана"
-    assert fake2.calls == []
+def test_structured_cache_does_not_survive_new_client_instance(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="first"))]})
+    assert call(llm).city == "first"
+    llm2, fake2 = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="fresh"))]})
+    assert call(llm2).city == "fresh"
+    assert len(fake.calls) == len(fake2.calls) == 1
+    assert not list(llm.settings.cache_dir.rglob("*"))
 
 
-def test_different_prompt_misses_cache(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("first_prompt", "second_prompt"),
+    [
+        ("query=A cell=892e7b56003ffff", "query=B cell=892e7b56003ffff"),
+        ("query=A cell=892e7b56003ffff", "query=A cell=892e7b56007ffff"),
+    ],
+    ids=["different-query-same-cell", "same-query-different-cell"],
+)
+def test_different_prompt_misses_cache(tmp_path: Path, first_prompt: str,
+                                      second_prompt: str) -> None:
     llm, fake = make_client(
         tmp_path,
-        {"claude-sonnet-5-5": [ok(Capital(city="Астана")), ok(Capital(city="Алматы"))]},
+        {"claude-sonnet-5-5": [ok(Capital(city="answer A")), ok(Capital(city="answer B"))]},
     )
-    call(llm, "a")
-    assert call(llm, "b").city == "Алматы"
+    assert call(llm, first_prompt).city == "answer A"
+    assert call(llm, second_prompt).city == "answer B"
+    assert call(llm, first_prompt).city == "answer A"
+    assert call(llm, second_prompt).city == "answer B"
     assert len(fake.calls) == 2
 
 
-def test_broken_cache_entry_is_ignored(tmp_path: Path) -> None:
-    llm, fake = make_client(
-        tmp_path,
-        {"claude-sonnet-5-5": [ok(Capital(city="Астана")), ok(Capital(city="Астана"))]},
+@pytest.mark.parametrize("broken", [False, True], ids=["valid-json", "invalid-json"])
+def test_legacy_sensitive_files_are_ignored_and_preserved(tmp_path: Path, broken: bool) -> None:
+    marker, cell = "SEC_PRIV_01_LEGACY_c176fb", "892e7b56003ffff"
+    prompt = f"Find coffee {marker} {cell}"
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="fresh"))]})
+    # Exact v1 key: a format-version change alone must not make this test pass.
+    key = llm._cache_key("sys", prompt, Capital, "low")
+    folder = llm.settings.cache_dir / "llm"
+    folder.mkdir(parents=True)
+    entry = json.dumps({"v": 1, "schema": "Capital", "model": f"{marker}/{cell}",
+                        "created_at": "2026-10-18T00:00:00+00:00",
+                        "output": {"city": f"{marker}/{cell}"}}).encode()
+    if broken:
+        entry = b"{not json " + entry
+    path = folder / f"{key}.json"
+    path.write_bytes(entry)
+    # The old atomic writer used a PID/thread suffix and could leave this behind.
+    leftover = folder / f"{key}.1234.5678.tmp"
+    leftover.write_bytes(entry)
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+
+    assert call(llm, prompt).city == "fresh"
+    assert call(llm, prompt).city == "fresh"
+    assert len(fake.calls) == 1
+    restarted, fake2 = make_client(
+        tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="after restart"))]},
     )
-    call(llm)
-    (path,) = (tmp_path / "cache" / "llm").glob("*.json")
-    path.write_text("{not json", encoding="utf-8")
-    assert call(llm).city == "Астана"
-    assert len(fake.calls) == 2
+    assert call(restarted, prompt).city == "after restart"
+    assert len(fake2.calls) == 1
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+def test_cached_models_are_not_shared_with_callers(tmp_path: Path) -> None:
+    from app.schemas import CardDraft, DraftResponse
+
+    output = DraftResponse(
+        summary="original",
+        cards=[CardDraft(poi_id="test:poi/1", why="original why", what_to_do="original activity",
+                         visit_min_low=10, visit_min_high=20, idea_source="generated")],
+    )
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(output)]})
+    first = llm.generate_structured(system="s", prompt="p", schema=DraftResponse)
+    first.summary = "caller changed live output"
+    first.cards[0].why = "caller changed nested live output"
+    second = llm.generate_structured(system="s", prompt="p", schema=DraftResponse)
+    assert second.summary == "original" and second.cards[0].why == "original why"
+    second.cards[0].what_to_do = "caller changed cache result"
+    second.cards.clear()
+    third = llm.generate_structured(system="s", prompt="p", schema=DraftResponse)
+    assert len(third.cards) == 1 and third.cards[0].what_to_do == "original activity"
+    assert len(fake.calls) == 1
+
+
+def test_structured_memory_cache_evicts_least_recently_used(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(llm_mod, "STRUCTURED_CACHE_SIZE", 2)
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [
+        ok(Capital(city="A")), ok(Capital(city="B")), ok(Capital(city="C")),
+        ok(Capital(city="B fresh")),
+    ]})
+    assert call(llm, "a").city == "A"
+    assert call(llm, "b").city == "B"
+    assert call(llm, "a").city == "A"  # accessing A makes B the oldest
+    assert call(llm, "c").city == "C"
+    assert call(llm, "a").city == "A"
+    assert call(llm, "b").city == "B fresh"
+    assert len(fake.calls) == 4
 
 
 @pytest.mark.parametrize("stop", ["refusal", "max_tokens"])
@@ -326,21 +415,22 @@ def test_config_errors_cool_down_longer(tmp_path: Path) -> None:
     assert left > llm_mod.NETWORK_COOLDOWN_S
 
 
-def test_disk_cache_serves_during_cooldown_and_without_key(tmp_path: Path) -> None:
-    """Docstring promise: preset scenarios survive quota problems."""
-    llm, _ = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Астана"))]})
+def test_memory_cache_serves_during_cooldown_but_disabled_still_blocks(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Astana"))]})
     call(llm)
     llm._cool_down(600, "test", "quota")
-    assert call(llm).city == "Астана" and llm.last_model == "claude-sonnet-5-5 (cache)"
+    assert call(llm).city == "Astana" and llm.last_model == "claude-sonnet-5-5 (cache)"
+    assert len(fake.calls) == 1
+    with pytest.raises(LLMUnavailable, match="cooling down"):
+        call(llm, "not cached")
+    llm.settings = dataclasses.replace(llm.settings, llm_enabled=False)
+    with pytest.raises(LLMUnavailable):
+        call(llm)  # the explicit switch-off wins even over this client's memory cache
+    assert llm.last_error == "disabled"
     no_key = LLMClient(make_settings(tmp_path, anthropic_api_key=None))
-    assert call(no_key).city == "Астана"
     with pytest.raises(LLMUnavailable):
-        call(no_key, "не в кэше")
+        call(no_key)  # a new client cannot recover an earlier personalized answer
     assert no_key.last_error == "no_key"
-    off = LLMClient(make_settings(tmp_path, llm_enabled=False))
-    with pytest.raises(LLMUnavailable):
-        call(off)  # an explicit switch-off wins over the cache
-    assert off.last_error == "disabled"
 
 
 def test_success_clears_last_error(tmp_path: Path) -> None:

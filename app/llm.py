@@ -15,8 +15,9 @@ Requirements:
   betas=["server-side-fallback-2026-07-01"], fallbacks="default")`;
 - timeout settings.llm_timeout_s, SDK retries (max_retries=2), then the fallback model,
   then LLMUnavailable;
-- disk cache data/cache/llm/<sha256>.json keyed by (model, system, prompt, schema name)
-  so preset demo scenarios are instant and survive quota problems;
+- bounded per-client RAM cache keyed by the full model/system/prompt/schema/effort;
+  arbitrary structured output (including echoed input) never goes to disk. Legacy
+  data/cache/llm files are ignored and require explicit operator cleanup;
 - embeddings (Anthropic has no embeddings API): Gemini via google-genai, only when
   settings.has_embeddings; settings.embed_model / settings.embed_dim, L2-normalised,
   task_type RETRIEVAL_QUERY for queries and RETRIEVAL_DOCUMENT for documents
@@ -46,7 +47,7 @@ import re
 import threading
 import time
 import unicodedata
-from datetime import UTC, datetime
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -69,7 +70,7 @@ TOTAL_BUDGET_FACTOR = 3.0  # do not start the fallback model after 3 x llm_timeo
 NETWORK_COOLDOWN_S = 60.0
 AUTH_COOLDOWN_S = 300.0
 CACHE_VERSION = 1
-REDACTED_FIELDS = ("raw_query",)  # never written to the disk cache (callers re-fill them)
+STRUCTURED_CACHE_SIZE = 128  # entries per client; no structured responses on disk
 
 EMBED_BATCH = 100
 EMBED_ATTEMPTS = 3
@@ -148,6 +149,7 @@ class LLMClient:
         self._http: Any = None  # httpx.Client for OpenRouter, created lazily; tests inject one
         self._lock = threading.Lock()
         self._local = threading.local()
+        self._structured_cache: OrderedDict[str, tuple[BaseModel, str]] = OrderedDict()
         self._cooldown_until = 0.0
         self._cooldown_kind: str | None = None
         self._embed_cooldown_until = 0.0  # Gemini, separate from Claude
@@ -166,7 +168,7 @@ class LLMClient:
 
     @property
     def enabled(self) -> bool:
-        """LLM_ENABLED: an explicit switch-off (then not even the disk cache is used)."""
+        """LLM_ENABLED: an explicit switch-off (then not even the RAM cache is used)."""
         return self.settings.llm_enabled
 
     @property
@@ -218,8 +220,9 @@ class LLMClient:
     ) -> T:
         """Return a validated `schema` instance or raise LLMUnavailable (reason: last_error).
 
-        Order: switched off -> nothing; then the disk cache (it serves preset scenarios even
-        without a key or during a cooldown); then no key / cooldown -> fail fast."""
+        Order: switched off -> nothing; then the per-client RAM cache (it can serve
+        during a cooldown); then no key / cooldown -> fail fast. A new client starts empty.
+        Legacy disk entries are never read, rewritten or deleted here."""
         self._local.model = None
         self._local.error = None
         if not self.settings.llm_enabled:
@@ -263,7 +266,7 @@ class LLMClient:
                 log.warning("LLM model %s failed: %s", model, exc)
                 continue
             self._local.model = served
-            self._cache_write(key, schema, obj, served)
+            self._cache_write(key, obj, served)
             log.info("LLM %s ok via %s in %.1fs", schema.__name__, served,
                      time.monotonic() - started)
             return obj
@@ -330,10 +333,6 @@ class LLMClient:
 
     # ------------------------------------------------------------------ cache
 
-    @property
-    def _llm_cache_dir(self) -> Path:
-        return self.settings.cache_dir / "llm"
-
     def _cache_key(self, system: str, prompt: str, schema: type[BaseModel], effort: str) -> str:
         schema_json = json.dumps(schema.model_json_schema(), sort_keys=True)
         payload = {
@@ -349,34 +348,24 @@ class LLMClient:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _cache_read(self, key: str, schema: type[T]) -> tuple[T, str] | None:
-        path = self._llm_cache_dir / f"{key}.json"
-        if not path.exists():
-            return None
-        try:
-            entry = json.loads(path.read_text(encoding="utf-8"))
-            return schema.model_validate(entry["output"]), str(entry.get("model") or "?")
-        except Exception as exc:  # noqa: BLE001 - a broken cache entry must never break a request
-            log.warning("LLM cache entry %s unreadable (%s), ignoring",
-                        key[:12], type(exc).__name__)
-            path.unlink(missing_ok=True)
-            return None
+        # Never consult legacy llm/*.json or *.tmp: their arbitrary model output may
+        # contain private input. Do not auto-delete existing user data either.
+        with self._lock:
+            entry = self._structured_cache.get(key)
+            if entry is None:
+                return None
+            self._structured_cache.move_to_end(key)
+            obj, model = entry
+            return schema.model_validate(obj.model_copy(deep=True)), model
 
-    def _cache_write(self, key: str, schema: type[BaseModel], obj: BaseModel, model: str) -> None:
-        # Only the model output is stored — never the prompt (it may carry the user's query) —
-        # and output fields that echo the user's text are blanked (QueryIntent.raw_query).
-        output = obj.model_dump(mode="json")
-        for name in REDACTED_FIELDS:
-            if isinstance(output.get(name), str):
-                output[name] = ""
-        entry = {
-            "v": CACHE_VERSION,
-            "schema": schema.__name__,
-            "model": model,
-            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "output": output,
-        }
-        _atomic_write_text(self._llm_cache_dir / f"{key}.json",
-                           json.dumps(entry, ensure_ascii=False))
+    def _cache_write(self, key: str, obj: BaseModel, model: str) -> None:
+        # No schema or field blacklist can make arbitrary model strings safe for disk.
+        # Keep independent copies only in bounded process memory, under the full key.
+        with self._lock:
+            self._structured_cache[key] = (obj.model_copy(deep=True), model)
+            self._structured_cache.move_to_end(key)
+            while len(self._structured_cache) > STRUCTURED_CACHE_SIZE:
+                self._structured_cache.popitem(last=False)
 
     # ------------------------------------------------------------- embeddings
 
@@ -650,13 +639,3 @@ def _normalise_rows(rows: list[Any], n: int, dim: int) -> np.ndarray:
     if np.any(norms == 0):
         raise LLMUnavailable("zero embedding vector")
     return arr / norms
-
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError as exc:
-        log.warning("LLM cache write failed: %s", type(exc).__name__)
