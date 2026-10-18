@@ -7,13 +7,12 @@
   <meta name="description" content="ИИ-помощник для прогулок по Астане: 1–3 места рядом, с честными источниками данных и уверенностью.">
   <meta name="theme-color" content="#0a6e87">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7-12-7V9z' fill='%230a6e87'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f2b705'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <!-- Leaflet 1.9.4 и h3-js 4.1.0 лежат локально (web/vendor, версии и sha256 — в vendor/README.md):
+       демо работает без CDN, браузер не обращается к unpkg. -->
+  <link rel="stylesheet" href="vendor/leaflet-1.9.4/leaflet.css">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
-  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"
-          integrity="sha384-nKUDlg+fT0U/eEt4KWP9n034kLe/eVj6k7CVjbu6qfRhJdEyinlGajS9+9AU+UZ5" crossorigin="anonymous" defer></script>
+  <script src="vendor/leaflet-1.9.4/leaflet.js" defer></script>
+  <script src="vendor/h3-js-4.1.0/h3-js.umd.js" defer></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
