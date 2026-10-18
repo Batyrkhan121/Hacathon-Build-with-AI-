@@ -22,8 +22,6 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
 
 # Explicit copies plus the context allowlist keep local files out of all layers.
 COPY app/ ./app/
-# Kept for compatibility with index freshness validation in the pending fixes PR.
-COPY pipeline/ ./pipeline/
 COPY prompts/ ./prompts/
 COPY web/ ./web/
 COPY data/processed/ ./data/processed/

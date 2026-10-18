@@ -5,8 +5,6 @@
 !requirements.txt
 !app/
 !app/*.py
-!pipeline/
-!pipeline/*.py
 !prompts/
 !prompts/*.md
 !web/
