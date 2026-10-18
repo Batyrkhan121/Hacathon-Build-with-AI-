@@ -149,7 +149,24 @@ def check_embed() -> str:
 
     s = get_settings()
     if not s.has_embeddings:
-        raise Skip("GEMINI_API_KEY not set -> no vector index, retrieval is lexical")
+        key = "OPENROUTER_API_KEY" if s.embed_provider == "openrouter" else "GEMINI_API_KEY"
+        raise Skip(f"EMBED_PROVIDER={s.embed_provider}, {key} not set -> retrieval is lexical")
+
+    if s.embed_provider == "openrouter":
+        # the same code path as the server, with an empty cache so the call really goes out
+        import dataclasses
+        import tempfile
+
+        from app.llm import LLMClient
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = LLMClient(dataclasses.replace(s, cache_dir=Path(tmp)))
+            vec = client.embed_query("тихое кафе с розеткой у EXPO")
+            if vec is None:
+                raise RuntimeError(f"openrouter embed failed: {client.last_embed_status}")
+        if len(vec) != s.embed_dim:
+            raise RuntimeError(f"dim {len(vec)} != EMBED_DIM {s.embed_dim}")
+        return f"openrouter {s.embed_model}: dim={len(vec)}"
 
     from google import genai
     from google.genai import types
@@ -171,7 +188,7 @@ def check_embed() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--llm", action="store_true",
-                        help="also call Claude and the optional Gemini embeddings (uses quota)")
+                        help="also call Claude and the optional embeddings (uses quota / credits)")
     args = parser.parse_args()
 
     checks: list[tuple[str, Callable[[], str]]] = [
@@ -193,7 +210,7 @@ def main() -> int:
         checks += [
             ("claude: models", check_claude_models),
             ("claude: structured output", check_claude_structured),
-            ("gemini: embed (optional)", check_embed),
+            ("embeddings (optional)", check_embed),
         ]
 
     results = [run(name, fn) for name, fn in checks]
