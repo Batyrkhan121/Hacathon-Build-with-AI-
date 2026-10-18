@@ -265,6 +265,11 @@ function renderError() {
     canRetryNoAi: state.lastRequest?.use_llm !== false,
     onRetry: () => submit({ useLlm: state.lastRequest?.use_llm !== false }),
     onRetryNoAi: () => submit({ useLlm: false }),
+    onShorten: () => {
+      els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+      els.query.focus();
+      els.query.select();
+    },
   });
 }
 

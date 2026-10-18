@@ -140,6 +140,10 @@ export function errorText(err) {
       return t('error.timeout');
     case 'validation':
       return t('error.validation', { detail: err.detail || '422' });
+    case 'too_large':
+      return t('error.tooLarge');
+    case 'unavailable':
+      return t('error.unavailable');
     case 'server':
       return t('error.server', { status: err.status ?? '?' });
     case 'format':
@@ -151,22 +155,30 @@ export function errorText(err) {
   }
 }
 
-export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi }) {
+// Повтор без ИИ помогает только при сбоях ИИ/сети; при 413, 422 и 503 тот же запрос не пройдёт.
+const NO_AI_USELESS = new Set(['too_large', 'validation', 'unavailable']);
+
+export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onShorten }) {
+  const tooLarge = err?.kind === 'too_large';
+  const offerNoAi = canRetryNoAi && !NO_AI_USELESS.has(err?.kind);
   root.replaceChildren(
     h(
       'div',
       { class: 'error-box', role: 'alert' },
-      h('p', { class: 'error-title', text: t('error.title') }),
+      h('p', { class: 'error-title', text: tooLarge ? t('error.tooLargeTitle') : t('error.title') }),
       h('p', { class: 'error-text', text: errorText(err) }),
       h(
         'div',
         { class: 'error-actions' },
-        canRetryNoAi
+        tooLarge
+          ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onShorten }, t('error.shorten'))
+          : null,
+        offerNoAi
           ? h('button', { type: 'button', class: 'btn btn-primary', onclick: onRetryNoAi }, t('error.retryNoAi'))
           : null,
-        h('button', { type: 'button', class: 'btn btn-ghost', onclick: onRetry }, t('error.retry')),
+        tooLarge ? null : h('button', { type: 'button', class: 'btn btn-ghost', onclick: onRetry }, t('error.retry')),
       ),
-      canRetryNoAi ? h('p', { class: 'hint', text: t('error.noAiHint') }) : null,
+      offerNoAi ? h('p', { class: 'hint', text: t('error.noAiHint') }) : null,
     ),
   );
 }
