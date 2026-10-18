@@ -188,11 +188,13 @@ def test_lexical_query_without_tags(synthetic_pois: list[POI]) -> None:
         None,
         k=8,
     )
-    # keyword match is the strongest for the playground; final order also weighs popularity
-    # and confirmed hours (starting WEIGHTS, tuned by eval in T70)
-    best = max(out, key=lambda c: c.score_parts["relevance"])
-    assert best.poi.id == "test:poi/5"
-    assert "test:poi/5" in ids(out[:3])
+    # T70: a full keyword match must beat a popular place with confirmed hours
+    assert out[0].poi.id == "test:poi/5"
+
+
+def test_weights_sum_to_one() -> None:
+    assert sum(WEIGHTS.values()) == pytest.approx(1.0)
+    assert WEIGHTS["relevance"] > 0.5  # relevance dominates the score
 
 
 def test_semantic_relevance(synthetic_pois: list[POI]) -> None:
@@ -218,7 +220,11 @@ def test_score_is_weighted_sum(synthetic_pois: list[POI]) -> None:
     out = retrieve(make_store(synthetic_pois), intent("кофе"), make_ctx(), None, k=8)
     for c in out:
         parts = c.score_parts
-        expected = sum(WEIGHTS[k] * parts[k] for k in WEIGHTS) + parts.get("penalty", 0.0)
+        expected = (
+            sum(WEIGHTS[k] * parts[k] for k in WEIGHTS)
+            + parts.get("penalty", 0.0)
+            + parts.get("group", 0.0)
+        )
         assert c.score == pytest.approx(expected, abs=1e-3)
         assert 0.0 <= parts["proximity"] <= 1.0
         assert 0.0 <= parts["relevance"] <= 1.0
@@ -568,3 +574,97 @@ def test_full_airport_zone_is_sparse_but_safe(
     assert 1 <= len(out) <= 8
     cards = template_cards(out, q, ctx)
     assert 1 <= len(cards) <= 3
+
+
+def test_landmark_words_are_not_relevance() -> None:
+    """«Я возле Mega Silk Way, хочу прогуляться»: the mall is where the user stands,
+    its name in the query must not make it the best match."""
+    from app.schemas import Landmark as LandmarkModel
+
+    mall = make_poi("1", "mall", 0.0, name="Mega Silk Way", opening_hours="Mo-Su 10:00-22:00",
+                    popularity=0.3)
+    park = make_poi("2", "park", 0.004, name="NU Park", tags=["walk", "outdoor"])
+    mega = LandmarkModel(id="mega_silk_way", names={"ru": "ТРЦ Mega Silk Way"},
+                         aliases=["mega silk way", "mega"], geo=mall.geo)
+    store = Store(pois=[mall, park], by_id={p.id: p for p in (mall, park)},
+                  landmarks={"mega_silk_way": mega})
+    q = intent("Я сейчас возле Mega Silk Way, хочу прогуляться", must_tags=["walk"],
+               landmark_mention="mega_silk_way")
+    ctx = make_ctx().model_copy(update={"origin": mall.geo, "landmark_id": "mega_silk_way"})
+    out = retrieve(store, q, ctx, None, k=2)
+    assert out[0].poi.id == "test:poi/2"
+    assert next(c for c in out if c.poi.id == "test:poi/1").score_parts["relevance"] == 0.0
+
+
+def test_night_prefers_places_open_longer() -> None:
+    late = datetime(2026, 10, 19, 23, 15, tzinfo=ASTANA_TZ)
+    soon = make_poi("1", "restaurant", 0.0010, opening_hours="Mo-Su 10:00-24:00", tags=["food"])
+    long = make_poi("2", "restaurant", 0.0012, opening_hours="Mo-Su 12:00-02:00", tags=["food"])
+    q = intent("поздно вечером поесть", night=True, must_tags=["food"])
+    out = retrieve(make_store([soon, long]), q, make_ctx(at=late), None, k=2)
+    assert out[0].poi.id == "test:poi/2"
+    closing = next(c for c in out if c.poi.id == "test:poi/1")
+    assert closing.hours.closes_in_min == 45
+    assert closing.score_parts["open"] < out[0].score_parts["open"]
+
+
+def test_group_prefers_places_for_a_company() -> None:
+    cafe = make_poi("1", "cafe", 0.0010, tags=["coffee"])
+    rest = make_poi("2", "restaurant", 0.0011, tags=["food"])
+    lib = make_poi("3", "library", 0.0009)
+    q = intent("Мы компанией из 5 человек, чем заняться вечером?", group_size=5)
+    out = retrieve(make_store([cafe, rest, lib]), q, make_ctx(), None, k=3)
+    assert out[0].poi.id == "test:poi/2"
+    parts = {c.poi.id: c.score_parts.get("group", 0.0) for c in out}
+    assert parts["test:poi/2"] > 0 > parts["test:poi/3"]
+    assert parts["test:poi/1"] == 0.0
+
+
+def test_no_group_part_for_small_or_unknown_groups() -> None:
+    rest = make_poi("2", "restaurant", 0.0011, tags=["food"])
+    for size in (None, 2):
+        out = retrieve(make_store([rest]), intent("поесть", group_size=size), make_ctx(), None)
+        assert "group" not in out[0].score_parts
+
+
+@pytest.mark.parametrize(
+    ("lang", "reason"),
+    [
+        ("ru", "нет данных: розетки, Wi-Fi"),
+        ("kk", "дерек жоқ: розетка, Wi-Fi"),
+        ("en", "no data: power outlets, Wi-Fi"),
+    ],
+)
+def test_requested_features_missing_in_data_are_named(lang: str, reason: str) -> None:
+    cafe = make_poi("1", "cafe", 0.001, tags=["coffee"])
+    q = intent("кофе, поработать, нужна розетка и wifi", lang=lang,
+               must_tags=["coffee", "power_outlets", "wifi"])
+    out = retrieve(make_store([cafe]), q, make_ctx(), None)
+    assert reason in explain(out[0], q, make_ctx(), lang=lang)
+    assert out[0].matched[1].startswith("есть кофе")  # what the data has comes first
+
+
+@pytest.mark.parametrize(
+    ("tag", "reason"),
+    [("food", "serves food"), ("shopping", "shops inside"), ("history", "history spot")],
+)
+def test_english_reasons_read_as_phrases(tag: str, reason: str) -> None:
+    poi = make_poi("1", "restaurant", 0.001, tags=[tag])
+    q = intent("food", must_tags=[tag], lang="en")
+    out = retrieve(make_store([poi]), q, make_ctx(), None)
+    assert reason in explain(out[0], q, make_ctx(), lang="en")
+
+
+def test_night_needs_confirmed_hours_or_late_tags() -> None:
+    """E2 with Claude: bars tagged only `night` with unknown hours were shown at 02:30."""
+    at = datetime(2026, 10, 20, 2, 30, tzinfo=ASTANA_TZ)
+    pois = [
+        make_poi("1", "bar", 0.0010, tags=["night", "indoor"]),  # unknown hours, no late tag
+        make_poi("2", "bar", 0.0012, tags=["late_open"]),  # unknown hours, late tag
+        make_poi("3", "bar", 0.0014, opening_hours="Mo-Su 18:00-04:00"),  # open/high at 02:30
+        make_poi("4", "viewpoint", 0.0016, tags=["24_7"]),
+    ]
+    q = intent("ночью в бар", night=True, categories=["bar", "nightlife", "viewpoint"],
+               must_tags=["night", "late_open"])
+    out = retrieve(make_store(pois), q, make_ctx(at=at), None, k=5)
+    assert set(ids(out)) == {"test:poi/2", "test:poi/3", "test:poi/4"}
