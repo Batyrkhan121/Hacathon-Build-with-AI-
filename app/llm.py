@@ -170,7 +170,8 @@ class LLMClient:
 
     @property
     def last_embed_status(self) -> str | None:
-        """Last embed_query in this thread: ok / cache / no_key / empty / quota / daily_quota /
+        """Last embed_query in this thread: ok / cache / no_key / empty / quota / minute_quota /
+        daily_quota /
         network / error (during a cooldown: the kind of the failure that started it)."""
         return getattr(self._local, "embed", None)
 
@@ -517,8 +518,11 @@ def _status_kind(exc: Any) -> str:
 
 
 def _embed_error_kind(exc: BaseException) -> str:
-    """Gemini failure -> daily_quota / quota / network / error (the SDK error is the cause of
-    our LLMUnavailable; same daily-quota test as pipeline/build_index.is_daily_quota)."""
+    """Gemini failure -> daily_quota (quotaId …PerDay…, 30 min pause) / minute_quota
+    (…PerMinute…, 60 s) / quota (429 of an unknown kind, 60 s) / network / error.
+
+    The SDK error is the cause of our LLMUnavailable; the daily-quota test is the same as
+    pipeline/build_index.is_daily_quota."""
     chain: list[BaseException] = []
     cur: BaseException | None = exc
     while cur is not None and len(chain) < 5:
@@ -527,6 +531,8 @@ def _embed_error_kind(exc: BaseException) -> str:
     text = " ".join(str(e) for e in chain)
     if "RESOURCE_EXHAUSTED" in text and "PerDay" in text:
         return "daily_quota"
+    if "RESOURCE_EXHAUSTED" in text and "PerMinute" in text:
+        return "minute_quota"  # quotaId …PerMinute…: the 60 s pause is enough
     if "RESOURCE_EXHAUSTED" in text or "429" in text:
         return "quota"
     names = " ".join(type(e).__name__ for e in chain)

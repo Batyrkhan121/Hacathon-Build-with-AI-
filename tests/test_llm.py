@@ -494,12 +494,14 @@ class GenaiError(Exception):
     [
         (GenaiError("429 RESOURCE_EXHAUSTED quotaId EmbedContentRequestsPerDayPerProject"),
          "daily_quota", llm_mod.EMBED_DAILY_COOLDOWN_S),
+        (GenaiError("429 RESOURCE_EXHAUSTED quotaId EmbedContentRequestsPerMinutePerProject"),
+         "minute_quota", llm_mod.EMBED_COOLDOWN_S),
         (GenaiError("429 RESOURCE_EXHAUSTED per minute"), "quota", llm_mod.EMBED_COOLDOWN_S),
         (TimeoutError("timed out"), "network", llm_mod.EMBED_COOLDOWN_S),
         (ConnectionError("refused"), "network", llm_mod.EMBED_COOLDOWN_S),
         (RuntimeError("bug"), "error", llm_mod.EMBED_COOLDOWN_S),
     ],
-    ids=["daily", "quota", "timeout", "connection", "other"],
+    ids=["daily", "minute", "quota-unknown", "timeout", "connection", "other"],
 )
 def test_embed_query_status_and_cooldown(tmp_path: Path, error: Exception, status: str,
                                          cooldown: float) -> None:

@@ -739,13 +739,42 @@ class TestRecommend:
         assert ("поиск: по словам (некорректный вектор запроса), отбор — Claude"
                 in bad.data_used.filters)
 
-    def test_no_gemini_key_is_a_reason_not_a_warning(self, deps: Deps) -> None:
+    @pytest.mark.parametrize(
+        ("lang", "picked", "lexical"),
+        [("ru", "поиск: по словам, отбор — Claude", "поиск: по словам"),
+         ("kk", "іздеу: сөздері бойынша, іріктеу — Claude", "іздеу: сөздері бойынша"),
+         ("en", "search: by keywords, picked by Claude", "search: by keywords")],
+    )
+    def test_empty_gemini_key_is_a_choice_not_a_failure(self, deps: Deps, lang: str,
+                                                        picked: str, lexical: str) -> None:
+        """Video takes run with an empty GEMINI_API_KEY: no «(no key)», no warning."""
         deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=None, embed_status="no_key")
-        a = recommend(req(lang="en"), deps)
-        assert "search: by keywords (no Gemini key), picked by Claude" in a.data_used.filters
-        assert not any("Semantic search" in w for w in a.warnings)
+        a = recommend(req(lang=lang), deps)
+        search = [f for f in a.data_used.filters if f.startswith(lexical)]
+        assert search == [picked]
+        assert not any("Gemini" in w or "Смысловой" in w or "Мағыналық" in w
+                       for w in a.warnings)
+        b = recommend(req(lang=lang, use_llm=False), deps)
+        assert [f for f in b.data_used.filters if f.startswith(lexical)] == [lexical]
+
+    @pytest.mark.parametrize(
+        ("status", "ru_reason"),
+        [("minute_quota", "минутный лимит Gemini"), ("daily_quota", "дневная квота Gemini")],
+    )
+    def test_gemini_quota_kinds_are_named(self, deps: Deps, status: str,
+                                          ru_reason: str) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status=status)
+        a = recommend(req(), deps)
+        assert f"поиск: по словам ({ru_reason}), отбор — Claude" in a.data_used.filters
+        assert (f"Смысловой поиск недоступен ({ru_reason}) — поиск только по словам."
+                in a.warnings)
+        en = recommend(req(lang="en"), deps)
+        assert any("Gemini per-minute limit" in f or "Gemini daily quota" in f
+                   for f in en.data_used.filters)
 
     def test_time_machine_weather_label(self, deps: Deps) -> None:
         a = recommend(req(use_llm=False, at="2026-01-05T15:00:00+05:00"), deps)
