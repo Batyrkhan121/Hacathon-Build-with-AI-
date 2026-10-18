@@ -169,6 +169,16 @@ SOURCE_LABELS: dict[str, str] = {
     "mock": "мок",
 }
 FACT_TAGS = frozenset({"coffee", "wifi", "power_outlets"})  # reasons that cite the source
+# T70 step 7: requested amenities the record says nothing about are named honestly
+MISSING_TAG_WORDS: dict[str, dict[str, str]] = {
+    "coffee": {"ru": "кофе", "kk": "кофе", "en": "coffee"},
+    "power_outlets": {"ru": "розетки", "kk": "розетка", "en": "power outlets"},
+    "wifi": {"ru": "Wi-Fi", "kk": "Wi-Fi", "en": "Wi-Fi"},
+    "quiet": {"ru": "тишина", "kk": "тыныштық", "en": "noise level"},
+    "work_friendly": {"ru": "место для работы", "kk": "жұмыс орны", "en": "space to work"},
+    "vegetarian": {"ru": "вегетарианское меню", "kk": "вегетариандық ас", "en": "vegetarian food"},
+    "local_cuisine": {"ru": "местная кухня", "kk": "ұлттық ас", "en": "local cuisine"},
+}
 REASONS: dict[str, dict[str, str]] = {
     "walk": {"ru": "≈{n} мин пешком", "kk": "≈{n} мин жаяу", "en": "≈{n} min walk"},
     "coffee": {"ru": "есть кофе ({src})", "kk": "кофе бар ({src})", "en": "coffee ({src})"},
@@ -240,6 +250,7 @@ REASONS: dict[str, dict[str, str]] = {
         "kk": "жабылуына ≈{n} мин",
         "en": "closes in ≈{n} min",
     },
+    "no_data": {"ru": "нет данных: {what}", "kk": "дерек жоқ: {what}", "en": "no data: {what}"},
     "hours_unknown": {
         "ru": "часы работы не указаны",
         "kk": "жұмыс уақыты көрсетілмеген",
@@ -577,6 +588,11 @@ def explain(
         if key in REASONS and key not in ("indoor", "outdoor"):
             keys.append((key, {"src": src} if tag in FACT_TAGS else {}))
 
+    missing = [t for t in intent.must_tags if t in MISSING_TAG_WORDS and t not in poi.tags]
+    if missing:
+        words = (MISSING_TAG_WORDS[t] for t in missing)
+        what = ", ".join(w.get(lang, w["ru"]) for w in words)
+        keys.append(("no_data", {"what": what}))
     if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))
     if intent.wheelchair:

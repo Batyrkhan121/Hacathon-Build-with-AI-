@@ -222,6 +222,9 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         if top.category not in exp["top1_categories_any"]:
             fails.append(f"первая карточка {top.category} ({top.title}), ожидали "
                          f"{exp['top1_categories_any']}")
+    if "top1_why_any" in exp and top is not None:
+        if not any(w.lower() in top.why.lower() for w in exp["top1_why_any"]):
+            fails.append(f"в why первой карточки нет ни одного из {exp['top1_why_any']}")
     if "top1_note_forbid" in exp and top is not None:
         hits = [s for s in exp["top1_note_forbid"] if s.lower() in top.open_note.lower()]
         if hits:

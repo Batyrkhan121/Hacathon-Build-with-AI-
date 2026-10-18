@@ -625,3 +625,20 @@ def test_no_group_part_for_small_or_unknown_groups() -> None:
     for size in (None, 2):
         out = retrieve(make_store([rest]), intent("поесть", group_size=size), make_ctx(), None)
         assert "group" not in out[0].score_parts
+
+
+@pytest.mark.parametrize(
+    ("lang", "reason"),
+    [
+        ("ru", "нет данных: розетки, Wi-Fi"),
+        ("kk", "дерек жоқ: розетка, Wi-Fi"),
+        ("en", "no data: power outlets, Wi-Fi"),
+    ],
+)
+def test_requested_features_missing_in_data_are_named(lang: str, reason: str) -> None:
+    cafe = make_poi("1", "cafe", 0.001, tags=["coffee"])
+    q = intent("кофе, поработать, нужна розетка и wifi", lang=lang,
+               must_tags=["coffee", "power_outlets", "wifi"])
+    out = retrieve(make_store([cafe]), q, make_ctx(), None)
+    assert reason in explain(out[0], q, make_ctx(), lang=lang)
+    assert out[0].matched[1].startswith("есть кофе")  # what the data has comes first

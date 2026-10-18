@@ -282,3 +282,9 @@ def test_probes_file_is_valid() -> None:
     assert all(p["id"].startswith("P") for p in probes)
     for p in probes:
         RecommendRequest.model_validate(p["request"])
+
+
+def test_top1_why_any(mock_answer: Answer) -> None:
+    word = mock_answer.cards[0].why.split()[0]
+    assert check_expect(mock_answer, {"top1_why_any": [word]}) == []
+    assert check_expect(mock_answer, {"top1_why_any": ["нет данных"]})

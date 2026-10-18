@@ -105,3 +105,14 @@
   expect:
     intent: {group_size: 5}
     top1_categories_any: [restaurant, mall, cinema, entertainment, sport, bar, nightlife, theatre, park, attraction, monument, viewpoint]
+
+- id: P10
+  title: "Кофе и розетка: о розетке в данных нет — карточка честно это говорит"
+  request:
+    query: "Где выпить кофе и поработать с ноутбуком? Нужна розетка"
+    location: {landmark_id: mega_silk_way}
+    at: "2026-10-19T10:00:00+05:00"
+    lang: ru
+  expect:
+    min_cards: 1
+    top1_why_any: ["нет данных"]
