@@ -619,3 +619,39 @@ def test_finalize_warnings_follow_language(cands: list[Candidate], lang: str) ->
                            intent(lang=lang), ctx())
     for w in [*empty, *fallback]:
         assert (not re.search("[а-яё]", w.lower())) if lang == "en" else re.search("[әқң]", w)
+
+
+# ------------------------------------- silent-failure review №2, item 3 (new parts)
+
+
+def _open_high(note: str) -> HoursVerdict:
+    return HoursVerdict(status="open", confidence="high", note=note)
+
+
+def test_all_day_claim_needs_24_7_data(cands: list[Candidate]) -> None:
+    day = [cand(cands[0].poi, _open_high("по данным OSM: ежедневно 08:00–22:00"), 250)]
+    why = "Работает круглосуточно. Тихо."
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=why)])
+    assert finalize(resp, day, intent(), ctx())[0][0].why == "Тихо."
+    allday_poi = cands[0].poi.model_copy(update={"tags": [*cands[0].poi.tags, "24_7"]})
+    allday = [cand(allday_poi, _open_high("по данным OSM: круглосуточно"), 250)]
+    assert finalize(resp, allday, intent(), ctx())[0][0].why == "Работает круглосуточно. Тихо."
+
+
+@pytest.mark.parametrize(
+    ("why", "kept"),
+    [
+        ("Закрывается поздно. Тихо.", "Тихо."),
+        ("Открывается рано утром. Тихо.", "Тихо."),
+        ("It closes late. Тихо.", "Тихо."),
+        ("Вечером открывается вид на город. Тихо.", "Вечером открывается вид на город. Тихо."),
+    ],
+)
+def test_open_close_words_need_known_hours(cands: list[Candidate], why: str, kept: str) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3", why=why)])  # hours unknown
+    assert finalize(resp, cands, intent(), ctx())[0][0].why == kept
+
+
+def test_open_close_words_kept_when_hours_known(cands: list[Candidate]) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why="Закрывается поздно. Тихо.")])
+    assert finalize(resp, cands, intent(), ctx())[0][0].why == "Закрывается поздно. Тихо."

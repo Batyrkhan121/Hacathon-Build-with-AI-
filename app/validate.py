@@ -273,6 +273,19 @@ _ADDRESS = re.compile(
     re.IGNORECASE,
 )
 _TIME = re.compile(r"\b([01]?\d|2[0-4])[:.]([0-5]\d)\b")
+# «круглосуточно / 24/7» needs the 24_7 tag or the hours note; «закрывается поздно /
+# открывается рано» needs known hours. «открывается вид на город» is about the view.
+_ALL_DAY = re.compile(
+    r"(круглосуточн\w*|24\s*/\s*7|24\s*час\w*|тәулік\s+бойы|around the clock|24 hours)"
+)
+_HOURS_VERB = re.compile(
+    r"(закрыва\w*+|открыва\w*+(?!\s+(вид|панорам))|\bcloses?\b|\bclosing\b|"
+    r"\bopens?\b(?!\s+(onto|up|to))|жабыл\w*|ашыл\w*)"
+)
+_HOURS_HINT = re.compile(
+    r"(\d|рано|поздно|утр\w*|вечер\w*|ноч\w*|полноч\w*|\bearly\b|\blate\b|morning|"
+    r"evening|night|midnight|ерте|\bкеш\b|таң)"
+)
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -283,10 +296,14 @@ class _Facts:
     numbers: frozenset[float]
     times: frozenset[str]
     distances: tuple[int, ...]
+    all_day_ok: bool = False  # the data says 24/7 (tag 24_7 or the hours note)
+    hours_known: bool = True  # hours status is not unknown
 
     def merge(self, other: _Facts) -> _Facts:
         return _Facts(self.numbers | other.numbers, self.times | other.times,
-                      self.distances + other.distances)
+                      self.distances + other.distances,
+                      self.all_day_ok and other.all_day_ok,
+                      self.hours_known and other.hours_known)
 
 
 def _clock(hours: str, minutes: str) -> str:
@@ -317,13 +334,22 @@ def _facts_for(cand: Candidate, visit: tuple[int, int], intent: QueryIntent | No
     for text in (poi.name, title, poi.address, hours.note):
         numbers |= _numbers_in(text)
     times = frozenset(_clock(h, m) for h, m in _TIME.findall(hours.note))
-    return _Facts(frozenset(numbers), times, (cand.distance_m,))
+    all_day = "24_7" in poi.tags or bool(_ALL_DAY.search(_fold(hours.note, True)))
+    return _Facts(frozenset(numbers), times, (cand.distance_m,), all_day,
+                  hours.status != "unknown")
 
 
 def _sentence_unverified(sentence: str, facts: _Facts) -> bool:
     """Prices, phones, links, street addresses or numbers / times not found in the data."""
     folded = unicodedata.normalize("NFKC", sentence)
     if _MONEY.search(folded) or _PHONE.search(folded) or _URL.search(folded):
+        return True
+    variants = (_fold(sentence, True), _fold(sentence, False))
+    if not facts.all_day_ok and any(_ALL_DAY.search(v) for v in variants):
+        return True
+    if not facts.hours_known and any(
+        _HOURS_VERB.search(v) and _HOURS_HINT.search(v) for v in variants
+    ):
         return True
     if _ADDRESS.search(folded):
         return True
@@ -535,7 +561,9 @@ def _facts_from_card(card: Card) -> _Facts:
     for text in (card.title, card.address, card.open_note):
         numbers |= _numbers_in(text)
     times = frozenset(_clock(h, m) for h, m in _TIME.findall(card.open_note))
-    return _Facts(frozenset(numbers), times, (card.distance_m,))
+    all_day = "24_7" in card.tags or bool(_ALL_DAY.search(_fold(card.open_note, True)))
+    return _Facts(frozenset(numbers), times, (card.distance_m,), all_day,
+                  card.open_status != "unknown")
 
 
 # ------------------------------------------------------------------ public
@@ -555,7 +583,7 @@ def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> s
     if not llm:
         kept = [s for s in _sentences(summary) if all_open or not _sentence_claims_open(s)]
         return " ".join(kept)
-    facts = _Facts(frozenset({float(len(cards))}), frozenset(), ())
+    facts = _Facts(frozenset({float(len(cards))}), frozenset(), (), True, True)
     for card in cards:
         facts = facts.merge(_facts_from_card(card))
     text = _guard_text(summary, facts, allow_open=all_open)[0]
