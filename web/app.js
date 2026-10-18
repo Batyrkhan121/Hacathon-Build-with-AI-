@@ -196,17 +196,32 @@ function revealResults() {
 
 // ------------------------------------------------------------------ rendering
 
-function renderAnswer() {
-  if (!state.lastAnswer) return;
-  view.renderAnswer(els.answer, state.lastAnswer, {
+function renderAnswer({ redrawMap = true } = {}) {
+  const answer = state.lastAnswer;
+  if (!answer) return;
+  view.renderAnswer(els.answer, answer, {
     request: state.lastRequest,
     meta: state.meta,
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
+    onHover: (rank) => mapView.highlightStop(rank),
     onClearFilters: () => {
       clearFilters();
       submit();
     },
+  });
+  if (!redrawMap) return;
+  const route = answer.route;
+  mapView.showAnswer(answer, {
+    originLabel: t('map.origin', { name: answer.context?.area_label || whereLabel() }),
+    popupFor: view.popupFor,
+    onSelect: (rank) => {
+      mapView.highlightStop(rank);
+      view.highlightCard(rank);
+    },
+    routeLabel: route
+      ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
+      : '',
   });
 }
 
@@ -219,12 +234,12 @@ function renderError() {
 }
 
 function focusOnMap(rank) {
-  mapView.focusStop?.(rank);
+  mapView.focusStop(rank);
   scrollMapIntoView();
 }
 
 function showRoute(rank) {
-  mapView.showRoute?.(rank);
+  mapView.showRoute(rank, t('route.direct'));
   scrollMapIntoView();
 }
 
@@ -366,7 +381,7 @@ function setLocation(loc) {
   state.location = loc;
   state.whereMsg = null;
   state.activePreset = null;
-  mapView.clearAnswer?.();
+  mapView.clearAnswer();
   renderLandmarkSelect();
   renderWhereNote();
   renderLocationOnMap();
@@ -492,7 +507,7 @@ function bindEvents() {
   onLangChange(() => {
     syncLangButtons();
     renderAll();
-    if (state.lastAnswer) renderAnswer();
+    if (state.lastAnswer) renderAnswer({ redrawMap: false });
     else if (state.lastError) renderError();
     else view.renderIntro(els.answer);
     if (state.location.type === 'cell') {

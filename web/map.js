@@ -9,6 +9,11 @@ const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">Op
 let map = null;
 let originLayer;
 let cellLayer;
+let answerLayer;
+let directLayer;
+let routeLine = null;
+let originPoint = null;
+const stopMarkers = new Map(); // rank -> marker
 let pickHandler = null;
 
 export function initMap(el) {
@@ -18,7 +23,103 @@ export function initMap(el) {
   L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
   originLayer = L.layerGroup().addTo(map);
   cellLayer = L.layerGroup().addTo(map);
+  answerLayer = L.layerGroup().addTo(map);
+  directLayer = L.layerGroup().addTo(map);
   return true;
+}
+
+function stopIcon(rank, ideaSource) {
+  return L.divIcon({
+    className: `stop-icon is-${ideaSource}`,
+    html: `<span>${Number(rank)}</span>`,
+    iconSize: [30, 34],
+    iconAnchor: [15, 17],
+    popupAnchor: [0, -16],
+  });
+}
+
+// Ответ сервера: старт (context.origin), номерные места и мини-маршрут пунктиром (он приблизительный).
+export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel }) {
+  if (!map) return;
+  clearAnswer();
+  const pts = [];
+  const hasCell = cellLayer.getLayers().length > 0;
+  originPoint = answer.context?.origin ? [answer.context.origin.lat, answer.context.origin.lon] : null;
+  if (originPoint) {
+    pts.push(originPoint);
+    if (!hasCell) showOrigin(answer.context.origin, originLabel);
+  }
+  if (answer.route?.path?.length >= 2) {
+    const latlngs = answer.route.path.map((p) => [p.lat, p.lon]);
+    L.polyline(latlngs, { color: '#ffffff', weight: 8, opacity: 0.9, interactive: false }).addTo(answerLayer);
+    routeLine = L.polyline(latlngs, {
+      color: '#0a6e87',
+      weight: 4,
+      dashArray: '2 9',
+      lineCap: 'round',
+    }).addTo(answerLayer);
+    routeLine.bindTooltip(routeLabel, { sticky: true });
+    pts.push(...latlngs);
+  }
+  for (const card of answer.cards) {
+    const ll = [card.geo.lat, card.geo.lon];
+    const marker = L.marker(ll, {
+      icon: stopIcon(card.rank, card.idea_source),
+      title: `${card.rank}. ${card.title}`,
+      alt: `${card.rank}. ${card.title}`,
+      riseOnHover: true,
+    })
+      .bindPopup(popupFor(card), { closeButton: false })
+      .on('click', () => onSelect(card.rank))
+      .addTo(answerLayer);
+    stopMarkers.set(card.rank, marker);
+    pts.push(ll);
+  }
+  if (pts.length) {
+    map.fitBounds(L.latLngBounds(pts), { padding: [48, 48], maxZoom: 16, animate: !reducedMotion() });
+  }
+}
+
+export function clearAnswer() {
+  answerLayer?.clearLayers();
+  directLayer?.clearLayers();
+  stopMarkers.clear();
+  routeLine = null;
+}
+
+export function focusStop(rank) {
+  const marker = stopMarkers.get(rank);
+  if (!map || !marker) return;
+  highlightStop(rank);
+  map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 16), { duration: reducedMotion() ? 0 : 0.5 });
+  marker.openPopup();
+}
+
+// Маршрут: весь мини-маршрут, а если его нет — прямая от старта до места (честно помечена).
+export function showRoute(rank, directLabel) {
+  if (!map) return;
+  directLayer.clearLayers();
+  if (rank) highlightStop(rank);
+  if (routeLine) {
+    map.fitBounds(routeLine.getBounds(), { padding: [48, 48], maxZoom: 16, animate: !reducedMotion() });
+    return;
+  }
+  const marker = stopMarkers.get(rank);
+  if (!marker || !originPoint) return;
+  const line = L.polyline([originPoint, marker.getLatLng()], {
+    color: '#0a6e87',
+    weight: 4,
+    dashArray: '2 9',
+    lineCap: 'round',
+  }).addTo(directLayer);
+  line.bindTooltip(directLabel, { sticky: true });
+  map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: !reducedMotion() });
+}
+
+export function highlightStop(rank) {
+  stopMarkers.forEach((m, r) => {
+    m.getElement()?.classList.toggle('is-active', r === rank);
+  });
 }
 
 export function hasMap() {
