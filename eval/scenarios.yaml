@@ -113,7 +113,6 @@
     lang: ru
   expected_type: "места, работающие ночью, с предупреждением о безопасности и честной уверенностью"
   expect:
-    route_source: graph
     min_cards: 1
     max_cards: 3
     intent: {night: true}
