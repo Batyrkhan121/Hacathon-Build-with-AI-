@@ -123,6 +123,17 @@ def test_network_error_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(seen) == weather.ATTEMPTS
 
 
+def test_failure_is_cached_for_a_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = install(monkeypatch, lambda r: httpx.Response(500))
+    assert weather.get_weather(EXPO, now()) is None
+    assert weather.get_weather(EXPO, now()) is None
+    assert len(seen) == weather.ATTEMPTS  # the second call did not hit the network
+    clock = weather.time.monotonic() + weather.FAILURE_TTL_S + 1
+    monkeypatch.setattr(weather.time, "monotonic", lambda: clock)
+    weather.get_weather(EXPO, now())
+    assert len(seen) == 2 * weather.ATTEMPTS
+
+
 def test_time_machine_skips_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = install(monkeypatch, lambda r: httpx.Response(200, json={"current": CURRENT}))
     assert weather.get_weather(EXPO, now() + timedelta(hours=5)) is None

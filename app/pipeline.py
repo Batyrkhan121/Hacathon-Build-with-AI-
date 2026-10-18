@@ -78,6 +78,7 @@ AIRPORT_TRANSFER_MIN = 35  # city centre -> NQZ by taxi, approximate
 AIRPORT_RESERVE_MIN = 15
 TOURIST_MAX_CARDS = 2
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
+MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
 MAX_RADIUS_M = 5000  # SearchContext.radius_m upper bound
 
@@ -223,6 +224,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
     # 1. origin (invalid input is the only thing that may raise)
     location = _coarsen(req.location, deps.settings.h3_res)
+    local_time = _local_time(req.at)
     if location.landmark_id is not None and location.landmark_id not in store.landmarks:
         raise UnknownLandmarkError(
             f"Неизвестный ориентир: {location.landmark_id!r}. Список: GET /api/landmarks"
@@ -255,7 +257,6 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             update={"time_budget_min": max(MIN_WALK_BUDGET_MIN, walk_budget)})
 
     # 3. context
-    local_time = _local_time(req.at)
     wx = weather.get_weather(origin, local_time)
     ctx = SearchContext(
         origin=origin,
@@ -388,6 +389,8 @@ def _coarsen(loc: LocationInput, res: int) -> LocationInput:
 def _local_time(at: datetime | None) -> datetime:
     if at is None:
         return hours.now_astana()
+    if not MIN_YEAR <= at.year <= MAX_YEAR:  # year 1 / 9999 overflow tz and timedelta math
+        raise InvalidRequest(f"at вне допустимого диапазона ({MIN_YEAR}–{MAX_YEAR})")
     if at.tzinfo is None:
         return at.replace(tzinfo=hours.ASTANA_TZ)
     return at.astimezone(hours.ASTANA_TZ)

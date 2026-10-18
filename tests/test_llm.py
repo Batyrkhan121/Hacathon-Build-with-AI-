@@ -133,6 +133,20 @@ def test_second_identical_call_is_served_from_disk_cache(tmp_path: Path) -> None
     assert "Столица?" not in files[0].read_text(encoding="utf-8")  # prompt is never stored
 
 
+def test_cache_never_stores_the_user_text(tmp_path: Path) -> None:
+    from app.schemas import QueryIntent
+
+    secret = "мой секретный запрос"
+    llm = LLMClient(make_settings(tmp_path))
+    llm._client = FakeAnthropic({"claude-sonnet-5-5": [ok(QueryIntent(raw_query=secret))]})
+    first = llm.generate_structured(system="s", prompt=secret, schema=QueryIntent)
+    assert first.raw_query == secret  # the live answer is untouched
+    (path,) = (tmp_path / "cache" / "llm").glob("*.json")
+    assert secret not in path.read_text(encoding="utf-8")
+    again = llm.generate_structured(system="s", prompt=secret, schema=QueryIntent)
+    assert again.raw_query == ""  # callers re-fill it (query_parser keeps the rules copy)
+
+
 def test_cache_survives_new_client_instance(tmp_path: Path) -> None:
     llm, _ = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Астана"))]})
     call(llm)

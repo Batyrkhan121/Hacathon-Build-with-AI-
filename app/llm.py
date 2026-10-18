@@ -68,6 +68,7 @@ TOTAL_BUDGET_FACTOR = 3.0  # do not start the fallback model after 3 x llm_timeo
 NETWORK_COOLDOWN_S = 60.0
 AUTH_COOLDOWN_S = 300.0
 CACHE_VERSION = 1
+REDACTED_FIELDS = ("raw_query",)  # never written to the disk cache (callers re-fill them)
 
 EMBED_BATCH = 100
 EMBED_ATTEMPTS = 3
@@ -284,13 +285,18 @@ class LLMClient:
             return None
 
     def _cache_write(self, key: str, schema: type[BaseModel], obj: BaseModel, model: str) -> None:
-        # Only the model output is stored — never the prompt (it may carry the user's query).
+        # Only the model output is stored — never the prompt (it may carry the user's query) —
+        # and output fields that echo the user's text are blanked (QueryIntent.raw_query).
+        output = obj.model_dump(mode="json")
+        for name in REDACTED_FIELDS:
+            if isinstance(output.get(name), str):
+                output[name] = ""
         entry = {
             "v": CACHE_VERSION,
             "schema": schema.__name__,
             "model": model,
             "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "output": obj.model_dump(mode="json"),
+            "output": output,
         }
         _atomic_write_text(self._llm_cache_dir / f"{key}.json",
                            json.dumps(entry, ensure_ascii=False))

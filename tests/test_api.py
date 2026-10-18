@@ -114,6 +114,45 @@ def test_invalid_payloads_422(client: TestClient, payload: dict) -> None:
     assert client.post("/api/recommend", json=payload).status_code == 422
 
 
+def test_absurd_time_is_422(client: TestClient) -> None:
+    r = client.post("/api/recommend", json=body(at="0001-01-01T00:00:00+14:00"))
+    assert r.status_code == 422 and "at вне" in r.json()["detail"]
+
+
+def test_oversized_body_is_413(client: TestClient) -> None:
+    r = client.post("/api/recommend", json=body(location={"landmark_id": "a" * 20_000}))
+    assert r.status_code == 413
+    assert len(r.content) < 500  # the body is not echoed back
+
+
+def test_chunked_oversized_body_is_413(client: TestClient) -> None:
+    def chunks() -> object:
+        yield b'{"query": "'
+        for _ in range(40):
+            yield b"x" * 1024
+        yield b'"}'
+
+    r = client.post("/api/recommend", content=chunks(),
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+
+
+def test_busy_server_answers_without_ai(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_core_fakes(monkeypatch)
+    monkeypatch.setattr(api, "MAX_CONCURRENT_LLM", 0)  # every LLM slot is taken
+    with TestClient(api.create_app(deps)) as c:
+        data = c.post("/api/recommend", json=body()).json()
+    assert data["data_used"]["generation"] == "template"
+    assert data["warnings"][0] == "Сервер занят — этот ответ собран без ИИ."
+    assert deps.llm.calls == []
+
+
+def test_openapi_documents_errors(client: TestClient) -> None:
+    spec = client.get("/openapi.json").json()
+    responses = spec["paths"]["/api/recommend"]["post"]["responses"]
+    assert {"200", "413", "422", "500", "503"} <= set(responses)
+
+
 def test_h3_cell_request(client: TestClient) -> None:
     cell = h3.latlng_to_cell(51.0894, 71.4161, 9)
     r = client.post("/api/recommend", json=body(location={"h3_cell": cell}, use_llm=False))

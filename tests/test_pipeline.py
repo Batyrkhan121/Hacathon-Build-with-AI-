@@ -275,6 +275,13 @@ class TestRecommend:
         with pytest.raises(InvalidRequest):
             recommend(bad, deps)
 
+    @pytest.mark.parametrize("at", ["0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-05:00",
+                                    "9999-12-31T23:59:59"])
+    def test_absurd_time_is_invalid_input_before_any_llm_call(self, deps: Deps, at: str) -> None:
+        with pytest.raises(InvalidRequest, match="at вне"):
+            recommend(req("я турист, 2 часа", at=at), deps)
+        assert deps.llm.calls == []
+
     def test_fine_cell_is_coarsened_to_r9(self, deps: Deps) -> None:
         fine = h3.latlng_to_cell(51.0894, 71.4161, 13)
         a = recommend(RecommendRequest.model_validate(

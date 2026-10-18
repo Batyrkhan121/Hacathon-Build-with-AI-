@@ -30,31 +30,34 @@ TIMEOUT_S = 5.0
 ATTEMPTS = 2
 RETRY_PAUSE_S = 0.5
 CACHE_TTL_S = 15 * 60
+FAILURE_TTL_S = 60  # while Open-Meteo is down, do not pay 2 x 5 s on every request
 MAX_SKEW = timedelta(hours=3)
 MIN_OUTDOOR_TEMP_C = -5.0
 MAX_OUTDOOR_PRECIP_MM = 0.5
 MAX_OUTDOOR_WIND_MS = 12.0
 
-_cache: dict[tuple[float, float], tuple[float, WeatherInfo]] = {}
+_cache: dict[tuple[float, float], tuple[float, WeatherInfo | None]] = {}
 _cache_lock = threading.Lock()
 
 
 def get_weather(origin: GeoPoint, at: datetime) -> WeatherInfo | None:
+    key = (round(origin.lat, 2), round(origin.lon, 2))
     try:
         if abs(_as_utc(at) - datetime.now(UTC)) > MAX_SKEW:
             return None  # "time machine" demo: current weather would be misleading
-        key = (round(origin.lat, 2), round(origin.lon, 2))
         with _cache_lock:
             hit = _cache.get(key)
-        if hit is not None and time.monotonic() - hit[0] < CACHE_TTL_S:
-            return hit[1]
+        if hit is not None:
+            ttl = CACHE_TTL_S if hit[1] is not None else FAILURE_TTL_S
+            if time.monotonic() - hit[0] < ttl:
+                return hit[1]
         info = _to_info(_fetch(*key))
-        with _cache_lock:
-            _cache[key] = (time.monotonic(), info)
-        return info
     except Exception as exc:  # noqa: BLE001 - weather is optional context
         log.warning("weather unavailable: %s", type(exc).__name__)
-        return None
+        info = None
+    with _cache_lock:
+        _cache[key] = (time.monotonic(), info)
+    return info
 
 
 def _as_utc(at: datetime) -> datetime:
