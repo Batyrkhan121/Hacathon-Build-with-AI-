@@ -478,3 +478,11 @@ def test_report_counts_graph_routes(tmp_path: Path) -> None:
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["routes"] == {"graph": 0, "straight": 16}
     assert "Маршруты: по графу тротуаров 0" in (tmp_path / "report.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("straight_m", "minutes"), [(0, 0), (226, 3), (227, 3), (229, 4), (300, 4)]
+)
+def test_min_walk_minutes_has_tolerance(straight_m: float, minutes: int) -> None:
+    """226 m straight is 3.01 min: within the 3 m tolerance a 3-minute graph leg is fine."""
+    assert run_eval.min_walk_minutes(straight_m) == minutes
