@@ -1,36 +1,36 @@
 {
   "request_id": "mock-0001",
   "lang": "ru",
-  "summary": "МОК: три идеи на 1–2 часа пешком у EXPO — музей-сфера, короткая прогулка и тёплый ТРЦ.",
+  "summary": "МОК: три идеи на 1–2 часа пешком у EXPO — музей Alem.ai в сфере, короткая прогулка и тёплый ТРЦ.",
   "cards": [
     {
       "rank": 1,
-      "poi_id": "mock:poi/nur_alem",
-      "title": "Нур Алем — Музей энергии будущего",
+      "poi_id": "mock:poi/alem_ai",
+      "title": "Alem.ai — Музей Сингулярности",
       "category": "museum",
       "geo": {
-        "lat": 51.0894,
-        "lon": 71.4161
+        "lat": 51.08925,
+        "lon": 71.41619
       },
-      "distance_m": 260,
+      "distance_m": 267,
       "walk_min": 5,
-      "visit_min_low": 60,
-      "visit_min_high": 90,
-      "why": "Интерактивная экспозиция в сфере EXPO — подходит под «что-то необычное на 1–2 часа».",
-      "what_to_do": "Поднимитесь на верхний уровень за видом на город, затем спускайтесь по залам; заложите 60–90 минут.",
+      "visit_min_low": 45,
+      "visit_min_high": 60,
+      "why": "Иммерсивный музей об искусственном интеллекте в сфере EXPO — подходит под «что-то необычное на 1–2 часа».",
+      "what_to_do": "Начните с верхнего уровня сферы и спускайтесь по залам; до закрытия около часа, поэтому заходите сразу.",
       "open_status": "open",
-      "open_confidence": "high",
-      "open_note": "МОК: по данным OSM ежедневно 10:00–20:00",
+      "open_confidence": "medium",
+      "open_note": "МОК: вт–вс 10:00–18:30, в понедельник закрыто (часы не подтверждены источником)",
       "idea_source": "poi_data",
       "facts_sources": [
         "mock"
       ],
-      "data_confidence": 0.85,
+      "data_confidence": 0.6,
       "tags": [
         "interactive",
         "indoor",
         "view",
-        "kids"
+        "architecture"
       ],
       "address": "МОК-адрес"
     },
@@ -96,21 +96,21 @@
   ],
   "route": {
     "stop_ids": [
-      "mock:poi/nur_alem",
+      "mock:poi/alem_ai",
       "mock:poi/boulevard",
       "mock:poi/mega_silk_way"
     ],
     "legs": [
       {
         "from_id": "origin",
-        "to_id": "mock:poi/nur_alem",
-        "distance_m": 260,
+        "to_id": "mock:poi/alem_ai",
+        "distance_m": 267,
         "walk_min": 5
       },
       {
-        "from_id": "mock:poi/nur_alem",
+        "from_id": "mock:poi/alem_ai",
         "to_id": "mock:poi/boulevard",
-        "distance_m": 380,
+        "distance_m": 394,
         "walk_min": 7
       },
       {
@@ -120,8 +120,8 @@
         "walk_min": 5
       }
     ],
-    "total_walk_m": 897,
-    "total_min": 117,
+    "total_walk_m": 918,
+    "total_min": 102,
     "fits_budget": true,
     "path": [
       {
@@ -129,8 +129,8 @@
         "lon": 71.412381
       },
       {
-        "lat": 51.0894,
-        "lon": 71.4161
+        "lat": 51.08925,
+        "lon": 71.41619
       },
       {
         "lat": 51.091109,
@@ -171,7 +171,7 @@
     "h3_res": 9,
     "area_label": "ваш район у EXPO (≈0,1 км²)",
     "landmark_id": null,
-    "local_time": "2026-10-19T17:30:00+05:00",
+    "local_time": "2026-10-20T17:30:00+05:00",
     "weather": {
       "temp_c": 6.0,
       "precipitation_mm": 0.0,
@@ -180,13 +180,13 @@
       "summary": "+6°C, ветер 7 м/с",
       "outdoor_ok": true,
       "source": "open_meteo",
-      "fetched_at": "2026-10-19T17:30:00+05:00"
+      "fetched_at": "2026-10-20T17:30:00+05:00"
     },
     "radius_m": 865
   },
   "data_used": {
     "location": "H3-ячейка r9 (≈0,1 км²) — точные координаты не передавались",
-    "time": "пн 19.10, 17:30 (UTC+5)",
+    "time": "вт 20.10, 17:30 (UTC+5)",
     "weather": "+6°C, ветер 7 м/с (Open-Meteo)",
     "filters": [
       "пешком ≤ 15 мин",
