@@ -371,6 +371,15 @@ def url_runner(
     base = base_url.rstrip("/")
     try:
         health = http.get(f"{base}/api/health")
+        if health.status_code == 503:  # server is up but has no data (poi_count 0)
+            try:
+                info = health.json()
+            except ValueError:
+                info = {}
+            return None, [
+                f"API {base} без данных: status={info.get('status')}, "
+                f"POI={info.get('poi_count')}, warnings={info.get('warnings', [])}"
+            ]
         health.raise_for_status()
         info = health.json()
     except (httpx.HTTPError, ValueError) as exc:
@@ -379,7 +388,7 @@ def url_runner(
         f"API: status={info.get('status')}, POI={info.get('poi_count')}, "
         f"index={info.get('index')}, llm={info.get('llm')}"
     ]
-    if info.get("llm") == "off" and not no_llm:
+    if str(info.get("llm", "")).startswith("off") and not no_llm:  # "off" / "off (disabled)"
         notes.append("LLM на сервере выключена: ответы шаблонные")
 
     def run(req: RecommendRequest) -> Outcome:

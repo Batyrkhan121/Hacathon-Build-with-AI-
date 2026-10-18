@@ -384,3 +384,33 @@ def test_24_7_template_reason_is_not_a_failed_claim(mock_answer: Answer) -> None
     assert check_expect(ans, {"forbid_open_claim_without_high": True}) == []
     card.tags = [t for t in card.tags if t != "24_7"]
     assert check_expect(ans, {"forbid_open_claim_without_high": True})
+
+
+def test_url_runner_notes_llm_off_with_reason() -> None:
+    """Health now says "off (reason)": the note about template answers must still appear."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok", "poi_count": 1222,
+                                         "index": "ready", "llm": "off (disabled)"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    runner, notes = run_eval.url_runner("http://test", client=client)
+    assert runner is not None
+    assert any("LLM на сервере выключена" in n for n in notes)
+
+
+def test_url_runner_503_without_data_stops_with_reason() -> None:
+    """Health 503 with a JSON body (0 POI): stop the run and say why, not 'unreachable'."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"status": "degraded", "poi_count": 0,
+                                         "warnings": ["poi.jsonl не найден"]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    runner, notes = run_eval.url_runner("http://test", client=client)
+    assert runner is None
+    assert "без данных" in notes[0]
+    assert "status=degraded" in notes[0] and "POI=0" in notes[0]
+    assert "poi.jsonl не найден" in notes[0]
