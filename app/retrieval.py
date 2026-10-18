@@ -643,6 +643,26 @@ def explain(
     return reasons
 
 
+# ------------------------------------------------------------ no-match signal
+
+
+def query_unmatched(
+    store: Store, intent: QueryIntent, ctx: SearchContext, candidates: list[Candidate]
+) -> bool:
+    """True when the free-text query asked for something and no candidate matched it.
+
+    «порекомендуй казино», gibberish: the answer is then just the nearest places. The pipeline
+    (FEATURES) adds a warning like «точного совпадения нет, показано, что рядом» (ru/kk/en).
+    False for structured requests (must_tags / categories), queries made only of stopwords
+    or landmark words («я возле Mega Silk Way»), and when nothing was found at all.
+    """
+    if not candidates or intent.must_tags or intent.categories:
+        return False
+    if not _query_stems(intent) - _landmark_stems(store, intent, ctx):
+        return False
+    return max(c.score_parts.get("relevance", 0.0) for c in candidates) == 0.0
+
+
 # -------------------------------------------------------------------- main
 
 

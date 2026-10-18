@@ -9,7 +9,7 @@ import pytest
 
 from app.geo import haversine_m, radius_for, to_h3, walk_minutes
 from app.hours import ASTANA_TZ
-from app.retrieval import WEIGHTS, explain, lexical_relevance, retrieve
+from app.retrieval import WEIGHTS, explain, lexical_relevance, query_unmatched, retrieve
 from app.route import plan_route
 from app.schemas import POI, GeoPoint, Landmark, QueryIntent, SearchContext, WeatherInfo
 from app.store import Store, load_pois
@@ -692,3 +692,39 @@ def test_no_tags_penalty_only_when_tags_were_asked() -> None:
     museum = make_poi("9", "museum", 0.0, tags=["indoor"])
     out = retrieve(make_store([museum]), intent("куда сходить"), make_ctx(), None)
     assert "no_tags" not in out[0].score_parts
+
+
+# ------------------------------------------------ RAG review R7: "no match" signal
+
+
+@pytest.mark.parametrize(
+    ("query", "kwargs", "expected"),
+    [
+        ("порекомендуй казино", {}, True),
+        ("абракадабра", {}, True),
+        ("кофе", {}, False),  # cafes match the word
+        ("куда сходить", {}, False),  # only stopwords: nothing was asked specifically
+        ("казино", {"must_tags": ["night"]}, False),  # structured request, not free text
+        ("казино", {"categories": ["bar"]}, False),
+    ],
+)
+def test_query_unmatched(
+    synthetic_pois: list[POI], query: str, kwargs: dict[str, object], expected: bool
+) -> None:
+    store = make_store(synthetic_pois)
+    q = intent(query, **kwargs)
+    out = retrieve(store, q, make_ctx(), None, k=8)
+    assert query_unmatched(store, q, make_ctx(), out) is expected
+
+
+def test_query_unmatched_ignores_landmark_words(synthetic_pois: list[POI]) -> None:
+    from app.schemas import Landmark as LandmarkModel
+
+    mega = LandmarkModel(id="mega_silk_way", names={"ru": "Mega"}, aliases=["mega silk way"],
+                         geo=ORIGIN)
+    store = Store(pois=synthetic_pois, by_id={p.id: p for p in synthetic_pois},
+                  landmarks={"mega_silk_way": mega})
+    q = intent("я возле mega silk way", landmark_mention="mega_silk_way")
+    ctx = make_ctx().model_copy(update={"landmark_id": "mega_silk_way"})
+    assert query_unmatched(store, q, ctx, retrieve(store, q, ctx, None)) is False
+    assert query_unmatched(store, intent("казино"), make_ctx(), []) is False  # nothing found
