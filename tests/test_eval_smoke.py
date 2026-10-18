@@ -20,7 +20,7 @@ def mock_answer() -> Answer:
 def test_scenarios_are_15_valid_requests() -> None:
     scenarios = run_eval.load_scenarios()
     ids = [s["id"] for s in scenarios]
-    assert ids == [f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 11)]
+    assert ids == [f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 12)]
     for s in scenarios:
         RecommendRequest.model_validate(s["request"])
         assert s["expect"], s["id"]
@@ -31,10 +31,10 @@ def test_mock_mode_writes_reports(tmp_path: Path) -> None:
     assert code == 0
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["mode"] == "mock"
-    assert report["total"] == 15
+    assert report["total"] == 16
     assert {r["id"] for r in report["results"]} >= {"S1", "E10"}
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert f"Итог: {report['passed']}/15" in md
+    assert f"Итог: {report['passed']}/16" in md
     # the mock answer is a sane walk near EXPO: S1 must pass, kk/en scenarios must not
     by_id = {r["id"]: r for r in report["results"]}
     assert by_id["S1"]["passed"], by_id["S1"]["failures"]
@@ -57,8 +57,21 @@ def test_unknown_hours_need_a_note(mock_answer: Answer) -> None:
     bad = mock_answer.model_copy(deep=True)
     bad.cards[1].open_note = "часы: —"
     bad.warnings = []
-    assert check_expect(bad, {"hours_honest": True})
-    assert check_expect(mock_answer, {"hours_honest": True}) == []
+    assert any("часы неизвестны" in f for f in check_invariants(bad))
+
+
+def test_unnamed_duplicates_are_caught(mock_answer: Answer) -> None:
+    bad = mock_answer.model_copy(deep=True)
+    bad.cards[0].title = bad.cards[1].title = "Детская площадка"
+    assert any("одинаковые названия" in f for f in check_invariants(bad))
+
+
+def test_text_any_looks_at_summary_and_warnings(mock_answer: Answer) -> None:
+    exp = {"text_any": ["не советуем"]}
+    assert check_expect(mock_answer, exp)
+    ok = mock_answer.model_copy(deep=True)
+    ok.warnings.append("Рядом почти ничего нет, ехать в город не советуем")
+    assert check_expect(ok, exp) == []
 
 
 def test_injection_and_intent_checks(mock_answer: Answer) -> None:

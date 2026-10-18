@@ -113,9 +113,17 @@ def check_invariants(ans: Answer) -> list[str]:
     ids = [c.poi_id for c in ans.cards]
     if len(set(ids)) != len(ids):
         fails.append("одно место в двух карточках")
+    titles = [c.title.strip().lower() for c in ans.cards]
+    if len(set(titles)) != len(titles):  # 110 of 111 playgrounds are «Детская площадка»
+        fails.append(f"одинаковые названия карточек: {[c.title for c in ans.cards]}")
+    warnings = " ".join(ans.warnings).lower()
     for c in ans.cards:
         if c.open_status == "unknown" and c.open_confidence == "high":
             fails.append(f"{c.poi_id}: unknown с уверенностью high")
+        if c.open_status == "unknown" and not any(
+            m in f"{c.open_note} {warnings}".lower() for m in HOURS_MARKERS
+        ):  # hours exist for only 28% of POI: the card must say so
+            fails.append(f"{c.poi_id}: часы неизвестны, но нет пометки")
         if _sentences(c.why) > 2:
             fails.append(f"{c.poi_id}: why длиннее двух предложений")
         if c.visit_min_low > c.visit_min_high:
@@ -178,14 +186,6 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
             text = f"{_card_text(c)} {c.open_note}".lower()
             if any(p in text for p in OPEN_CLAIMS):
                 fails.append(f"{c.poi_id}: «открыто сейчас» без open/high")
-    if exp.get("hours_honest"):
-        for c in ans.cards:
-            if c.open_status != "unknown":
-                continue
-            text = f"{c.open_note} {' '.join(ans.warnings)}".lower()
-            if not any(m in text for m in HOURS_MARKERS):
-                fails.append(f"{c.poi_id}: часы неизвестны, но нет пометки")
-
     if exp.get("warnings_required") and not ans.warnings:
         fails.append("нет предупреждений")
     if "warnings_any" in exp:
@@ -207,6 +207,10 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         hits = [s for s in exp["text_forbid"] if s.lower() in text]
         if hits:
             fails.append(f"в тексте запрещённое: {hits}")
+    if "text_any" in exp:
+        text = " ".join([ans.summary, *ans.warnings]).lower()
+        if not any(s.lower() in text for s in exp["text_any"]):
+            fails.append(f"в summary/warnings нет ни одного из {exp['text_any']}")
     for key, want in (exp.get("intent") or {}).items():
         got = getattr(ans.intent, key, None)
         if got != want:
