@@ -88,7 +88,7 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
     | `edge_len_m` | float32 | длина ребра по линии OSM, метры |
     | `edge_flags` | uint8 | биты: 1 лестница, 2 освещено, 4 пешеходная дорожка, 8 крупная дорога, 16 отрезок перехода |
 
-  - `data/processed/walk_graph_meta.json`: `osm_snapshot` (дата снимка OSM), `bbox` `[юг, запад, север, восток]`, `nodes`, `edges`, `crossings`, `signals`, `largest_component_share` (доля узлов в крупнейшей компоненте, 0..1), `poi_nodes` (`{poi_id: номер узла}`), `landmark_nodes` (`{landmark_id: номер узла}`), `created_at`. Данные — производная OSM под ODbL.
+  - `data/processed/walk_graph_meta.json`: `osm_snapshot` (дата снимка OSM), `bbox` `[юг, запад, север, восток]`, `nodes`, `edges`, `crossings`, `signals`, `largest_component_share` (доля узлов в крупнейшей компоненте до отбрасывания мелких, 0..1; в npz остаётся только крупнейшая), `poi_nodes` (`{poi_id: номер узла}`), `landmark_nodes` (`{landmark_id: номер узла}`), `created_at`. Данные — производная OSM под ODbL.
   - Время по графу: `walk_min = ceil(длина пути / 75)`, минимум 1 (те же 4,5 км/ч, но без множителя 1,3). Вид перехода в `RouteCrossing.kind`: бит 2 → `signals`, иначе бит 8 → `unmarked`, иначе бит 1 → `marked`.
   - `walk_graph_meta.json` может содержать `format_version` (сейчас 1; другое значение → прямые отрезки; поле необязательно), `steps_edges` (число рёбер-лестниц) и `license` («ODbL 1.0, © участники OpenStreetMap»).
   - Правила чтения (FEATURES/T91 и eval):
@@ -97,6 +97,7 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
     - ребро с битом 16 (отрезок перехода), у которого ни на одном конце нет узла-перехода, считается переходом без разметки (`unmarked`);
     - ночью бит 2 (lit=yes) — плюс, но отсутствие бита — «освещённость неизвестна», а не «темно»: в OSM Астаны lit размечен у ~3% рёбер. Множитель для рёбер без бита 2 не больше ×1,1, иначе маршрут тянется к редким размеченным кускам;
     - длина ребра по линии OSM может быть меньше хорды по float32-координатам до ~1 м: строгую проверку «длина ≥ хорды» не делать.
+    - в графе бывают узлы-переходы степени 1 (тупиковые хвосты переходов в OSM) и рёбра короче 1 см (совпадающие узлы OSM): читатель их терпит.
   - `MiniRoute` 1.1.0: `path_source` (`graph` | `straight`), `crossings` (до 50), `steps_count` (число отрезков-лестниц). При `graph` в `path` и `legs` путь и время по графу.
   - Флаг `WALK_GRAPH` (по умолчанию включён) работает, если файл есть (`settings.walk_graph_ready`). Флаг выключен, файла нет или любая ошибка загрузки и поиска → прежние прямые отрезки и `path_source=straight`.
 - `data/raw/`, `data/cache/`: не коммитятся.
