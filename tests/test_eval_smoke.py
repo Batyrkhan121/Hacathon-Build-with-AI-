@@ -298,3 +298,55 @@ def test_notes_lang(mock_answer: Answer) -> None:
     assert check_expect(ans, {"notes_lang": "en"}) == []
     ans.cards[0].open_note = "по данным OSM: ежедневно 10:00–22:00"
     assert check_expect(ans, {"notes_lang": "en"})
+
+
+@pytest.mark.parametrize(
+    ("line", "mode"),
+    [
+        ("поиск: по смыслу и по словам", "vector"),
+        ("поиск: по словам", "words"),
+        ("search: by meaning and by words", "vector"),
+        ("іздеу: сөздер бойынша", "words"),
+    ],
+)
+def test_search_mode_from_filters(mock_answer: Answer, line: str, mode: str) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.data_used.filters = ["пешком ≤ 15 мин", line]
+    assert run_eval.search_mode(Outcome(answer=ans)) == mode
+    assert run_eval.search_mode(Outcome(answer=mock_answer)) is None  # no such line -> unknown
+
+
+def test_inprocess_counts_query_vectors(
+    monkeypatch: pytest.MonkeyPatch, mock_answer: Answer
+) -> None:
+    """The runner wraps embed_query: a vector for S1, None (quota) for the rest."""
+    import app.config
+    import app.llm
+    import app.pipeline
+    import app.store
+    from app.store import Store
+
+    class FakeSettings:
+        has_llm = True
+
+    class FakeLLM:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        def embed_query(self, text: str) -> list[float] | None:
+            return [1.0] if "Mega" in text else None
+
+    def fake_recommend(req: RecommendRequest, deps: object) -> Answer:
+        deps.llm.embed_query(req.query)  # type: ignore[attr-defined]
+        return mock_answer
+
+    monkeypatch.setattr(app.config, "get_settings", lambda: FakeSettings())
+    monkeypatch.setattr(app.llm, "LLMClient", FakeLLM)
+    monkeypatch.setattr(app.store, "load_store", lambda s: Store(pois=[], by_id={}, landmarks={}))
+    monkeypatch.setattr(app.pipeline, "recommend", fake_recommend)
+    runner, _ = run_eval.inprocess_runner(no_llm=False)
+    assert runner is not None
+    results = run_eval.run_all(run_eval.load_scenarios()[:2], runner)
+    assert [r.search for r in results] == ["vector", "words"]
+    summary = run_eval.search_summary(results)
+    assert "вектор запроса (embed_query) у 1, только по словам 1" in summary
