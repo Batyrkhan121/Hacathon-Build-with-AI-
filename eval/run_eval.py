@@ -11,7 +11,7 @@ Options: --only S1,E3   --out DIR (default eval/)   --queries CSV (default eval/
 Checks use only fields of app.schemas.Answer. Writes report.md + report.json.
 --smoke runs every query from the CSV without strict checks and writes smoke_report.md
 for reading by eye (common invariants are listed as remarks, not failures).
-Exit code is always 0: the summary line "EVAL <mode>: N/15" is the result.
+Exit code is always 0: the summary line "EVAL <mode>: N/16" is the result.
 """
 
 from __future__ import annotations
@@ -651,6 +651,10 @@ def main(argv: list[str] | None = None) -> int:
         runner, notes = inprocess_runner(args.no_llm)
 
     if args.smoke:
+        if not args.queries.is_file():
+            print(f"SMOKE: нет файла запросов {args.queries}. Формат: заголовок "
+                  "id,query,location,at,lang; пример — eval/queries_team.csv")
+            return 0
         rows = load_queries(args.queries)
         setup_error = notes[0] if runner is None and notes else "раннер недоступен"
         items = run_smoke(rows, runner, args.no_llm, setup_error)

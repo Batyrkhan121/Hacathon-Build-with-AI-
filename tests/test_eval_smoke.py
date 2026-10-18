@@ -17,7 +17,7 @@ def mock_answer() -> Answer:
     return Answer.model_validate(json.loads(run_eval.MOCK_PATH.read_text(encoding="utf-8")))
 
 
-def test_scenarios_are_15_valid_requests() -> None:
+def test_scenarios_are_16_valid_requests() -> None:
     scenarios = run_eval.load_scenarios()
     ids = [s["id"] for s in scenarios]
     assert ids == [f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 12)]
@@ -236,3 +236,18 @@ def test_smoke_mode_without_pipeline_reports_every_query(
     md = (tmp_path / "smoke_report.md").read_text(encoding="utf-8")
     assert "Ответили: 0/4" in md
     assert md.count("pipeline ещё не готов") >= 4
+
+
+def test_default_queries_csv_is_valid() -> None:
+    """--smoke without --queries uses eval/queries_team.csv: it must exist and parse."""
+    rows = run_eval.load_queries()
+    assert rows
+    for row in rows:
+        run_eval.smoke_request(row, no_llm=True)
+
+
+def test_smoke_without_queries_file_does_not_crash(tmp_path: Path, capsys) -> None:
+    code = run_eval.main(["--smoke", "--mock", "--queries", str(tmp_path / "nope.csv"),
+                          "--out", str(tmp_path)])
+    assert code == 0
+    assert "нет файла запросов" in capsys.readouterr().out
