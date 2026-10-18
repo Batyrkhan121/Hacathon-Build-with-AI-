@@ -86,6 +86,16 @@ def _tx(lang: str) -> dict[str, object]:
     return _T.get(lang, _T["ru"])
 
 
+_CHECK = {"ru": "проверьте часы работы перед визитом",
+          "kk": "жұмыс уақытын барар алдында тексеріңіз",
+          "en": "check opening hours before you go"}
+
+
+def check_note(lang: Lang = "ru") -> str:
+    """Neutral note without any status claim (used when a note cannot be re-worded)."""
+    return _CHECK.get(lang, _CHECK["ru"])
+
+
 def unknown_note(lang: Lang = "ru") -> str:
     """What a card says when the hours are unknown: no data + check before visiting."""
     return str(_tx(lang)["unknown_check"])

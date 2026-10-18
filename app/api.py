@@ -180,6 +180,38 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+NO_POI_DETAIL = "Данные POI не загружены: data/processed/poi.jsonl пуст или не прочитан."
+
+
+def _store_problems(d: Deps) -> list[str]:
+    """What makes the service degraded (the UI and the jury must not see «nothing found»)."""
+    out: list[str] = []
+    if not d.store.pois:
+        out.append("нет POI: data/processed/poi.jsonl пуст или не прочитан")
+    if not d.store.landmarks:
+        out.append("нет ориентиров: data/landmarks.json пуст или не прочитан")
+    return out
+
+
+def _index_state(d: Deps) -> str:
+    if d.store.embeddings is None:
+        return "lexical"
+    return "ready" if d.settings.has_embeddings else "ready (no key)"
+
+
+def _llm_state(d: Deps) -> str:
+    """"ok" or "off (<reason>)": disabled / no_key / no client / the cooldown reason."""
+    if d.llm is None:
+        return "off (no client)"
+    if not d.settings.llm_enabled:
+        return "off (disabled)"
+    if not d.settings.anthropic_api_key:
+        return "off (no_key)"
+    if not d.llm.available:
+        return f"off ({getattr(d.llm, 'cooldown_kind', None) or 'cooldown'})"
+    return "ok"
+
+
 def build_default_deps() -> Deps:
     settings = get_settings()
     return Deps(store=load_store(settings), llm=LLMClient(settings), settings=settings)
@@ -237,11 +269,13 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                 content={"status": "unavailable", "poi_count": 0, "index": "lexical",
                          "llm": "off", "schema_version": SCHEMA_VERSION},
             )
+        problems = _store_problems(d)
         return JSONResponse({
-            "status": "ok",
+            "status": "degraded" if problems else "ok",
             "poi_count": len(d.store.pois),
-            "index": "ready" if d.store.embeddings is not None else "lexical",
-            "llm": "ok" if d.llm is not None and d.llm.available else "off",
+            "index": _index_state(d),
+            "llm": _llm_state(d),
+            "warnings": [*problems, *d.store.warnings],
             "schema_version": SCHEMA_VERSION,
         })
 
@@ -253,18 +287,24 @@ def create_app(deps: Deps | None = None) -> FastAPI:
     @app.get("/api/meta", tags=["api"], summary="Сведения о снимке данных")
     async def meta(d: DepsDep) -> dict[str, Any]:
         pois = d.store.pois
+        problems = _store_problems(d)
         return {
+            "status": "degraded" if problems else "ok",
             "snapshot_date": d.store.snapshot_date,
             "poi_count": len(pois),
             "by_category": dict(sorted(Counter(p.category for p in pois).items())),
             "sources": sorted({s for p in pois for s in p.sources}),
-            "index": "ready" if d.store.embeddings is not None else "lexical",
+            "index": _index_state(d),
+            "warnings": [*problems, *d.store.warnings],
             "schema_version": SCHEMA_VERSION,
         }
 
     @app.post("/api/recommend", response_model=Answer, tags=["api"],
               summary="1–3 рекомендации рядом", responses=RECOMMEND_RESPONSES)
     def recommend_endpoint(req: RecommendRequest, d: DepsDep) -> Answer:
+        if not d.store.pois:  # an empty store would answer «nothing found»: that is a lie
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail=NO_POI_DETAIL)
         acquired = req.use_llm and llm_slots.acquire(blocking=False)
         busy = req.use_llm and not acquired
         if busy:

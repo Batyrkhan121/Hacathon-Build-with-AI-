@@ -278,6 +278,79 @@ def test_rate_limit_then_fallback_ok(tmp_path: Path) -> None:
     assert llm.available
 
 
+def _credit_error() -> anthropic.APIStatusError:
+    return anthropic.BadRequestError(
+        "Your credit balance is too low to access the Anthropic API.",
+        response=httpx2.Response(400, request=_REQ), body=None)
+
+
+@pytest.mark.parametrize(
+    ("primary", "fallback", "kind", "cooled"),
+    [
+        (_credit_error(), _credit_error(), "no_credit", True),
+        (status_error(anthropic.NotFoundError, 404), status_error(anthropic.NotFoundError, 404),
+         "bad_model", True),
+        (status_error(anthropic.RateLimitError, 429), anthropic.APITimeoutError(request=_REQ),
+         "quota", True),
+        (anthropic.APITimeoutError(request=_REQ), anthropic.APITimeoutError(request=_REQ),
+         "timeout", True),
+        (status_error(anthropic.BadRequestError, 400), status_error(anthropic.BadRequestError, 400),
+         "bad_request", False),
+    ],
+    ids=["no-credit", "bad-model", "quota", "timeout", "bad-request"],
+)
+def test_failure_reason_and_cooldown(tmp_path: Path, primary: Exception, fallback: Exception,
+                                     kind: str, cooled: bool) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [primary],
+                                       "claude-haiku-5-5": [fallback]})
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == kind
+    assert llm.available is (not cooled)
+    if cooled:  # the next request does not pay for two failing calls again
+        with pytest.raises(LLMUnavailable):
+            call(llm, "другой")
+        assert len(fake.calls) == 2 and llm.last_error == kind
+
+
+def test_config_errors_cool_down_longer(tmp_path: Path) -> None:
+    llm, _ = make_client(tmp_path, {"claude-sonnet-5-5": [_credit_error()],
+                                    "claude-haiku-5-5": [_credit_error()]})
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    left = llm._cooldown_until - llm_mod.time.monotonic()
+    assert left > llm_mod.NETWORK_COOLDOWN_S
+
+
+def test_disk_cache_serves_during_cooldown_and_without_key(tmp_path: Path) -> None:
+    """Docstring promise: preset scenarios survive quota problems."""
+    llm, _ = make_client(tmp_path, {"claude-sonnet-5-5": [ok(Capital(city="Астана"))]})
+    call(llm)
+    llm._cool_down(600, "test", "quota")
+    assert call(llm).city == "Астана" and llm.last_model == "claude-sonnet-5-5 (cache)"
+    no_key = LLMClient(make_settings(tmp_path, anthropic_api_key=None))
+    assert call(no_key).city == "Астана"
+    with pytest.raises(LLMUnavailable):
+        call(no_key, "не в кэше")
+    assert no_key.last_error == "no_key"
+    off = LLMClient(make_settings(tmp_path, llm_enabled=False))
+    with pytest.raises(LLMUnavailable):
+        call(off)  # an explicit switch-off wins over the cache
+    assert off.last_error == "disabled"
+
+
+def test_success_clears_last_error(tmp_path: Path) -> None:
+    llm, _ = make_client(tmp_path, {
+        "claude-sonnet-5-5": [status_error(anthropic.BadRequestError, 400),
+                              ok(Capital(city="Астана"))],
+        "claude-haiku-5-5": [status_error(anthropic.BadRequestError, 400)]})
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "bad_request"
+    call(llm, "второй")
+    assert llm.last_error is None
+
+
 def test_same_primary_and_fallback_model_is_tried_once(tmp_path: Path) -> None:
     llm, fake = make_client(
         tmp_path,
@@ -410,6 +483,47 @@ def test_cached_query_vector_works_during_cooldown(tmp_path: Path) -> None:
     assert llm.embed_query("чай") is None  # fails -> cooldown
     again = llm.embed_query("кофе")
     assert again is not None and np.allclose(vec, again)  # from the disk cache
+
+
+class GenaiError(Exception):
+    """Stand-in for google.genai.errors.ClientError (only the text matters)."""
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "cooldown"),
+    [
+        (GenaiError("429 RESOURCE_EXHAUSTED quotaId EmbedContentRequestsPerDayPerProject"),
+         "daily_quota", llm_mod.EMBED_DAILY_COOLDOWN_S),
+        (GenaiError("429 RESOURCE_EXHAUSTED per minute"), "quota", llm_mod.EMBED_COOLDOWN_S),
+        (TimeoutError("timed out"), "network", llm_mod.EMBED_COOLDOWN_S),
+        (ConnectionError("refused"), "network", llm_mod.EMBED_COOLDOWN_S),
+        (RuntimeError("bug"), "error", llm_mod.EMBED_COOLDOWN_S),
+    ],
+    ids=["daily", "quota", "timeout", "connection", "other"],
+)
+def test_embed_query_status_and_cooldown(tmp_path: Path, error: Exception, status: str,
+                                         cooldown: float) -> None:
+    class Failing(FakeGenai):
+        def _embed(self, **kw: Any) -> Any:
+            self.calls.append(kw["contents"])
+            raise error
+
+    llm = make_embedder(tmp_path, Failing())
+    assert llm.embed_query("кофе") is None
+    assert llm.last_embed_status == status
+    left = llm._embed_cooldown_until - llm_mod.time.monotonic()
+    assert cooldown - 5 < left <= cooldown
+    assert llm.embed_query("чай") is None and llm.last_embed_status == status  # still why
+
+
+def test_embed_query_status_ok_cache_no_key(tmp_path: Path) -> None:
+    llm = make_embedder(tmp_path)
+    llm.embed_query("кофе")
+    assert llm.last_embed_status == "ok"
+    llm.embed_query("кофе")
+    assert llm.last_embed_status == "cache"
+    no_key = LLMClient(make_settings(tmp_path))
+    assert no_key.embed_query("кофе") is None and no_key.last_embed_status == "no_key"
 
 
 def test_embed_query_uses_a_short_timeout(tmp_path: Path) -> None:

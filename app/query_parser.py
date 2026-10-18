@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 from typing import get_args
 
 from app import geo
-from app.llm import LLMClient, load_prompt, user_data_block
+from app.llm import LLMClient, LLMUnavailable, load_prompt, user_data_block
 from app.schemas import TAG_VOCAB, Category, Landmark, Lang, QueryIntent, UserOverrides
 
 log = logging.getLogger(__name__)
@@ -240,8 +241,10 @@ def parse_query(
 ) -> QueryIntent:
     """LLM first (if available), rules as fallback and gap filler. Sets intent.parser."""
     rules = parse_rules(text, lang_hint, landmarks)
-    if llm is None or not llm.available:
+    if llm is None:
         return rules
+    # Called even when the client is cooling down or has no key: its disk cache may answer
+    # (preset scenarios), otherwise it fails fast with LLMUnavailable.
     try:
         llm_intent = llm.generate_structured(
             system=_system_prompt(landmarks),
@@ -249,8 +252,14 @@ def parse_query(
             schema=QueryIntent,
             effort="low",
         )
-    except Exception as exc:  # noqa: BLE001 - LLMUnavailable or anything else: rules answer
-        log.info("query parser: LLM unavailable (%s), using rules", type(exc).__name__)
+    except LLMUnavailable:
+        log.info("query parser: LLM unavailable (%s), using rules",
+                 getattr(llm, "last_error", None) or "?")
+        return rules
+    except Exception as exc:  # noqa: BLE001 - a bug: still answer by rules, but loudly
+        frames = "".join(traceback.format_tb(exc.__traceback__)[-3:])
+        log.error("query parser: LLM path failed (%s), using rules\n%s", type(exc).__name__,
+                  frames)
         return rules
     return _merge(rules, llm_intent, lang_hint, landmarks)
 
@@ -272,18 +281,17 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
     """Explicit UI filters always win over the parsed intent.
 
     Mode switches (wave 3): `tourist`, `night` and `departure_in_min` (minutes to departure:
-    tourist mode with that time budget). Read with getattr so this works whether or not the
-    integrator's schema change has landed yet.
+    tourist mode with that time budget).
     """
     if overrides is None:
         return intent
     update: dict[str, object] = {}
     for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size",
                  "tourist", "night"):
-        value = getattr(overrides, name, None)
+        value = getattr(overrides, name)
         if value is not None:
             update[name] = value
-    departure = getattr(overrides, "departure_in_min", None)
+    departure = overrides.departure_in_min
     if departure is not None:
         update["tourist"] = True
         update["time_budget_min"] = _clamp(int(departure), 5, 600)

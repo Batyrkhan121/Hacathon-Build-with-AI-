@@ -40,10 +40,15 @@ _cache: dict[tuple[float, float], tuple[float, WeatherInfo | None]] = {}
 _cache_lock = threading.Lock()
 
 
+def is_time_machine(at: datetime) -> bool:
+    """`at` is too far from now: the current weather would describe another moment."""
+    return abs(_as_utc(at) - datetime.now(UTC)) > MAX_SKEW
+
+
 def get_weather(origin: GeoPoint, at: datetime) -> WeatherInfo | None:
     key = (round(origin.lat, 2), round(origin.lon, 2))
     try:
-        if abs(_as_utc(at) - datetime.now(UTC)) > MAX_SKEW:
+        if is_time_machine(at):
             return None  # "time machine" demo: current weather would be misleading
         with _cache_lock:
             hit = _cache.get(key)
@@ -94,8 +99,11 @@ def _fetch(lat: float, lon: float) -> dict:
 
 def _to_info(data: dict) -> WeatherInfo:
     cur = data["current"]
+    if cur.get("temperature_2m") is None or cur.get("precipitation") is None:
+        # a missing field is "unknown", not "0 mm" (that would claim it is dry)
+        raise ValueError("Open-Meteo answer without temperature or precipitation")
     temp = float(cur["temperature_2m"])
-    precip = float(cur.get("precipitation") or 0.0)
+    precip = float(cur["precipitation"])
     wind = cur.get("wind_speed_10m")
     wind = None if wind is None else float(wind)
     is_day = cur.get("is_day")

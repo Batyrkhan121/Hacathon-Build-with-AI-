@@ -123,6 +123,18 @@ def test_network_error_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(seen) == weather.ATTEMPTS
 
 
+@pytest.mark.parametrize("missing", ["precipitation", "temperature_2m"])
+def test_missing_field_is_unknown_not_dry(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    current = {k: v for k, v in CURRENT.items() if k != missing}
+    install(monkeypatch, lambda r: httpx.Response(200, json={"current": current}))
+    assert weather.get_weather(EXPO, now()) is None
+
+
+def test_time_machine_helper() -> None:
+    assert weather.is_time_machine(now() + timedelta(hours=4))
+    assert not weather.is_time_machine(now() + timedelta(hours=1))
+
+
 def test_failure_is_cached_for_a_minute(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = install(monkeypatch, lambda r: httpx.Response(500))
     assert weather.get_weather(EXPO, now()) is None
