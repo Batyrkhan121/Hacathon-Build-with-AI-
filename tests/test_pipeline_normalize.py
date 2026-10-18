@@ -327,4 +327,11 @@ def test_element_only_in_an_older_snapshot_is_dropped_where_fresh_data_covers_it
     pois = normalize_payloads([june, fresh], stats)
     names = sorted(p.name for p in pois)
     assert names == ["25-ти летие Независимости", "Вне свежего куска"]
-    assert stats == {"stale": 1}
+    assert stats == {"stale": 1,
+                     "stale_pois": ["25-ти летие Независемости (osm:node/13041707198)"]}
+
+    # a truncated fresher answer (Overpass remark) proves nothing: the June node stays
+    cut = fresh | {"remark": "runtime error: Query timed out in \"query\" at line 3"}
+    stats2: dict = {}
+    kept = {p.name for p in normalize_payloads([june, cut], stats2)}
+    assert "25-ти летие Независемости" in kept and stats2["stale"] == 0

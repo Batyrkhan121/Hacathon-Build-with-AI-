@@ -43,3 +43,9 @@ def test_report_zones_coverage_and_computed_conclusion() -> None:
     assert "без плиток всего города" in text and "Все плитки" not in text
     assert "больше всего данных рядом с «Байтерек» (2 POI" in text
     assert "Часы работы известны у 33% мест" in text
+
+
+def test_report_warns_about_partial_chunks() -> None:
+    cut = PAYLOAD | {"remark": "runtime error: Query timed out"}
+    text = build_report(normalize_payload(cut), [cut], LANDMARKS)
+    assert "Неполные ответы Overpass (remark): zone_test" in text

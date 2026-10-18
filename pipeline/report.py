@@ -21,7 +21,7 @@ import h3
 from app.config import get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
-from pipeline.fetch_osm import area_chunks
+from pipeline.fetch_osm import area_chunks, is_partial
 from pipeline.normalize import fetched_date, haversine_m, load_payloads, osm_base, raw_files
 
 DENSITY_RES = 7  # ~5 km2 hexagons
@@ -106,6 +106,13 @@ def build_report(
         lines.append(
             "- Дата снимка OSM по зеркалам: " + "; ".join(parts) + ". Пересекающиеся куски "
             "берутся из самого свежего снимка; `fetched_at` у записи — дата её снимка."
+        )
+    partial = [m.get("chunk") or m.get("area") or "?" for p, m in zip(payloads, metas, strict=True)
+               if is_partial(p)]
+    if partial:
+        lines.append(
+            f"- **Неполные ответы Overpass (remark): {', '.join(partial)}.** Данные из них "
+            "взяты, но удалёнными по ним ничего не считается; перезапуск выгрузки докачает."
         )
     if missing_chunks is None:
         lines.append(

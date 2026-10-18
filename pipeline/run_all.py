@@ -60,16 +60,19 @@ def run(
     paths = normalize.raw_files(area, settings.data_dir / "raw")
     if not paths:
         raise SystemExit(f"no raw OSM data for area {area!r}; Overpass unavailable?")
-    stats: dict[str, int] = {}
+    stats: dict = {}
     pois = normalize.finalize(
         normalize.normalize_payloads(normalize.load_payloads(paths), stats),
         normalize.load_landmarks(settings.landmarks_path),
     )
     if stats.get("stale"):
+        former = stats.get("stale_pois") or []
         notes.append(
             f"Устаревшие объекты не взяты: {stats['stale']} (есть только в старом снимке "
-            "зеркала, а в более свежем куске на той же территории их уже нет: закрыты, удалены "
-            "или переразмечены в OSM)."
+            "зеркала, а в более свежем полном куске на той же территории их уже нет: закрыты, "
+            f"удалены или переразмечены в OSM). Из них подходили под наши категории "
+            f"(до склейки дублей) {len(former)}: "
+            + "; ".join(former) + "."
         )
     # places inside a mall footprint (rides in Khan Shatyr...) are indoor, by OSM geometry
     pois, inside_malls = normalize.mark_inside_malls(

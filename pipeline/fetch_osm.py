@@ -19,7 +19,7 @@ import argparse
 import json
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -254,7 +254,7 @@ def fetch_area(
     requested = False
     for chunk in area_chunks(area):
         path = raw_path(chunk.name, raw_dir)
-        if not force and is_fresh(path):
+        if not force and is_fresh(path) and not is_partial_file(path):
             result.cached.append(chunk.name)
             result.done.append(path)
             continue
@@ -275,6 +275,7 @@ def fetch_area(
             result.failed.append(f"{chunk.name}: {exc}")
             continue
         last_good = payload.get("qadam", {}).get("endpoint")
+        remark = payload.get("remark")
         payload.setdefault("qadam", {}).update(
             {
                 "area": area,
@@ -282,12 +283,31 @@ def fetch_area(
                 "filters": list(chunk.filters),
                 "fetched_at_unix": int(started),
                 "elapsed_s": round(time.time() - started, 1),
+                "partial": bool(remark),
             }
         )
         save_json(path, payload)
-        log.info("chunk %s: %d elements", chunk.name, len(payload.get("elements", [])))
         result.done.append(path)
+        if remark:
+            # HTTP 200 with a runtime remark = a truncated answer (timeout / memory): keep
+            # what came, but it is not fresh cache and cannot prove that anything is gone
+            log.warning("chunk %s is partial: %s", chunk.name, remark)
+            result.failed.append(f"{chunk.name}: partial answer ({str(remark)[:120]})")
+            continue
+        log.info("chunk %s: %d elements", chunk.name, len(payload.get("elements", [])))
     return result
+
+
+def is_partial(payload: Mapping) -> bool:
+    """Overpass answered 200 but cut the result short (`remark`: timeout, out of memory)."""
+    return bool(payload.get("remark") or (payload.get("qadam") or {}).get("partial"))
+
+
+def is_partial_file(path: Path) -> bool:
+    try:
+        return is_partial(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return True  # unreadable cache: fetch again
 
 
 MALL_OUTLINES = "mall_outlines"
