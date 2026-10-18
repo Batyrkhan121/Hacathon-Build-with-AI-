@@ -35,3 +35,12 @@ def test_unknown_id_and_bad_category() -> None:
     with pytest.raises(ValidationError):
         apply_overrides([SPHERE], {SPHERE.id: {"category": "spaceport"}})
     assert apply_overrides([SPHERE], {}) == ([SPHERE], [])
+
+
+def test_hours_without_source_are_not_applied() -> None:
+    change = {"category": "museum", "opening_hours": "Tu-Su 10:00-18:30; Mo off",
+              "source": None}
+    (out,), notes = apply_overrides([SPHERE], {SPHERE.id: change})
+    assert out.category == "museum" and out.opening_hours is None
+    assert out.data_confidence == 0.5  # no bonus for hours that were not applied
+    assert "Часы без ссылки на источник не применены: osm:way/454857501" in notes[0]

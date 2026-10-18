@@ -6,6 +6,8 @@
 
 Only these fields can be overridden: name, category, opening_hours, address, website, phone.
 `source` (a link) becomes `website` when the POI has none; `note` is for people only.
+`opening_hours` is applied only together with a `source` link: unconfirmed hours could
+make a card say "open now".
 An overridden POI gets "manual" in `sources`; tags derived from category and hours
 (indoor/outdoor, late_open, 24_7) are recomputed; data_confidence gains the bonus for
 fields it did not have before. Every record is validated against app.schemas.POI.
@@ -36,13 +38,18 @@ def load_overrides(path: Path | None = None) -> dict[str, dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def has_source(change: Mapping[str, object]) -> bool:
+    source = change.get("source")
+    return isinstance(source, str) and source.startswith(("http://", "https://"))
+
+
 def apply_one(poi: POI, change: Mapping[str, object]) -> POI:
     updates = {k: v for k, v in change.items() if k in FIELDS}
-    source = change.get("source")
-    if isinstance(source, str) and source.startswith(("http://", "https://")) and not (
-        updates.get("website") or poi.website
-    ):
-        updates["website"] = source
+    if not has_source(change):
+        # unconfirmed hours could make a card say "open now": never without a source link
+        updates.pop("opening_hours", None)
+    elif not (updates.get("website") or poi.website):
+        updates["website"] = change["source"]
     data = poi.model_dump() | updates
     category = data["category"]
     tags = set(poi.tags) - DERIVED_TAGS
@@ -80,4 +87,9 @@ def apply_overrides(
     note = f"Ручные правки (data/manual/overrides.json): {applied} мест."
     if unknown:
         note += f" Не найдены id: {', '.join(unknown)}."
+    no_source = sorted(
+        pid for pid, ch in overrides.items() if "opening_hours" in ch and not has_source(ch)
+    )
+    if no_source:
+        note += f" Часы без ссылки на источник не применены: {', '.join(no_source)}."
     return out, [note]
