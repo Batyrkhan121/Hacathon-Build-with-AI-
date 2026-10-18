@@ -33,6 +33,7 @@ from app.schemas import POI
 from pipeline.build_index import CATEGORY_RU
 from pipeline.landmark_refs import LANDMARK_OSM, LANDMARK_WIKIDATA
 from pipeline.normalize import load_payloads, raw_files, write_jsonl
+from pipeline.overrides import load_overrides, no_generated_ids
 from pipeline.report import raw_tags_by_id
 
 log = logging.getLogger(__name__)
@@ -40,23 +41,24 @@ log = logging.getLogger(__name__)
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 WIKIDATA_BATCH = 50
 WIKIDATA_LANGS = ("ru", "kk", "en")
-# places worth a sentence; cafes, bars, fast food and playgrounds speak for themselves
+# places worth a sentence; cafes, bars, fast food and playgrounds speak for themselves,
+# and for malls a generated line was only "a mall where you can shop" (integrator review)
 NOTABLE_CATEGORIES: frozenset[str] = frozenset(
     {
         "museum", "gallery", "theatre", "cinema", "library", "park", "viewpoint",
-        "attraction", "monument", "religious", "mall", "entertainment",
+        "attraction", "monument", "religious", "entertainment",
     }
 )
 LLM_BATCH = 25
 LLM_MAX_CHARS = 220
 PROMPT_VERSION = "v1"
 # a generated sentence must not invent facts the card shows from data: clock times,
-# prices, ratings, reviews, opening hours, discounts. Words, not stems: "центр" or
-# "Астана Жұлдызы" (a star) are fine.
+# prices (free / paid too), ratings, reviews, opening hours, discounts. Words, not stems:
+# "центр" or "Астана Жұлдызы" (a star) are fine.
 FORBIDDEN = re.compile(
     r"\d{1,2}[:.]\d{2}|₸|тенге|\bцен(?:а|ы|е|у|ой|ам|ами|ах)?\b|\bстоимост|\bрейтинг|"
-    r"\bотзыв|\d\s*зв[её]зд|круглосуточ|часы работы|режим работы|"
-    r"открыт[оа]? (?:с|до|ежедневно)|\bскидк|\bакци(?:я|и|ей|ю)\b",
+    r"\bотзыв|\d\s*зв[её]зд|зв[её]здочн|бесплатн|\bплатн|круглосуточ|часы работы|"
+    r"режим работы|открыт[оа]? (?:с|до|ежедневно)|\bскидк|\bакци(?:я|и|ей|ю)\b",
     re.IGNORECASE,
 )
 
@@ -225,13 +227,18 @@ def claude_describer() -> Describer:
     return describe
 
 
-def strip_generated(pois: list[POI]) -> tuple[list[POI], int]:
+def strip_generated(
+    pois: list[POI], skip_ids: frozenset[str] = frozenset()
+) -> tuple[list[POI], int]:
     """Generated text only where it helps: drop llm_generated descriptions of places
-    outside NOTABLE_CATEGORIES (cafes, bars, fast food, playgrounds...)."""
+    outside NOTABLE_CATEGORIES (cafes, bars, fast food, playgrounds, malls) and of places
+    marked {"generated_description": false} in overrides.json."""
     out: list[POI] = []
     removed = 0
     for p in pois:
-        if p.description_source == "llm_generated" and p.category not in NOTABLE_CATEGORIES:
+        if p.description_source == "llm_generated" and (
+            p.category not in NOTABLE_CATEGORIES or p.id in skip_ids
+        ):
             p = p.model_copy(update={"description": None, "description_source": None})
             removed += 1
         out.append(p)
@@ -244,18 +251,23 @@ def llm_step(
     cache_path: Path,
     model: str,
     describe: Describer | None = None,
+    skip_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[POI], str]:
     """Describe notable places (NOTABLE_CATEGORIES) that still have no description,
-    most popular first; `limit` caps how many (None = all of them)."""
-    pois, removed = strip_generated(pois)
+    most popular first; `limit` caps how many (None = all of them). Without a key or with
+    LLM_ENABLED=false nothing is asked, but answers already in the cache are applied."""
+    pois, removed = strip_generated(pois, skip_ids)
     settings = get_settings()
-    if describe is None:
-        if not settings.has_llm:
-            return pois, "Описания Claude пропущены: нет ANTHROPIC_API_KEY (или LLM_ENABLED=false)."
+    cache_only = describe is None and not settings.has_llm
+    if describe is None and not cache_only:
         describe = claude_describer()
     cache: dict[str, str] = load_json(cache_path)
     notable = sorted(
-        (p for p in pois if not p.description and p.category in NOTABLE_CATEGORIES),
+        (
+            p
+            for p in pois
+            if not p.description and p.category in NOTABLE_CATEGORIES and p.id not in skip_ids
+        ),
         key=lambda p: (-p.popularity, p.id),
     )
     targets = notable[:limit] if limit else notable
@@ -263,12 +275,13 @@ def llm_step(
     keys = {pid: llm_key(item, model) for pid, item in items.items()}
     # the cache keeps Claude's raw answer and the check runs on every build, so a fixed
     # check never needs a paid re-ask; "" (an old rejected entry) counts as not asked
-    todo = [items[pid] for pid in items if not cache.get(keys[pid])]
+    todo = [] if cache_only else [items[pid] for pid in items if not cache.get(keys[pid])]
     note = ""
     try:
         for start in range(0, len(todo), LLM_BATCH):
             batch = todo[start : start + LLM_BATCH]
             sent = {it["poi_id"] for it in batch}
+            assert describe is not None  # todo is empty in cache-only mode
             for d in describe(batch):
                 if d.poi_id in sent:  # never accept text for an id we did not send
                     cache[keys[d.poi_id]] = d.text
@@ -292,11 +305,17 @@ def llm_step(
                 added += 1
         out.append(p)
     scope = f"топ-{limit} из {len(notable)}" if limit and limit < len(notable) else len(notable)
+    mode = (
+        " Новых запросов не было (нет ANTHROPIC_API_KEY или LLM_ENABLED=false): только из кэша."
+        if cache_only
+        else ""
+    )
+    dropped = f" Убрано прежних сгенерированных описаний: {removed}." if removed else ""
     return out, (
         f"Описания Claude ({model}, пометка llm_generated): {added} из {scope} заметных мест "
-        f"без описания ({', '.join(sorted(NOTABLE_CATEGORIES))}); кафе, бары, фастфуд и "
-        f"площадки не описываются (убрано старых: {removed}); отклонено проверкой "
-        f"на часы, цены и рейтинги: {rejected}.{note}"
+        f"без описания ({', '.join(sorted(NOTABLE_CATEGORIES))}); кафе, бары, фастфуд, "
+        f"площадки и ТРЦ не описываются; отклонено проверкой на часы, цены и рейтинги: "
+        f"{rejected}.{dropped}{mode}{note}"
     )
 
 
@@ -316,7 +335,8 @@ def run(limit: int | None = None, area: str = "astana") -> list[str]:
             qids.setdefault(f"osm:{LANDMARK_OSM[lm_id]}", qid)
     pois, wiki_note = wikidata_step(pois, qids, settings.cache_dir / "wikidata.json")
     pois, llm_note = llm_step(
-        pois, limit, settings.cache_dir / "descriptions.json", settings.claude_model
+        pois, limit, settings.cache_dir / "descriptions.json", settings.claude_model,
+        skip_ids=no_generated_ids(load_overrides()),
     )
     write_jsonl(pois, settings.poi_path)
     return [wiki_note, llm_note]
