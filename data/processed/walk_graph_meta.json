@@ -1244,7 +1244,7 @@
   "nurly_zhol": 49850,
   "palace_peace": 28012
  },
- "created_at": "2026-10-19T01:20:04+05:00",
+ "created_at": "2026-10-19T01:22:45+05:00",
  "ways_used": 34955,
  "ways_excluded": 0,
  "nodes_missing_coords": 0,
@@ -1298,6 +1298,14 @@
   "crossing": 16
  },
  "file_bytes": 903456,
+ "license": "ODbL 1.0, © участники OpenStreetMap",
+ "nodes_bbox": [
+  50.99325,
+  71.1515,
+  51.27892,
+  71.75979
+ ],
+ "nodes_outside_bbox": 65,
  "osm_snapshots": [
   "2026-05-31",
   "2026-07-28",

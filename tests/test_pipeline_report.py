@@ -93,7 +93,9 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
         "crossing_nodes_added": 2, "steps_edges": 4, "lit_edges": 700,
         "crossing_edges": 60, "poi_total": 100, "poi_snapped": 40, "poi_snapped_share": 0.4,
         "poi_snap_median_m": 18.0, "landmarks_total": 9, "landmarks_snapped": 7,
-        "snap_max_m": 150, "file_bytes": 2_500_000, "coverage": "partial", "tiles_total": 9,
+        "snap_max_m": 150, "file_bytes": 2_500_000, "license": "ODbL 1.0",
+        "nodes_outside_bbox": 3, "nodes_bbox": [51.0, 71.1, 51.3, 71.7],
+        "coverage": "partial", "tiles_total": 9,
         "tiles_loaded": ["walk_tile_1", "walk_tile_4"], "tiles_missing": ["walk_tile_0"],
         "tiles_partial": [], "poi_in_coverage": 45, "poi_snapped_share_in_coverage": 0.889,
     }
@@ -103,7 +105,8 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
     for piece in ("Узлов: 1200; рёбер: 1500", "97.1% узлов", "Переходов: 80",
                   "footway=crossing у 6 узлов (из них 2 новых", "светофоров: 20",
                   "лестницами: 4", "40 из 100 (40.0%)", "медиана 18 м", "ориентиров: 7 из 9",
-                  "2.5 МБ", "разных снимков: 2026-05-31, 2026-10-18",
+                  "2.5 МБ; лицензия: ODbL 1.0", "за границей bbox: 3",
+                  "разных снимков: 2026-05-31, 2026-10-18",
                   "Покрытие частичное: 2 из 9 плиток", "не скачаны: walk_tile_0",
                   "(45) привязано 88.9%"):
         assert piece in section, piece

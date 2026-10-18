@@ -93,8 +93,15 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         + (f", медиана {meta['poi_snap_median_m']:.0f} м"
            if meta.get("poi_snap_median_m") is not None else "")
         + f"; ориентиров: {meta.get('landmarks_snapped', 0)} из {meta.get('landmarks_total', 0)}.",
-        f"- Размер файла: {(meta.get('file_bytes') or 0) / 1e6:.1f} МБ.",
+        f"- Размер файла: {(meta.get('file_bytes') or 0) / 1e6:.1f} МБ; лицензия: "
+        f"{meta.get('license') or 'ODbL (производная OSM)'}.",
     ]
+    if meta.get("nodes_outside_bbox"):
+        lines.append(
+            f"- Узлы за границей bbox: {meta['nodes_outside_bbox']} — дороги, пересекающие "
+            "границу, берутся целиком (окраинные трассы, подъезд к аэропорту); фактический "
+            f"охват узлов {meta.get('nodes_bbox')}."
+        )
     if meta.get("coverage") == "full":
         lines.append(f"- Покрытие: весь город, {loaded} из {total} плиток.")
     else:

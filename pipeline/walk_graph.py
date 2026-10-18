@@ -50,6 +50,7 @@ from pipeline.fetch_osm import (
     ASTANA_GRID,
     BETWEEN_CHUNKS_S,
     ENDPOINTS,
+    TIMEOUT_S,
     OverpassError,
     bbox_tiles,
     is_fresh,
@@ -91,7 +92,9 @@ NPZ_KEYS = ("node_lat", "node_lon", "node_flags", "edge_u", "edge_v", "edge_len_
 
 SNAP_MAX_M = 150.0
 MAX_FILE_BYTES = 20 * 1024 * 1024  # contract limit; the task itself asked for <= 15 MB
-WALK_TIMEOUT_S = 300
+# the server gives up before the HTTP client does (fetch_osm.TIMEOUT_S): no answer is lost
+WALK_TIMEOUT_S = int(TIMEOUT_S) - 10
+LICENSE = "ODbL 1.0, © участники OpenStreetMap"
 CHUNK_PREFIX = "walk_tile_"
 
 
@@ -463,10 +466,11 @@ def save_graph(
     npz_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = npz_path.with_suffix(".tmp.npz")
     np.savez_compressed(tmp, **{key: getattr(graph, key) for key in NPZ_KEYS})
+    size = tmp.stat().st_size
+    if size > MAX_FILE_BYTES:  # checked before the replace: the previous graph stays
+        tmp.unlink()
+        raise ValueError(f"walk_graph.npz would be {size / 1e6:.1f} MB > 20 MB")
     tmp.replace(npz_path)
-    size = npz_path.stat().st_size
-    if size > MAX_FILE_BYTES:
-        raise ValueError(f"walk_graph.npz is {size / 1e6:.1f} MB > 20 MB")
     dists = [d for _, d in poi_snaps.values()]
     meta = {
         # contract keys (docs/ARCHITECTURE.md section 5)
@@ -496,10 +500,27 @@ def save_graph(
         "node_flag_bits": NODE_FLAGS,
         "edge_flag_bits": EDGE_FLAGS,
         "file_bytes": size,
+        "license": LICENSE,
+        **nodes_extent(graph),
         **dict(extra_meta or {}),
     }
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     return meta
+
+
+def nodes_extent(graph: WalkGraph) -> dict:
+    """Where the nodes really are: ways crossing the bbox are kept whole, so their far ends
+    (outskirt roads, the airport south of 51.03) may lie outside `bbox`."""
+    if not len(graph.node_lat):
+        return {"nodes_bbox": None, "nodes_outside_bbox": 0}
+    lat, lon = graph.node_lat.astype(np.float64), graph.node_lon.astype(np.float64)
+    s, w, n, e = ASTANA_BBOX
+    outside = ~((lat >= s) & (lat <= n) & (lon >= w) & (lon <= e))
+    return {
+        "nodes_bbox": [round(float(lat.min()), 5), round(float(lon.min()), 5),
+                       round(float(lat.max()), 5), round(float(lon.max()), 5)],
+        "nodes_outside_bbox": int(np.count_nonzero(outside)),
+    }
 
 
 def load_graph(path: Path) -> dict[str, np.ndarray]:

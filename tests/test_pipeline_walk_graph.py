@@ -274,3 +274,29 @@ def test_new_middle_node_approach_segments_and_second_carriageway() -> None:
     assert stats["crossing_approach_segments"] == 1
     for e in np.flatnonzero(graph.edge_flags & EDGE_CROSSING):
         assert (graph.node_flags[graph.edge_u[e]] | graph.node_flags[graph.edge_v[e]]) & 1, e
+
+
+def test_meta_license_extent_and_size_check_keeps_previous_graph(
+    built, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pipeline.walk_graph as wg
+
+    graph, stats = built
+    npz, meta_path = tmp_path / "g.npz", tmp_path / "m.json"
+    meta = save_graph(graph, {}, {}, stats, npz, meta_path, poi_total=0, landmark_total=0,
+                      osm_snapshot="2026-10-19")
+    assert meta["license"].startswith("ODbL 1.0") and meta["nodes_outside_bbox"] == 0
+    s, w, n_, e = meta["nodes_bbox"]
+    assert 51.03 <= s <= n_ <= 51.27 and 71.2 <= w <= e <= 71.65
+    before = npz.read_bytes()
+    monkeypatch.setattr(wg, "MAX_FILE_BYTES", 10)
+    with pytest.raises(ValueError):
+        save_graph(graph, {}, {}, stats, npz, meta_path, poi_total=0, landmark_total=0,
+                   osm_snapshot="2026-10-19")
+    assert npz.read_bytes() == before and not list(tmp_path.glob("*.tmp.npz"))
+
+
+def test_server_timeout_below_the_http_client_timeout() -> None:
+    from pipeline.fetch_osm import TIMEOUT_S
+
+    assert f"[timeout:{int(TIMEOUT_S) - 10}]" in walk_query("51.03,71.35,51.11,71.5")
