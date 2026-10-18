@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
 from pipeline.fetch_osm import area_chunks, is_partial
+from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import (
     fetched_date,
     haversine_m,
@@ -31,6 +32,9 @@ from pipeline.normalize import (
     raw_files,
 )
 
+# a landmark POI = the OSM object of a landmark, added by normalize.finalize (sources
+# osm + manual); an override also adds "manual", so sources alone are not enough
+LANDMARK_POI_IDS = frozenset(f"osm:{ref}" for ref in LANDMARK_OSM.values())
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
 LANDMARK_LABEL_M = 2500
@@ -100,7 +104,7 @@ def build_report(
         f"- Добавлено вручную: {sum(1 for p in pois if p.id.startswith('manual:'))} "
         "(места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).",
         "- Ориентиры, добавленные как места (объект OSM + ручная разметка): "
-        f"{sum(1 for p in pois if p.id.startswith('osm:') and 'manual' in p.sources)}.",
+        f"{sum(1 for p in pois if p.id in LANDMARK_POI_IDS and 'manual' in p.sources)}.",
     ]
     if stamps:
         lo = datetime.fromtimestamp(min(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
