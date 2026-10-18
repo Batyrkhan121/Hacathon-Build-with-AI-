@@ -4,10 +4,13 @@
                            "opening_hours": "Tu-Su 10:00-18:30; Mo off",
                            "source": "https://...", "note": "why"}}
 
-Only these fields can be overridden: name, category, opening_hours, address, website, phone.
+Fields that can be overridden: name, name_i18n, category, opening_hours, address, website,
+phone, kids_friendly, description; plus `tags_add` and `sources_add` (lists, merged in).
 `source` (a link) becomes `website` when the POI has none; `note` is for people only.
-`opening_hours` is applied only together with a `source` link: unconfirmed hours could
-make a card say "open now". A corrected category brings its category tags (food,
+`opening_hours` and `description` are applied only together with a `source` link:
+unconfirmed hours could make a card say "open now", and a hand-written description carries
+facts (a ticket price). Such a description gets description_source="manual" and is never
+replaced by Wikidata or the LLM. A corrected category brings its category tags (food,
 shopping, ...) and indoor default. {"generated_description": false} alone changes no field:
 it only keeps pipeline.enrich from writing an LLM sentence for that place.
 An overridden POI gets "manual" in `sources`; tags derived from category and hours
@@ -22,10 +25,17 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from app.config import get_settings
-from app.schemas import POI
+from app.schemas import POI, TAG_VOCAB
 from pipeline.normalize import hours_flags, indoor_flag
 
-FIELDS = frozenset({"name", "category", "opening_hours", "address", "website", "phone"})
+FIELDS = frozenset(
+    {
+        "name", "name_i18n", "category", "opening_hours", "address", "website", "phone",
+        "kids_friendly", "description",
+    }
+)
+MERGED = frozenset({"tags_add", "sources_add"})
+NEEDS_SOURCE = ("opening_hours", "description")
 HOURS_TAGS = frozenset({"late_open", "24_7"})
 # tags normalize derives from the category alone; they follow a corrected category
 CATEGORY_TAG: dict[str, str] = {
@@ -56,12 +66,16 @@ def apply_one(poi: POI, change: Mapping[str, object]) -> POI:
     updates = {k: v for k, v in change.items() if k in FIELDS}
     if not has_source(change):
         # unconfirmed hours could make a card say "open now": never without a source link
-        updates.pop("opening_hours", None)
+        for key in NEEDS_SOURCE:
+            updates.pop(key, None)
     elif not (updates.get("website") or poi.website):
         updates["website"] = change["source"]
+    if updates.get("description"):
+        updates["description_source"] = "manual"
     data = poi.model_dump() | updates
     category = data["category"]
     tags = (set(poi.tags) - HOURS_TAGS) | hours_flags(data.get("opening_hours"))
+    tags |= set(change.get("tags_add") or []) & TAG_VOCAB
     indoor = poi.indoor
     if category != poi.category:  # follow the corrected category, keep data-based values
         tags.discard(CATEGORY_TAG.get(poi.category, ""))
@@ -82,10 +96,14 @@ def apply_one(poi: POI, change: Mapping[str, object]) -> POI:
         bonus += 0.10
     if (data.get("website") or data.get("phone")) and not (poi.website or poi.phone):
         bonus += 0.10
+    sources = list(poi.sources)
+    for src in ["manual", *(change.get("sources_add") or [])]:
+        if src not in sources:
+            sources.append(src)
     data.update(
         tags=sorted(tags),
         indoor=indoor,
-        sources=poi.sources if "manual" in poi.sources else [*poi.sources, "manual"],
+        sources=sources,
         data_confidence=round(min(poi.data_confidence + bonus, 1.0), 2),
     )
     return POI.model_validate(data)
@@ -99,7 +117,8 @@ def apply_overrides(
     by_id = {p.id: p for p in pois}
     unknown = sorted(set(overrides) - set(by_id))
     out = [
-        apply_one(p, overrides[p.id]) if FIELDS & set(overrides.get(p.id, {})) else p
+        apply_one(p, overrides[p.id]) if (FIELDS | MERGED) & set(overrides.get(p.id, {}))
+        else p
         for p in pois
     ]
     applied = len(overrides) - len(unknown)
@@ -107,10 +126,14 @@ def apply_overrides(
     if unknown:
         note += f" Не найдены id: {', '.join(unknown)}."
     no_source = sorted(
-        pid for pid, ch in overrides.items() if "opening_hours" in ch and not has_source(ch)
+        pid
+        for pid, ch in overrides.items()
+        if any(k in ch for k in NEEDS_SOURCE) and not has_source(ch)
     )
     if no_source:
-        note += f" Часы без ссылки на источник не применены: {', '.join(no_source)}."
+        note += (
+            f" Часы и описания без ссылки на источник не применены: {', '.join(no_source)}."
+        )
     return out, [note]
 
 

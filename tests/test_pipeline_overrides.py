@@ -43,7 +43,7 @@ def test_hours_without_source_are_not_applied() -> None:
     (out,), notes = apply_overrides([SPHERE], {SPHERE.id: change})
     assert out.category == "museum" and out.opening_hours is None
     assert out.data_confidence == 0.5  # no bonus for hours that were not applied
-    assert "Часы без ссылки на источник не применены: osm:way/454857501" in notes[0]
+    assert "Часы и описания без ссылки на источник не применены: osm:way/454857501" in notes[0]
 
 
 def test_category_fix_brings_its_tags_and_flag_only_entry_changes_nothing() -> None:
@@ -61,3 +61,26 @@ def test_category_fix_brings_its_tags_and_flag_only_entry_changes_nothing() -> N
     assert fixed.category == "fast_food" and set(fixed.tags) == {"indoor", "food"}
     assert fixed.indoor is True and "manual" in fixed.sources
     assert same == flag_only  # no field changed, no "manual" source added
+
+
+def test_full_record_from_an_official_source() -> None:
+    change = {
+        "name": "Alem.ai (бывш. Нур Алем)",
+        "name_i18n": {"ru": "Alem.ai (бывш. Нур Алем)", "en": "Alem.ai (formerly Nur Alem)"},
+        "category": "museum", "opening_hours": "Tu-Su 10:00-18:30; Mo off",
+        "website": "https://alem.ai/", "tags_add": ["interactive", "kids", "not_a_tag"],
+        "kids_friendly": True, "description": "Музей Сингулярности. Билет 2 500 ₸.",
+        "sources_add": ["wikidata"], "source": "https://alem.ai/",
+    }
+    (out,), _ = apply_overrides([SPHERE], {SPHERE.id: change})
+    assert out.name == "Alem.ai (бывш. Нур Алем)" and out.name_i18n["en"].startswith("Alem.ai")
+    assert out.opening_hours == "Tu-Su 10:00-18:30; Mo off" and out.website == "https://alem.ai/"
+    assert {"interactive", "kids", "indoor"} <= set(out.tags) and "not_a_tag" not in out.tags
+    assert out.kids_friendly is True
+    assert out.description_source == "manual" and out.sources == ["osm", "manual", "wikidata"]
+
+    # the same description without a source link is not applied
+    no_link = {k: v for k, v in change.items() if k != "source"}
+    (bare,), notes = apply_overrides([SPHERE], {SPHERE.id: no_link})
+    assert bare.description is None and bare.opening_hours is None
+    assert "Часы и описания без ссылки" in notes[0]

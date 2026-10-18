@@ -300,5 +300,10 @@ def test_inside_mall_footprint_marks_unknown_indoor_only() -> None:
     assert "indoor" in by_id["osm:node/90"].tags
     assert by_id["osm:node/91"].indoor is None  # courtyard hole: not inside
     assert by_id["osm:node/92"].indoor is None
-    assert by_id["osm:node/93"].indoor is False  # a known value is never changed
+    assert by_id["osm:node/93"].indoor is False  # a mall *area*: known values stay
     assert mark_inside_malls([ride], None) == ([ride], 0)
+
+    # the same footprint as a building: the playground/park under the roof is indoor
+    outlines["elements"][0]["tags"] = {"shop": "mall", "building": "retail"}
+    out, marked = mark_inside_malls([park], outlines)
+    assert marked == 1 and out[0].indoor is True and "outdoor" not in out[0].tags
