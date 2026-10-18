@@ -61,3 +61,20 @@ def test_report_states_age_of_oldest_chunk_and_mall_outlines() -> None:
     assert "Контуры ТРЦ: скачаны" in text and "(2 ч назад)" in text
     none = build_report(normalize_payload(PAYLOAD), [PAYLOAD], LANDMARKS, generated_at=when)
     assert "Контуры ТРЦ: не скачаны" in none
+
+
+def test_landmark_count_ignores_plain_overrides() -> None:
+    from app.schemas import POI
+
+    def poi(pid: str, sources: list[str]) -> POI:
+        return POI.model_validate({"id": pid, "name": pid, "category": "attraction",
+                                   "geo": {"lat": 51.1, "lon": 71.4}, "sources": sources,
+                                   "data_confidence": 0.5, "fetched_at": "2026-10-18"})
+
+    pois = [
+        poi("osm:way/166197368", ["osm", "manual"]),  # the Pyramid: a landmark added as POI
+        poi("osm:node/5126825313", ["osm", "manual"]),  # the circus: only an override
+        poi("osm:way/230401645", ["osm"]),  # Baiterek: a landmark found by its own tags
+    ]
+    text = build_report(pois, [PAYLOAD], LANDMARKS)
+    assert "Ориентиры, добавленные как места (объект OSM + ручная разметка): 1." in text
