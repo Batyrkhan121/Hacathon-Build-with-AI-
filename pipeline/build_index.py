@@ -372,8 +372,9 @@ def index_status(index_dir: Path, pois: Sequence[POI]) -> str:
     meta_path = index_dir / "meta.json"
     if not meta_path.exists():
         return (
-            "Векторный индекс не построен (нет `GEMINI_API_KEY` или квоты). "
-            "Retrieval работает лексически по названиям, категориям и тегам."
+            "Векторный индекс не построен: нет ключа эмбеддингов (`OPENROUTER_API_KEY` при "
+            "`EMBED_PROVIDER=openrouter` или `GEMINI_API_KEY` при `EMBED_PROVIDER=gemini`) или "
+            "закончилась квота. Retrieval работает лексически по названиям, категориям и тегам."
         )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if meta.get("status") == "stale":

@@ -75,8 +75,10 @@ def test_no_key_skips(tmp_path: Path, monkeypatch) -> None:
     from app import config
 
     monkeypatch.setattr(config.Settings, "has_embeddings", property(lambda self: False))
-    res = build_index([make_poi(1)], tmp_path / "index")
+    res = build_index([make_poi(1)], tmp_path / "index", provider="gemini")
     assert res.status == "skipped" and "GEMINI_API_KEY" in res.reason
+    res = build_index([make_poi(1)], tmp_path / "index", provider="openrouter")
+    assert res.status == "skipped" and "OPENROUTER_API_KEY" in res.reason
 
 
 def test_status_flags_index_built_from_old_texts(tmp_path: Path) -> None:
@@ -241,3 +243,8 @@ def test_embedding_caches_are_separate_per_provider_model_and_dim(
         assert meta["task_type"] == "none (openrouter)"
     finally:
         get_settings.cache_clear()
+
+
+def test_missing_index_message_names_both_providers(tmp_path: Path) -> None:
+    text = index_status(tmp_path / "no_index", [make_poi(1)])
+    assert "OPENROUTER_API_KEY" in text and "GEMINI_API_KEY" in text and "EMBED_PROVIDER" in text
