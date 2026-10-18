@@ -258,19 +258,22 @@ def finalize(
 
     by_id = {c.poi.id: c for c in candidates}
     cards: list[Card] = []
-    seen: set[str] = set()
+    seen: set[str] = set()  # poi ids and generic names ("playground:детская площадка")
     foreign = duplicates = stripped = 0
     for item in draft.cards:
         if item.poi_id not in by_id:
             foreign += 1
             continue
-        if item.poi_id in seen:
+        cand = by_id[item.poi_id]
+        generic = generic_key(cand.poi)
+        if item.poi_id in seen or (generic is not None and generic in seen):
             duplicates += 1
             continue
         if len(cards) >= MAX_CARDS:
             break
         seen.add(item.poi_id)
-        cand = by_id[item.poi_id]
+        if generic is not None:
+            seen.add(generic)
 
         why, todo = item.why, item.what_to_do
         if not (cand.hours.status == "open" and cand.hours.confidence == "high"):
@@ -314,21 +317,23 @@ def template_cards(
     """Deterministic cards without LLM (fallback and `use_llm=False`).
 
     why = joined Candidate.matched reasons; what_to_do = per-category template in intent.lang;
-    idea_source = "poi_data". Prefer category diversity among the n cards.
+    idea_source = "poi_data". Prefer category diversity among the n cards; never two cards
+    for unnamed places with the same generic name (e.g. «Детская площадка»).
     """
     n = max(0, min(n, MAX_CARDS))
     chosen: list[Candidate] = []
-    for strict in (True, False):  # strict: <= 2 per category and one unnamed place per name
+    for strict in (True, False):  # strict pass: at most 2 cards per category
         for cand in candidates:
             if len(chosen) >= n:
                 break
             if cand in chosen:
                 continue
-            if strict:
-                same = sum(c.poi.category == cand.poi.category for c in chosen)
-                key = generic_key(cand.poi)
-                if same >= 2 or (key and any(generic_key(c.poi) == key for c in chosen)):
-                    continue
+            # never two cards for unnamed places with the same name: fewer cards is better
+            key = generic_key(cand.poi)
+            if key is not None and any(generic_key(c.poi) == key for c in chosen):
+                continue
+            if strict and sum(c.poi.category == cand.poi.category for c in chosen) >= 2:
+                continue
             chosen.append(cand)
     return [
         _card(

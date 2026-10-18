@@ -249,6 +249,24 @@ def test_template_cards_one_unnamed_playground() -> None:
     assert [c.title for c in cards].count("Детская площадка") == 1
 
 
+def test_template_cards_only_unnamed_playgrounds_gives_one_card() -> None:
+    pois = [make_poi(str(i), "playground", "Детская площадка") for i in range(1, 5)]
+    cards = template_cards([cand(p) for p in pois], intent(), ctx())
+    assert [c.title for c in cards] == ["Детская площадка"]
+
+
+def test_finalize_drops_second_unnamed_playground() -> None:
+    pois = [make_poi(str(i), "playground", "Детская площадка") for i in range(1, 3)]
+    pois.append(make_poi("9", "park", "Парк"))
+    resp = DraftResponse(
+        summary="",
+        cards=[draft("test:poi/1"), draft("test:poi/2"), draft("test:poi/9")],
+    )
+    cards, warnings = finalize(resp, [cand(p) for p in pois], intent(), ctx())
+    assert [c.poi_id for c in cards] == ["test:poi/1", "test:poi/9"]
+    assert any("повторных" in w for w in warnings)
+
+
 def test_template_visit_fits_budget(cands: list[Candidate]) -> None:
     cards = template_cards(cands, intent(time_budget_min=30), ctx())
     assert all(c.visit_min_high <= 30 for c in cards)

@@ -8,10 +8,13 @@ not understand -> unknown/low, never a guessed "open". PH/SH rules are ignored (
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from app.hours import ASTANA_TZ, evaluate_hours, now_astana
+
+from .conftest import ROOT, read_jsonl
 
 # Week of 19.10.2026: Monday .. Sunday
 DAY = {"Mo": 19, "Tu": 20, "We": 21, "Th": 22, "Fr": 23, "Sa": 24, "Su": 25}
@@ -261,3 +264,22 @@ def test_additional_rule_after_comma() -> None:
 def test_note_renders_schedule_in_russian() -> None:
     v = evaluate_hours("Mo-Fr 09:00-18:00; Sa 10:00-16:00", at("Mo", 12))
     assert "по данным OSM: Пн–Пт 09:00–18:00; Сб 10:00–16:00" in v.note
+
+
+# real OSM strings (T10 fixture / T11 full dump): share we understand
+REAL_FILES = [
+    ROOT / "tests" / "fixtures" / "poi_sample.jsonl",
+    ROOT / "data" / "processed" / "poi.jsonl",
+]
+
+
+@pytest.mark.parametrize("path", REAL_FILES, ids=["poi_sample", "poi_full"])
+def test_real_opening_hours_parse_ratio(path: Path) -> None:
+    if not path.exists():
+        pytest.skip(f"{path.name} not produced yet (DATA lane)")
+    raws = [row["opening_hours"] for row in read_jsonl(path) if row.get("opening_hours")]
+    if not raws:
+        pytest.skip("no opening_hours in file")
+    low = [raw for raw in raws if evaluate_hours(raw, at("Tu", 15)).confidence == "low"]
+    parsed = 1 - len(low) / len(raws)
+    assert parsed >= 0.9, f"parsed {parsed:.0%}; not understood: {sorted(set(low))[:10]}"

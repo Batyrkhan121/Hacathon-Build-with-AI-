@@ -438,11 +438,18 @@ def _violation(cand: Candidate, selected: list[Candidate]) -> str | None:
 def _mmr(pool: list[Candidate], k: int) -> list[Candidate]:
     selected: list[Candidate] = []
     remaining = list(pool)
+    # scores live in ~0.3..0.7 while similarity is 0..1: min-max normalise over the pool so
+    # that lambda really balances relevance against redundancy
+    low = min((c.score for c in pool), default=0.0)
+    spread = max((c.score for c in pool), default=0.0) - low
+    relevance = {c.poi.id: (c.score - low) / spread if spread > 0 else 1.0 for c in pool}
     while remaining and len(selected) < k:
         ranked: list[tuple[float, Candidate]] = []
         for c in remaining:
             redundancy = max((_similarity(c.poi, s.poi) for s in selected), default=0.0)
-            ranked.append((MMR_LAMBDA * c.score - (1 - MMR_LAMBDA) * redundancy, c))
+            ranked.append(
+                (MMR_LAMBDA * relevance[c.poi.id] - (1 - MMR_LAMBDA) * redundancy, c)
+            )
         # best MMR value first; ties: higher raw score, nearer, id
         ranked.sort(key=lambda item: (-item[0], -item[1].score, item[1].distance_m, item[1].poi.id))
         value, pick = ranked[0]

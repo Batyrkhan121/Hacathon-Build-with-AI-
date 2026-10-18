@@ -7,13 +7,14 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from app.geo import to_h3, walk_minutes
+from app.geo import haversine_m, to_h3, walk_minutes
 from app.hours import ASTANA_TZ
 from app.retrieval import WEIGHTS, explain, lexical_relevance, retrieve
-from app.schemas import POI, GeoPoint, QueryIntent, SearchContext, WeatherInfo
-from app.store import Store
+from app.schemas import POI, GeoPoint, Landmark, QueryIntent, SearchContext, WeatherInfo
+from app.store import Store, load_pois
+from app.validate import template_cards
 
-from .conftest import EXPO
+from .conftest import EXPO, FIXTURES
 
 ORIGIN = GeoPoint(lat=EXPO[0], lon=EXPO[1])
 TUE_NOON = datetime(2026, 10, 20, 12, 0, tzinfo=ASTANA_TZ)
@@ -340,3 +341,59 @@ def test_lexical_relevance_tag_bonus() -> None:
     with_tags = lexical_relevance(q, "кафе coffee power_outlets")
     without = lexical_relevance(q, "кафе")
     assert with_tags > without
+
+
+# ------------------------------------------------- real OSM fixture (T10, DATA lane)
+
+SAMPLE = FIXTURES / "poi_sample.jsonl"
+needs_sample = pytest.mark.skipif(
+    not SAMPLE.exists(), reason="tests/fixtures/poi_sample.jsonl not merged yet (T10)"
+)
+TUE_AFTERNOON = datetime(2026, 10, 20, 15, 0, tzinfo=ASTANA_TZ)
+
+
+def landmark_ctx(landmarks: dict[str, Landmark], landmark_id: str = "expo") -> SearchContext:
+    origin = landmarks[landmark_id].geo
+    return SearchContext(
+        origin=origin,
+        h3_cell=to_h3(origin),
+        h3_res=9,
+        area_label=f"у {landmark_id}",
+        landmark_id=landmark_id,
+        local_time=TUE_AFTERNOON,
+        radius_m=1200,
+    )
+
+
+@needs_sample
+def test_real_expo_landmark_close_to_reference(landmarks: dict[str, Landmark]) -> None:
+    # DATA lane re-checks landmarks against OSM; allow ±100 m drift
+    assert haversine_m(landmarks["expo"].geo, ORIGIN) <= 100
+
+
+@needs_sample
+def test_real_s2_quiet_coffee_near_expo(landmarks: dict[str, Landmark]) -> None:
+    q = intent(
+        "Хочу тихое место с кофе и розеткой недалеко от меня.",
+        must_tags=["coffee", "power_outlets", "quiet"],
+    )
+    out = retrieve(make_store(load_pois(SAMPLE)), q, landmark_ctx(landmarks), None, k=8)
+    assert out[0].poi.category == "cafe"
+    assert any(m.startswith("есть кофе") for m in out[0].matched)
+
+
+@pytest.mark.parametrize("categories", [[], ["playground", "museum"]])
+@needs_sample
+def test_real_s3_kids_near_expo(landmarks: dict[str, Landmark], categories: list[str]) -> None:
+    q = intent(
+        "Еду с ребёнком — где рядом есть детские площадки или музей с интерактивами?",
+        with_kids=True,
+        categories=categories,
+    )
+    ctx = landmark_ctx(landmarks)
+    out = retrieve(make_store(load_pois(SAMPLE)), q, ctx, None, k=8)
+    assert out[0].poi.category in {"playground", "museum"}
+    if not categories:  # alternatives exist: diversity rule applies to the candidate list
+        assert [c.poi.name for c in out[:3]].count("Детская площадка") <= 1
+    cards = template_cards(out, q, ctx)  # cards never repeat an unnamed place
+    assert [c.title for c in cards].count("Детская площадка") == 1
