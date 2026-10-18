@@ -30,8 +30,10 @@ def tmp_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     for name in ("QADAM_POI_PATH", "QADAM_INDEX_DIR", "QADAM_LANDMARKS_PATH", "QADAM_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("QADAM_DATA_DIR", str(data))
-    monkeypatch.setenv("GEMINI_API_KEY", "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    # no key of any provider may reach a test: .env can switch EMBED_PROVIDER at any time
+    for key in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPEN_ROUTER_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("EMBED_PROVIDER", "gemini")
     get_settings.cache_clear()
     yield data
     get_settings.cache_clear()
