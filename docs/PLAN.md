@@ -60,9 +60,10 @@
 - [ ] **T42 Подключение к API.** Загрузка и ошибки, «повторить без ИИ», ru/kk/en, мобильная вёрстка.
 
 ### EVAL (`/eval-scenarios` + `/pitch-docs`)
-- [ ] **T50 eval/scenarios.yaml.** S1–S5 + E1–E11 (16 сценариев) с автопроверками. E11 «я уже в аэропорту». S4 считается у baiterek, ответ с предупреждением о выезде в аэропорт.
-- [ ] **T51 eval/run_eval.py.** Режимы `--mock`, `--no-llm`, `--url`; `eval/report.md|json`; `tests/test_eval_smoke.py`.
-- [ ] **T52 Черновики документов.** CONCEPT, RAG, ETHICS, SCENARIOS (+ ограничения).
+- [x] **T50 eval/scenarios.yaml.** S1–S5 + E1–E11 (16 сценариев) с автопроверками. E11 «я уже в аэропорту». S4 считается у baiterek, ответ с предупреждением о выезде в аэропорт.
+- [x] **T51 eval/run_eval.py.** Режимы `--mock`, `--no-llm`, `--url`; `eval/report.md|json`; `tests/test_eval_smoke.py`.
+- [x] **T52 Черновики документов.** CONCEPT, RAG, ETHICS, SCENARIOS (+ ограничения).
+  - Заметка (T50–T52): влито 16 сценариев, `--mock` даёт 3/16 (так задумано). Реальный прогон после интеграции CORE и LLM (T62). Мелочи EVAL: «N/15» в докстринге run_eval.py:11, имя теста test_scenarios_are_15_valid_requests.
 
 ## Волна 2: интеграция (ИНТЕГРАТОР)
 - [ ] **T60 Мержи.**
