@@ -208,7 +208,7 @@ REASONS: dict[str, dict[str, str]] = {
     "view": {"ru": "вид на город", "kk": "қалаға көрініс", "en": "city view"},
     "photo_spot": {"ru": "место для фото", "kk": "суретке түсетін орын", "en": "photo spot"},
     "night": {"ru": "подходит для вечера", "kk": "кешке қолайлы", "en": "good for the evening"},
-    "late_open": {"ru": "работает допоздна", "kk": "кешке дейін ашық", "en": "open late"},
+    "late_open": {"ru": "работает допоздна", "kk": "кеш жабылады", "en": "open late"},
     "24_7": {"ru": "круглосуточно", "kk": "тәулік бойы", "en": "open 24/7"},
     "free": {"ru": "вход бесплатный", "kk": "кіру тегін", "en": "free entry"},
     "wheelchair": {
@@ -287,6 +287,11 @@ def _doc_index(text: str) -> tuple[frozenset[str], frozenset[str], frozenset[str
     stems = frozenset(t[:_STEM] for t in tokens)
     prefixes = frozenset(d[:_MIN_PREFIX] for d in stems if len(d) >= _MIN_PREFIX)
     return frozenset(tokens), stems, prefixes
+
+
+def text_stems(text: str) -> frozenset[str]:
+    """5-char stems of meaningful words (stopwords dropped); shared with app.validate."""
+    return frozenset(t[:_STEM] for t in _tokens(text))
 
 
 def _query_stems(intent: QueryIntent) -> frozenset[str]:
@@ -599,8 +604,8 @@ def explain(
 
     missing = [t for t in intent.must_tags if t in MISSING_TAG_WORDS and t not in poi.tags]
     if missing:
-        words = (MISSING_TAG_WORDS[t] for t in missing)
-        what = ", ".join(w.get(lang, w["ru"]) for w in words)
+        labels = (MISSING_TAG_WORDS[t] for t in missing)
+        what = ", ".join(label.get(lang, label["ru"]) for label in labels)
         keys.append(("no_data", {"what": what}))
     if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))

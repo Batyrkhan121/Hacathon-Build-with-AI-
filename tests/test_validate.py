@@ -24,6 +24,7 @@ from app.validate import (
     MAX_TODO_CHARS,
     MAX_WHY_CHARS,
     finalize,
+    has_open_claim,
     sanitize_summary,
     template_cards,
 )
@@ -156,7 +157,8 @@ def test_strips_open_claims_without_high_confidence(cands: list[Candidate], clai
     )
     cards, warnings = finalize(resp, cands, intent(), ctx())
     assert cards[0].why == "Тихое место с выставкой."
-    assert any("открыто сейчас" in w for w in warnings)
+    assert any("о текущей работе места" in w for w in warnings)  # item 8: no claim in warning
+    assert not any("открыто сейчас" in w.lower() for w in warnings)
 
 
 def test_keeps_open_claim_when_open_high(cands: list[Candidate]) -> None:
@@ -306,10 +308,10 @@ def test_strips_more_open_claims(cands: list[Candidate], claim: str) -> None:
 
 
 def test_abbreviations_do_not_split_sentences(cands: list[Candidate]) -> None:
-    why = "Находится на ул. Абая, рядом с парком. Есть кофе и тихий зал. Третье."
+    why = "Рядом сквер им. Абая и парк. Есть кофе и тихий зал. Третье."
     resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=why)])
     cards, _ = finalize(resp, cands, intent(), ctx())
-    assert cards[0].why == "Находится на ул. Абая, рядом с парком. Есть кофе и тихий зал."
+    assert cards[0].why == "Рядом сквер им. Абая и парк. Есть кофе и тихий зал."
 
 
 def test_sanitize_summary(cands: list[Candidate]) -> None:
@@ -433,3 +435,158 @@ def test_indoor_attraction_gets_indoor_advice(lang: str) -> None:
     outside = template_cards([cand(square)], intent(lang=lang), ctx())[0].what_to_do
     assert inside != outside
     assert not any(w in inside for w in ("оденьтесь", "киініңіз", "dress"))
+
+
+
+# ------------------------------------- RAG review REQUEST (integrator, wave 3 QUALITY)
+
+OPEN_CLAIM_PHRASES = [
+    # ru: plural, «в данный момент», «ещё», «сегодня до», 24/7, «с … до …»
+    "Открыты сейчас до вечера.",
+    "Все места открыты сейчас.",
+    "В данный момент открыто.",
+    "Всё ещё открыто.",
+    "Ещё открыто.",
+    "Открыто сегодня до 22:00.",
+    "Круглосуточно.",
+    "Работает 24/7.",
+    "Работает с 9 до 22.",
+    "Сейчас работает.",
+    "Кафе СЕЙЧАС ОТКРЫТО.",
+    # en
+    "Open 24/7.",
+    "We're open.",
+    "Currently operating.",
+    "Now open!",
+    "Open until 10 PM.",
+    "It is open now.",
+    # kk
+    "Қазір ашық.",
+    "Мұражай ашық.",
+    "Жұмыс істеп тұр.",
+    "Қазір жұмыс істеп тұр.",
+    # obfuscated: zero-width, Latin homoglyphs, fullwidth / compatibility forms
+    "Откры\u200bто сейчас.",
+    "Oткрыто сейчас.",
+    "Открытo сейчас.",
+    "\uff2fpen now.",
+]
+NOT_CLAIMS = [
+    "Тихое место с видом на сферу.",
+    "Открытая площадка у фонтана.",
+    "Удобно работать с ноутбуком.",
+    "Opening hours are on the card.",
+    "Ашық аспан астында серуендеңіз.",
+    "≈5 мин пешком, работает допоздна.",
+    "≈5 min walk, open late.",
+]
+
+
+@pytest.mark.parametrize("claim", OPEN_CLAIM_PHRASES)
+def test_open_claims_variants_are_stripped(cands: list[Candidate], claim: str) -> None:
+    assert has_open_claim(claim)
+    resp = DraftResponse(summary="", cards=[draft("test:poi/3", why=f"{claim} Тихое место.")])
+    cards, _ = finalize(resp, cands, intent(), ctx())
+    assert cards[0].why == "Тихое место."
+
+
+@pytest.mark.parametrize("text", NOT_CLAIMS)
+def test_harmless_sentences_are_not_claims(text: str) -> None:
+    assert not has_open_claim(text)
+
+
+def test_summary_plural_claim_is_stripped(cands: list[Candidate]) -> None:
+    cards = template_cards(cands, intent(), ctx())  # mix of open/high and unknown
+    text = "Все места открыты сейчас. Рядом тихое кафе и музей."
+    assert sanitize_summary(text, cards) == "Рядом тихое кафе и музей."
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "Средний чек 2500 тенге.",
+        "Цены от $10.",
+        "Звоните +7 777 123 45 67.",
+        "Адрес: ул. Другая 99.",
+        "Сайт www.example.kz.",
+        "Всего 50 м от вас.",
+    ],
+)
+def test_unverifiable_facts_are_stripped(cands: list[Candidate], bad: str) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=f"{bad} Тихо и уютно.")])
+    cards, warnings = finalize(resp, cands, intent(), ctx())
+    assert cards[0].why == "Тихо и уютно."
+    assert any("непроверяем" in w for w in warnings)
+
+
+def test_numbers_from_the_data_are_kept(cands: list[Candidate]) -> None:
+    alpha = cands[0]  # 250 m, walk 4 min
+    why = f"Всего {alpha.distance_m} м, около {alpha.walk_min} минут пешком. Тихо."
+    resp = DraftResponse(summary="", cards=[draft("test:poi/1", why=why, visit_min_low=20,
+                                                  visit_min_high=40,
+                                                  todo="Посидите минут 20–40.")])
+    cards, _ = finalize(resp, cands, intent(), ctx())
+    assert cards[0].why == why
+    assert cards[0].what_to_do == "Посидите минут 20–40."
+
+
+def test_rounded_distance_is_kept(cands: list[Candidate]) -> None:
+    resp = DraftResponse(summary="", cards=[draft("test:poi/4", why="Парк примерно в 900 метрах.")])
+    cards, _ = finalize(resp, cands, intent(), ctx())  # candidate distance is 900 m
+    assert cards[0].why == "Парк примерно в 900 метрах."
+
+
+def test_open_high_wrong_closing_time_is_stripped(cands: list[Candidate]) -> None:
+    hours = HoursVerdict(status="open", confidence="high",
+                         note="по данным OSM: ежедневно 08:00–22:00")
+    cs = [cand(cands[0].poi, hours, 250)]
+    wrong = DraftResponse(summary="", cards=[draft("test:poi/1", why="Открыто до 23:00. Тихо.")])
+    assert finalize(wrong, cs, intent(), ctx())[0][0].why == "Тихо."
+    right = DraftResponse(summary="", cards=[draft("test:poi/1", why="Открыто до 22:00. Тихо.")])
+    assert finalize(right, cs, intent(), ctx())[0][0].why == "Открыто до 22:00. Тихо."
+
+
+def test_llm_summary_is_checked_and_short(cands: list[Candidate]) -> None:
+    cards = template_cards(cands, intent(), ctx())
+    text = "Вот три тихих места рядом. Средний чек 2500 тенге. Ещё одно предложение."
+    assert sanitize_summary(text, cards, llm=True) == "Вот три тихих места рядом."
+    assert len(sanitize_summary("Очень длинно " * 150 + ".", cards, llm=True)) <= 200
+    # pipeline's own template summaries (with counts and times) are not fact-filtered
+    own = "Подборка по открытым данным: 3 идеи рядом."
+    assert sanitize_summary(own, cards) == own
+
+
+def test_llm_summary_wrong_time_stripped_even_if_all_open(cands: list[Candidate]) -> None:
+    hours = HoursVerdict(status="open", confidence="high",
+                         note="по данным OSM: ежедневно 08:00–22:00")
+    cards = template_cards([cand(cands[0].poi, hours, 250)], intent(), ctx())
+    text = "Всё открыто до 23:00. Тихое кафе рядом."
+    assert sanitize_summary(text, cards, llm=True) == "Тихое кафе рядом."
+
+
+def test_poi_data_label_needs_support_in_data(cands: list[Candidate]) -> None:
+    no_desc = [cand(c.poi.model_copy(update={"description": None}), c.hours, c.distance_m)
+               for c in cands]
+    invented = draft("test:poi/3", why="Здесь проходят мастер-классы по керамике.",
+                     idea_source="poi_data")
+    supported = draft("test:poi/1", why="Тихо, есть кофе и розетки.", idea_source="poi_data")
+    cards, _ = finalize(DraftResponse(summary="", cards=[invented, supported]), no_desc,
+                        intent(), ctx())
+    by_id = {c.poi_id: c.idea_source for c in cards}
+    assert by_id["test:poi/3"] == "generated"  # no description, why not backed by name/tags
+    assert by_id["test:poi/1"] == "poi_data"
+
+
+def test_poi_data_kept_when_place_has_description(cands: list[Candidate]) -> None:
+    with_desc = cands[1].poi.model_copy(update={"description": "Музей энергии будущего."})
+    cs = [cand(with_desc, UNKNOWN, 150)]
+    d = draft("test:poi/3", why="Интересная экспозиция про будущее.", idea_source="poi_data")
+    cards, _ = finalize(DraftResponse(summary="", cards=[d]), cs, intent(), ctx())
+    assert cards[0].idea_source == "poi_data"
+
+
+def test_poi_id_with_spaces_is_accepted(cands: list[Candidate]) -> None:
+    cards, warnings = finalize(DraftResponse(summary="", cards=[draft(" test:poi/1 ")]), cands,
+                               intent(), ctx())
+    assert [c.poi_id for c in cards] == ["test:poi/1"]
+    assert not any("не из списка" in w for w in warnings)
