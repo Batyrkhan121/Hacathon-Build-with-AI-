@@ -11,7 +11,9 @@ Checks, on the INSTALLED anthropic / google-genai versions:
 - beta.messages.parse with the server-side refusal fallback
   (betas=["server-side-fallback-2026-07-01"], fallbacks="default") together with structured output;
 - the fallback model answers the same structured call;
-- Gemini embeddings (only when GEMINI_API_KEY is set, otherwise SKIP).
+- raw Gemini embeddings (only with EMBED_PROVIDER=gemini and GEMINI_API_KEY, otherwise SKIP);
+- with --client: LLMClient.embed_query through the provider of EMBED_PROVIDER
+  (OPENROUTER_API_KEY / GEMINI_API_KEY, otherwise SKIP); status=cache means no live call.
 Prints OK / SKIP / FAIL with stop_reason, served model, tokens and latency. Never prints secrets.
 """
 
@@ -27,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.config import get_settings  # noqa: E402
+from app.config import Settings, get_settings  # noqa: E402
 from app.schemas import DraftResponse, QueryIntent  # noqa: E402
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -190,10 +192,17 @@ def check_fallback_model() -> str:
     return f"{_describe(resp, t0)} | cards={[c.poi_id for c in resp.parsed_output.cards]}"
 
 
+def _embed_key_name(s: Settings) -> str:
+    return "OPENROUTER_API_KEY" if s.embed_provider == "openrouter" else "GEMINI_API_KEY"
+
+
 def check_embed() -> str:
     s = get_settings()
+    if s.embed_provider == "openrouter":
+        raise Skip("EMBED_PROVIDER=openrouter: raw Gemini is not used, see check_client_embed "
+                   "(--client)")
     if not s.has_embeddings:
-        raise Skip("GEMINI_API_KEY not set -> no vector index, retrieval is lexical")
+        raise Skip(f"{_embed_key_name(s)} not set -> no vector index, retrieval is lexical")
     from google import genai
     from google.genai import types
 
@@ -237,11 +246,14 @@ def check_client_embed() -> str:
 
     s = get_settings()
     if not s.has_embeddings:
-        raise Skip("GEMINI_API_KEY not set -> embed_query returns None")
-    vec = LLMClient(s).embed_query("тихое кафе с розеткой")
+        raise Skip(f"{_embed_key_name(s)} not set -> embed_query returns None")
+    llm = LLMClient(s)
+    vec = llm.embed_query("тихое кафе с розеткой")
     if vec is None:
-        raise RuntimeError("embed_query returned None with a key set")
-    return f"shape={vec.shape} norm={float((vec ** 2).sum()) ** 0.5:.3f}"
+        raise RuntimeError(f"embed_query returned None with a key set "
+                           f"({llm.last_embed_status})")
+    return (f"provider={s.embed_provider} status={llm.last_embed_status} shape={vec.shape} "
+            f"norm={float((vec ** 2).sum()) ** 0.5:.3f}")
 
 
 def main() -> int:

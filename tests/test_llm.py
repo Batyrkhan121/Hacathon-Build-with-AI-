@@ -724,3 +724,37 @@ def test_user_data_block_keeps_ordinary_text() -> None:
 
 def test_embed_documents_empty(tmp_path: Path) -> None:
     assert make_embedder(tmp_path).embed_documents([]).shape == (0, 4)
+
+
+def _check_llm_module() -> Any:
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "check_llm.py"
+    spec = importlib.util.spec_from_file_location("check_llm_under_test", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize(("provider", "key"), [("openrouter", "OPENROUTER_API_KEY"),
+                                               ("gemini", "GEMINI_API_KEY")])
+def test_check_llm_skips_name_the_provider_key(tmp_path: Path, monkeypatch, provider: str,
+                                               key: str) -> None:
+    mod = _check_llm_module()
+    monkeypatch.setattr(mod, "get_settings",
+                        lambda: make_settings(tmp_path, embed_provider=provider))
+    with pytest.raises(mod.Skip, match=key):
+        mod.check_client_embed()
+    if provider == "gemini":
+        with pytest.raises(mod.Skip, match=key):
+            mod.check_embed()
+
+
+def test_check_llm_raw_gemini_is_skipped_under_openrouter(tmp_path: Path, monkeypatch) -> None:
+    # with an OpenRouter key the raw Gemini SDK call would FAIL although search works
+    mod = _check_llm_module()
+    monkeypatch.setattr(mod, "get_settings", lambda: make_settings(
+        tmp_path, embed_provider="openrouter", openrouter_api_key=OR_KEY))
+    with pytest.raises(mod.Skip, match="check_client_embed"):
+        mod.check_embed()
