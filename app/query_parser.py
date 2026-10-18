@@ -138,8 +138,9 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("park", _rx(r"\bпарк(?!ов)\w*|сквер|бульвар|аллея|саябақ|\bparks?\b|garden|ботаническ")),
     ("playground", _rx(r"(?<!смотровая )(?<!смотровую )площадк|playground|ойын алаң|батут")),
     ("viewpoint", _rx(r"смотров\w* площадк|viewpoint|observation deck|lookout")),
-    ("attraction", _rx(r"достопримечат|\bsights?\b|sightseeing|attraction|көрікті"
-                       r"|что (?:можно )?посмотреть|what to see")),
+    # specific words for sights; the general "what is there to see" phrases are _SEE_RE
+    ("attraction", _rx(r"достопримечат|\bsights?\b|sightseeing|attraction|\blandmarks\b"
+                       r"|көрікті")),
     ("monument", _rx(r"памятник|монумент|monument|memorial|мемориал|ескерткіш|статуя|statue")),
     ("religious", _rx(r"мечет|церк|храм|собор|синагог|mosque|church|cathedral|мешіт")),
     ("mall", _rx(r"\bтц\b|\bтрц\b|торгов\w* центр|\bмолл|\bmall\b|сауда орталығ")),
@@ -148,6 +149,13 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
                           r"|bowling|escape room|arcade|ойын-сауық")),
 )
 _FOOD_RE = _rx(r"поесть|перекусить|покушать|где поесть|\beat\b|тамақтан")
+# "What is there to see": sights AND parks (E7 at EXPO: «What's worth seeing nearby?» — the
+# words match no place by name, so without these categories the no-AI answer is restaurants).
+_SEE_RE = _rx(r"что (?:можно |тут |здесь )?посмотреть|что (?:тут |здесь )?интересного"
+              r"|куда сходить посмотреть|what to see|things to see|worth (?:seeing|visiting)"
+              r"|places to visit|what'?s interesting|көретін жер|көруге тұрарлық"
+              r"|не көруге болады")
+SIGHTS_AND_PARKS = [*SIGHTS, "park"]
 
 _GROUP_NUM_RES = (
     re.compile(r"\bнас\s+(\d+)"),
@@ -209,6 +217,8 @@ def parse_rules(text: str, lang_hint: Lang | None, landmarks: dict[str, Landmark
         categories.remove("playground")
     if "attraction" in categories:
         categories = _dedupe(categories + SIGHTS)
+    if _SEE_RE.search(t):
+        categories = _dedupe(categories + SIGHTS_AND_PARKS)
     if _FOOD_RE.search(t):
         categories = _dedupe(categories + FOOD)
 
@@ -312,7 +322,8 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
 
 
 def _normalise(text: str) -> str:
-    t = text.lower().replace("ё", "е").replace("–", "-").replace("—", "-")
+    t = (text.lower().replace("ё", "е").replace("–", "-").replace("—", "-")
+         .replace("’", "'").replace("ʼ", "'"))
     return re.sub(r"\s+", " ", t)
 
 

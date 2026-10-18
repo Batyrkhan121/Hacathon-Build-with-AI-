@@ -90,6 +90,7 @@ MIN_WALK_LEFT_MIN = 15  # less than this left -> no cards, "leave now"
 TOURIST_MAX_CARDS = 2
 HUB_MAX_WALK_MIN = 15  # at a transport hub and for tourists: short walks, no radius widening
 CAREFUL_MAX_WALK_MIN = 15  # kids / wheelchair / night, unless the user set a limit
+MAX_ONE_WAY_WALK_MIN = 20  # budget-derived walk to one stop, unless the user set a limit
 NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
 GROUP_MIN = 3
 FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
@@ -452,6 +453,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     careful_cap = careful and intent.max_walk_min is None and "max_walk_min" not in plan_update
     if careful_cap:
         plan_update["max_walk_min"] = CAREFUL_MAX_WALK_MIN
+    # «Nearby» is a walk of at most MAX_ONE_WAY_WALK_MIN to a stop: the budget radius
+    # (ONE_WAY_SHARE × budget = 21 min for 60, 42 min for 120) must not go further. An explicit
+    # limit from the text or the UI always wins.
+    plan_budget = plan_update.get("time_budget_min", intent.time_budget_min)
+    if ("max_walk_min" not in plan_update and intent.max_walk_min is None and plan_budget
+            and geo.ONE_WAY_SHARE * float(plan_budget) > MAX_ONE_WAY_WALK_MIN):
+        plan_update["max_walk_min"] = MAX_ONE_WAY_WALK_MIN
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
