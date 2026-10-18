@@ -81,3 +81,29 @@ def test_landmark_count_ignores_plain_overrides() -> None:
         "tags": {"historic": "monument", "name": "Бәйтерек"}}]}
     text = build_report(pois, [raw], LANDMARKS)
     assert "Ориентиры, добавленные как места (объект OSM + ручная разметка): 1." in text
+
+
+def test_report_walk_graph_section_states_partial_coverage() -> None:
+    walk = {
+        "osm_snapshot": "2026-10-18", "created_at": "2026-10-19T01:30:00+05:00",
+        "nodes": 1200, "edges": 1500, "total_length_km": 310.5,
+        "largest_component_share": 0.9712, "crossings": 80, "unmarked_crossings": 12,
+        "signals": 20, "kerbs_lowered": 9, "steps_edges": 4, "lit_edges": 700,
+        "crossing_edges": 60, "poi_total": 100, "poi_snapped": 40, "poi_snapped_share": 0.4,
+        "poi_snap_median_m": 18.0, "landmarks_total": 9, "landmarks_snapped": 7,
+        "snap_max_m": 150, "file_bytes": 2_500_000, "coverage": "partial", "tiles_total": 9,
+        "tiles_loaded": ["walk_tile_1", "walk_tile_4"], "tiles_missing": ["walk_tile_0"],
+        "tiles_partial": [], "poi_in_coverage": 45, "poi_snapped_share_in_coverage": 0.889,
+    }
+    pois = normalize_payload(PAYLOAD)
+    text = build_report(pois, [PAYLOAD], LANDMARKS, walk_meta=walk)
+    section = text.split("## Пешеходный граф", 1)[1]
+    for piece in ("Узлов: 1200; рёбер: 1500", "97.1% узлов", "Переходов: 80", "светофоров: 20",
+                  "лестницами: 4", "40 из 100 (40%)", "медиана 18 м", "ориентиров: 7 из 9",
+                  "2.5 МБ", "Покрытие частичное: 2 из 9 плиток", "не скачаны: walk_tile_0",
+                  "(45) привязано 89%"):
+        assert piece in section, piece
+    assert "## Пешеходный граф" not in build_report(pois, [PAYLOAD], LANDMARKS)
+    full = build_report(pois, [PAYLOAD], LANDMARKS,
+                        walk_meta={**walk, "coverage": "full", "tiles_loaded": ["t"] * 9})
+    assert "Покрытие: весь город, 9 из 9 плиток." in full

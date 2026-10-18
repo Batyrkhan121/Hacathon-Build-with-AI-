@@ -173,3 +173,16 @@ def test_fetch_walk_tiles_cache_and_partial(tmp_path: Path) -> None:
     queries.clear()
     fetch_walk(raw_dir=tmp_path, query_fn=fake, sleep=lambda s: None)
     assert len(queries) == 1  # only the partial tile is fetched again
+
+
+def test_coverage_meta_marks_a_partial_graph(tmp_path: Path) -> None:
+    from pipeline.walk_graph import coverage_meta
+
+    (tmp_path / "osm_walk_tile_4.json").write_text('{"elements": []}', encoding="utf-8")
+    (tmp_path / "osm_walk_tile_1.json").write_text(
+        '{"elements": [], "qadam": {"partial": true}}', encoding="utf-8")
+    cov = coverage_meta(sorted(tmp_path.glob("osm_walk_tile_*.json")))
+    assert cov["coverage"] == "partial" and cov["tiles_total"] == 9
+    assert cov["tiles_loaded"] == ["walk_tile_1", "walk_tile_4"]
+    assert cov["tiles_partial"] == ["walk_tile_1"] and len(cov["tiles_missing"]) == 7
+    assert cov["covered_bboxes"][1] == [51.11, 71.35, 51.19, 71.5]  # the centre tile

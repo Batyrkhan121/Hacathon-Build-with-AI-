@@ -414,6 +414,28 @@ def walk_files(raw_dir: Path) -> list[Path]:
     return sorted(raw_dir.glob(f"osm_{CHUNK_PREFIX}*.json"))
 
 
+def coverage_meta(paths: Sequence[Path]) -> dict:
+    """Which city tiles the graph is built from: an honest label for a partial graph."""
+    by_name = {p.stem.removeprefix("osm_"): p for p in paths}
+    loaded, partial, missing, boxes = [], [], [], []
+    for name, bbox in walk_chunks():
+        if name not in by_name:
+            missing.append(name)
+            continue
+        loaded.append(name)
+        boxes.append([float(x) for x in bbox.split(",")])
+        if is_partial_file(by_name[name]):
+            partial.append(name)
+    return {
+        "coverage": "full" if not missing and not partial else "partial",
+        "tiles_total": len(walk_chunks()),
+        "tiles_loaded": loaded,
+        "tiles_missing": missing,
+        "tiles_partial": partial,
+        "covered_bboxes": boxes,  # [south, west, north, east] of each loaded tile
+    }
+
+
 def run(*, skip_fetch: bool = False, force: bool = False) -> dict:
     settings = get_settings()
     raw_dir = settings.data_dir / "raw"
@@ -434,13 +456,21 @@ def run(*, skip_fetch: bool = False, force: bool = False) -> dict:
         graph, [(lm["id"], lm["geo"]["lat"], lm["geo"]["lon"]) for lm in landmarks]
     )
     snapshots = sorted({osm_base(p)[:10] for p in payloads if osm_base(p)})
+    coverage = coverage_meta(paths)
+    # POI outside the loaded tiles cannot snap: count the share among the covered ones too
+    covered = [p for p in pois if any(s <= p.geo.lat <= n and w <= p.geo.lon <= e
+                                      for s, w, n, e in coverage["covered_bboxes"])]
+    coverage["poi_in_coverage"] = len(covered)
+    coverage["poi_snapped_share_in_coverage"] = (
+        round(sum(1 for p in covered if p.id in poi_snaps) / len(covered), 3) if covered else 0.0
+    )
     out_dir = settings.poi_path.parent
     return save_graph(
         graph, poi_snaps, landmark_snaps, stats,
         out_dir / "walk_graph.npz", out_dir / "walk_graph_meta.json",
         poi_total=len(pois), landmark_total=len(landmarks),
         osm_snapshot=snapshots[0] if snapshots else "",  # the oldest tile, to be safe
-        extra_meta={"osm_snapshots": snapshots, "tiles": len(paths), "tiles_failed": failed},
+        extra_meta={"osm_snapshots": snapshots, **coverage, "tiles_failed": failed},
     )
 
 
@@ -453,7 +483,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     meta = run(skip_fetch=args.skip_fetch, force=args.force)
     keys = ("nodes", "edges", "crossings", "signals", "steps_edges", "largest_component_share",
-            "poi_snapped_share", "landmarks_snapped", "file_bytes", "tiles_failed")
+            "poi_snapped_share", "landmarks_snapped", "file_bytes", "coverage", "tiles_missing",
+            "tiles_failed")
     print(json.dumps({k: meta[k] for k in keys}, ensure_ascii=False))
 
 
