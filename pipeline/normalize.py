@@ -421,16 +421,22 @@ def normalize_payloads(
 ) -> list[POI]:
     """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
     taken once, from the freshest OSM snapshot (mirrors lag: kumi served a June database
-    in October). An element found only in an older snapshot whose point a fresher chunk
-    also covers is stale (deleted or retagged since) and is dropped. Then near-duplicates
-    are merged by `dedupe`. `stats["stale"]` counts the dropped ones."""
+    in October). An element found only in an older snapshot whose point a fresher *complete*
+    chunk also covers is stale (deleted or retagged since) and is dropped; a partial chunk
+    (Overpass `remark`) never proves absence. Then near-duplicates are merged by `dedupe`.
+    `stats["stale"]` counts dropped elements, `stats["stale_pois"]` the names of former POIs."""
+    from pipeline.fetch_osm import is_partial
+
     ordered = sorted(payloads, key=osm_base, reverse=True)  # stable for equal stamps
     seen: set[str] = set()
     pois: list[POI] = []
     stale = 0
+    stale_pois: list[str] = []
     for i, payload in enumerate(ordered):
         date, base = fetched_date(payload), osm_base(payload)
-        fresher = [coverage(q) for q in ordered[:i] if osm_base(q) > base]
+        fresher = [
+            coverage(q) for q in ordered[:i] if osm_base(q) > base and not is_partial(q)
+        ]
         for el in payload.get("elements", []):
             key = f"{el.get('type')}/{el.get('id')}"
             if key in seen:
@@ -439,11 +445,14 @@ def normalize_payloads(
             point = element_point(el)
             if fresher and point and any(covers(f, *point) for f in fresher):
                 stale += 1
+                if gone := normalize_element(el, date):
+                    stale_pois.append(f"{gone.name} ({gone.id})")
                 continue
             if poi := normalize_element(el, date):
                 pois.append(poi)
     if stats is not None:
         stats["stale"] = stale
+        stats["stale_pois"] = stale_pois  # type: ignore[assignment]
     return dedupe(pois)
 
 
