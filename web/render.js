@@ -251,11 +251,14 @@ function renderEmpty(ctx) {
   );
 }
 
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked']; // schemas 1.1.0 CrossingKind
+
 // Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
 // + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
 function renderGraphSummary(route, ctx) {
   const walkMin = route.legs.reduce((sum, leg) => sum + (leg.walk_min || 0), 0);
-  const crossings = route.crossings || [];
+  // Считаем те же переходы, что рисует карта: только виды из контракта.
+  const crossings = (route.crossings || []).filter((c) => CROSSING_KINDS.includes(c.kind));
   const signals = crossings.filter((c) => c.kind === 'signals').length;
   const base = crossings.length
     ? t('route.graphSummary', {

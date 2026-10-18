@@ -61,11 +61,17 @@ let lineLegend = null;
 let legendSpec = null; // { solid: boolean, kinds: string[] }
 let legendLabels = null;
 
+// HTML значка собирается только из белого списка: kind приходит из ответа сервера, а divIcon и
+// легенда пишут строку через innerHTML. Неизвестный вид → пустая строка (значок не рисуется).
+const CROSSING_GLYPHS = {
+  signals: '<span class="crossing-glyph is-signals" aria-hidden="true">🚦</span>',
+  marked: '<span class="crossing-glyph is-marked" aria-hidden="true"></span>',
+  unmarked: '<span class="crossing-glyph is-unmarked" aria-hidden="true">!</span>',
+};
+
 function crossingGlyph(kind) {
   // светофор — эмодзи, зебра — полосы, без разметки — пунктирный круг с «!»
-  return `<span class="crossing-glyph is-${kind}" aria-hidden="true">${
-    kind === 'signals' ? '🚦' : kind === 'unmarked' ? '!' : ''
-  }</span>`;
+  return Object.hasOwn(CROSSING_GLYPHS, kind) ? CROSSING_GLYPHS[kind] : '';
 }
 
 function renderLegend() {
@@ -179,7 +185,8 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
     routeLine.bindTooltip(lineTooltip(routeLabel, graph ? legend.graph : legend.straight), { sticky: true });
     const crossings = graph ? route.crossings || [] : [];
     for (const c of crossings) {
-      const label = legend.crossings[c.kind] || c.kind;
+      if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked
+      const label = legend.crossings[c.kind];
       L.marker([c.lat, c.lon], {
         icon: crossingIcon(c.kind),
         title: label,
