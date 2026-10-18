@@ -86,6 +86,25 @@ HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "
 MIN_PREFIX_LEN = 5
 PLAYGROUND_NEAR_M = 150.0
 LANDMARK_NEAR_M = 150.0
+# words that name a kind of place, not a place: "у Сквер" is not a usable anchor
+GENERIC_NAME_WORDS: frozenset[str] = frozenset(
+    {
+        # ru
+        "сквер", "парк", "сад", "аллея", "бульвар", "площадь", "фонтан", "кафе", "кофейня",
+        "ресторан", "столовая", "бар", "паб", "фастфуд", "шаурма", "пиццерия", "магазин",
+        "трц", "тц", "торговый", "центр", "памятник", "монумент", "мечеть", "церковь", "храм",
+        "библиотека", "кинотеатр", "театр", "музей", "галерея", "спортзал", "стадион",
+        "бассейн", "каток", "детская", "площадка", "двор", "зона", "отдыха", "и", "на", "у",
+        # kk
+        "саябақ", "саябағы", "бақ", "бағы", "сквері", "алаң", "алаңы", "кафесі", "мейрамхана",
+        "мейрамханасы", "дәмхана", "мешіт", "мешіті", "ескерткіш", "ескерткіші", "мұражай",
+        "мұражайы", "кітапхана", "кітапханасы", "ойын", "балалар", "алаңшасы",
+        # en
+        "park", "garden", "square", "cafe", "coffee", "restaurant", "bar", "pub", "mall",
+        "museum", "monument", "mosque", "church", "library", "cinema", "theatre", "gym",
+        "playground", "the", "of",
+    }
+)
 # landmarks are curated by the team (source "manual"): famous buildings worth a photo
 LANDMARK_TAGS: tuple[str, ...] = ("architecture", "photo_spot")
 
@@ -458,12 +477,19 @@ def is_unnamed_playground(poi: POI) -> bool:
     return poi.category == "playground" and poi.name == PLAYGROUND_NAME
 
 
+def has_proper_name(name: str) -> bool:
+    """A name of its own, not just a kind of place: "Сквер Акжайык", "Coffee Boom" yes;
+    "Сквер", "Кафе 24", "саябақ" no (what is left after generic words has < 3 letters)."""
+    words = re.findall(r"[^\W\d_]+", name.casefold())
+    return sum(len(w) for w in words if w not in GENERIC_NAME_WORDS) >= 3
+
+
 def name_playgrounds(pois: Sequence[POI], radius_m: float = PLAYGROUND_NEAR_M) -> list[POI]:
-    """"Детская площадка" -> "Детская площадка у <nearest named non-playground POI>"
-    when one is within radius_m; otherwise the generic name stays."""
+    """"Детская площадка" -> "Детская площадка у <nearest non-playground POI with a proper
+    name>" when one is within radius_m; otherwise the generic name stays."""
     buckets: dict[str, list[POI]] = {}
     for p in pois:
-        if p.category != "playground":
+        if p.category != "playground" and has_proper_name(p.name):
             buckets.setdefault(h3.latlng_to_cell(p.geo.lat, p.geo.lon, 8), []).append(p)
     out: list[POI] = []
     for p in pois:

@@ -30,10 +30,12 @@ def landmarks() -> dict[str, dict]:
 
 
 @pytest.mark.parametrize("origin", ["expo", "mega_silk_way"])
-def test_expo_sphere_is_a_sight_within_20_min(pois, landmarks, origin: str) -> None:
+def test_expo_sphere_is_a_museum_within_20_min(pois, landmarks, origin: str) -> None:
     g = landmarks[origin]["geo"]
     sphere = next(p for p in pois if p.id == "osm:way/454857501")
-    assert sphere.category == "attraction" and "manual" in sphere.sources
+    # data/manual/overrides.json: the sphere is a museum; hours only with a source
+    assert sphere.category == "museum" and "manual" in sphere.sources
+    assert sphere.opening_hours is None or sphere.website
     assert haversine_m(g["lat"], g["lon"], sphere.geo.lat, sphere.geo.lon) < TWENTY_MIN_STRAIGHT_M
 
 
