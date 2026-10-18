@@ -366,17 +366,22 @@ LLM_REASONS: dict[str, dict[str, str]] = {
 }
 # Reasons in brackets are for failures only. An empty GEMINI_API_KEY is a deliberate choice
 # (video takes run with it), so "no_key" has no text: plain «поиск: по словам», no warning.
+# {p} = the embeddings provider as the user would name it: Gemini or OpenRouter.
 EMBED_REASONS: dict[str, dict[str, str]] = {
-    "ru": {"quota": "лимит запросов Gemini", "minute_quota": "минутный лимит Gemini",
-           "daily_quota": "дневная квота Gemini", "network": "нет связи с Gemini",
-           "error": "ошибка Gemini", "bad_vector": "некорректный вектор запроса"},
-    "kk": {"quota": "Gemini сұраулар лимиті", "minute_quota": "Gemini минуттық лимиті",
-           "daily_quota": "Gemini күндік квотасы", "network": "Gemini-мен байланыс жоқ",
-           "error": "Gemini қатесі", "bad_vector": "сұрау векторы дұрыс емес"},
-    "en": {"quota": "Gemini rate limit", "minute_quota": "Gemini per-minute limit",
-           "daily_quota": "Gemini daily quota", "network": "no connection to Gemini",
-           "error": "Gemini error", "bad_vector": "invalid query vector"},
+    "ru": {"quota": "лимит запросов {p}", "minute_quota": "минутный лимит {p}",
+           "daily_quota": "дневная квота {p}", "network": "нет связи с {p}",
+           "error": "ошибка {p}", "bad_vector": "некорректный вектор запроса",
+           "auth": "ключ {p} недействителен", "no_credit": "нет кредитов {p}"},
+    "kk": {"quota": "{p} сұраулар лимиті", "minute_quota": "{p} минуттық лимиті",
+           "daily_quota": "{p} күндік квотасы", "network": "{p}-мен байланыс жоқ",
+           "error": "{p} қатесі", "bad_vector": "сұрау векторы дұрыс емес",
+           "auth": "{p} кілті жарамсыз", "no_credit": "{p} кредиттері жоқ"},
+    "en": {"quota": "{p} rate limit", "minute_quota": "{p} per-minute limit",
+           "daily_quota": "{p} daily quota", "network": "no connection to {p}",
+           "error": "{p} error", "bad_vector": "invalid query vector",
+           "auth": "{p} key rejected", "no_credit": "no {p} credits"},
 }
+EMBED_PROVIDER_NAMES = {"gemini": "Gemini", "openrouter": "OpenRouter"}
 # retrieval.hours_dropped() reasons, in this order, for the "data used" panel
 HOURS_DROP_NAMES: dict[str, dict[str, str]] = {
     "ru": {"closed": "закрыто", "closed_partial": "сегодня не работает",
@@ -387,7 +392,7 @@ HOURS_DROP_NAMES: dict[str, dict[str, str]] = {
            "closing_soon": "closing soon", "night": "not open at night"},
 }
 SEMANTIC_DOWN_KINDS = frozenset({"quota", "minute_quota", "daily_quota", "network", "error",
-                                 "bad_vector"})
+                                 "bad_vector", "auth", "no_credit"})
 
 
 class InvalidRequest(ValueError):
@@ -508,7 +513,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             semantic_reason = "bad_vector" if raw_vec is not None else (status or "error")
             if semantic_reason in SEMANTIC_DOWN_KINDS:
                 warn.append(t["semantic_down"].format(
-                    reason=EMBED_REASONS[intent.lang][semantic_reason]))
+                    reason=_embed_reason(intent.lang, semantic_reason, deps.settings)))
 
     wide_pool = llm is not None and llm.available and query_vec is None
     pool_k = LLM_POOL_K if wide_pool else TOP_K
@@ -668,7 +673,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
                              semantic=query_vec is not None,
                              claude_picked=wide_pool and generation == "llm",
-                             semantic_reason=semantic_reason,
+                             semantic_reason=_embed_reason(intent.lang, semantic_reason,
+                                                           deps.settings),
                              index_stale=index_status(deps.settings) == "stale",
                              hours_dropped=dropped,
                              night_by_clock=night_by_clock,
@@ -693,6 +699,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _embed_reason(lang: Lang, kind: str | None, settings: Settings) -> str | None:
+    """«дневная квота Gemini» / «ключ OpenRouter недействителен»; None for no reason / no key."""
+    template = EMBED_REASONS[lang].get(kind or "")
+    if template is None:
+        return None
+    return template.format(p=EMBED_PROVIDER_NAMES.get(settings.embed_provider, "Gemini"))
 
 
 def _frames(exc: BaseException) -> str:
@@ -1034,8 +1048,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:
         line = t["f_search_lexical"]
-        if semantic_reason in EMBED_REASONS[lang]:
-            line += f" ({EMBED_REASONS[lang][semantic_reason]})"
+        if semantic_reason:  # already worded: failures only (an empty key is not one)
+            line += f" ({semantic_reason})"
         out.append(line + (t["f_search_claude"] if claude_picked else ""))
     names = HOURS_DROP_NAMES[lang]
     parts = [f"{names[k]} {hours_dropped[k]}" for k in names if (hours_dropped or {}).get(k)]
