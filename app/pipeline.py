@@ -27,6 +27,7 @@ them for fakes.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import time
 import traceback
@@ -160,6 +161,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_no_ai": "режим без ИИ",
         "f_search_semantic": "поиск: по смыслу и по словам",
         "f_search_lexical": "поиск: по словам", "f_search_claude": ", отбор — Claude",
+        "index_stale": "индекс устарел",
+        "f_hours_dropped": "по часам работы отсеяно {n}: {parts}",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -220,6 +223,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_categories": "санаттар: {v}", "f_tags": "тегтер: {v}", "f_no_ai": "ЖИ-сыз режим",
         "f_search_semantic": "іздеу: мағынасы мен сөздері бойынша",
         "f_search_lexical": "іздеу: сөздері бойынша", "f_search_claude": ", іріктеу — Claude",
+        "index_stale": "индекс ескірген",
+        "f_hours_dropped": "жұмыс уақыты бойынша алынып тасталды {n}: {parts}",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -277,6 +282,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_no_ai": "no-AI mode",
         "f_search_semantic": "search: by meaning and keywords",
         "f_search_lexical": "search: by keywords", "f_search_claude": ", picked by Claude",
+        "index_stale": "index outdated",
+        "f_hours_dropped": "removed by opening hours {n}: {parts}",
     },
 }
 
@@ -367,6 +374,15 @@ EMBED_REASONS: dict[str, dict[str, str]] = {
     "en": {"no_key": "no Gemini key", "quota": "Gemini rate limit",
            "daily_quota": "Gemini daily quota", "network": "no connection to Gemini",
            "error": "Gemini error", "bad_vector": "invalid query vector"},
+}
+# retrieval.hours_dropped() reasons, in this order, for the "data used" panel
+HOURS_DROP_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"closed": "закрыто", "closed_partial": "сегодня не работает",
+           "closing_soon": "скоро закроется", "night": "ночью не работает"},
+    "kk": {"closed": "жабық", "closed_partial": "бүгін жұмыс істемейді",
+           "closing_soon": "жақында жабылады", "night": "түнде жұмыс істемейді"},
+    "en": {"closed": "closed", "closed_partial": "not open today",
+           "closing_soon": "closing soon", "night": "not open at night"},
 }
 SEMANTIC_DOWN_KINDS = frozenset({"quota", "daily_quota", "network", "error", "bad_vector"})
 
@@ -534,6 +550,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
+    dropped = {} if no_time else _hours_dropped(store, search_intent, ctx)
     if candidates and _query_unmatched(store, search_intent, ctx, candidates):
         warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
@@ -649,6 +666,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              semantic=query_vec is not None,
                              claude_picked=wide_pool and generation == "llm",
                              semantic_reason=semantic_reason,
+                             index_stale=index_status(deps.settings) == "stale",
+                             hours_dropped=dropped,
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None),
@@ -706,6 +725,42 @@ def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarr
         log.warning("query vector is zero or not finite: lexical search")
         return None
     return q
+
+
+_META_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+
+
+def index_status(settings: Settings) -> str | None:
+    """status from data/index/meta.json ("ok" | "stale" | None), re-read when the file
+    changes. The structured source: Store only keeps a human warning text about it."""
+    path = settings.index_dir / "meta.json"
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    hit = _META_CACHE.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    try:
+        status = json.loads(path.read_text(encoding="utf-8")).get("status")
+    except (OSError, ValueError, AttributeError):
+        status = None
+    status = status if isinstance(status, str) else None
+    _META_CACHE[str(path)] = (stamp, status)
+    return status
+
+
+def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
+    """retrieval.hours_dropped (QUALITY) for the panel; absent or broken -> {}."""
+    fn = getattr(retrieval, "hours_dropped", None)
+    if fn is None:
+        return {}
+    try:
+        return {str(k): int(v) for k, v in dict(fn(store, intent, ctx)).items()}
+    except Exception as exc:  # noqa: BLE001 - a panel line never kills the answer
+        log.error("hours_dropped failed (%s)\n%s", type(exc).__name__, _frames(exc))
+        return {}
 
 
 def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
@@ -944,7 +999,9 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
              *, lang: Lang = "ru", airport: int | None = None,
              night_by_clock: bool = False, semantic: bool = False,
-             semantic_reason: str | None = None, claude_picked: bool = False) -> list[str]:
+             semantic_reason: str | None = None, claude_picked: bool = False,
+             index_stale: bool = False, hours_dropped: dict[str, int] | None = None
+             ) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran."""
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
@@ -971,12 +1028,17 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         tags = TAG_NAMES[lang]
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
     if semantic:
-        out.append(t["f_search_semantic"])
+        out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:
         line = t["f_search_lexical"]
         if semantic_reason in EMBED_REASONS[lang]:
             line += f" ({EMBED_REASONS[lang][semantic_reason]})"
         out.append(line + (t["f_search_claude"] if claude_picked else ""))
+    names = HOURS_DROP_NAMES[lang]
+    parts = [f"{names[k]} {hours_dropped[k]}" for k in names if (hours_dropped or {}).get(k)]
+    if parts:
+        total = sum(hours_dropped.get(k, 0) for k in names)  # type: ignore[union-attr]
+        out.append(t["f_hours_dropped"].format(n=total, parts=", ".join(parts)))
     if not use_llm:
         out.append(t["f_no_ai"])
     return out

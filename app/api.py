@@ -44,9 +44,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app import generate
 from app.config import ROOT, get_settings
-from app.llm import LLMClient
-from app.pipeline import Deps, InvalidRequest, recommend
+from app.llm import LLMClient, load_prompt
+from app.pipeline import Deps, InvalidRequest, index_status, recommend
 from app.schemas import SCHEMA_VERSION, Answer, Landmark, RecommendRequest
 from app.store import load_store
 
@@ -184,13 +185,38 @@ NO_POI_DETAIL = "Данные POI не загружены: data/processed/poi.js
 
 
 def _store_problems(d: Deps) -> list[str]:
-    """What makes the service degraded (the UI and the jury must not see «nothing found»)."""
+    """What makes the service degraded (the UI and the jury must not see «nothing found»).
+    Store.warnings carry the human details (QUALITY's store.py); the stale flag itself is
+    read from meta.json, not parsed out of a warning text."""
     out: list[str] = []
     if not d.store.pois:
         out.append("нет POI: data/processed/poi.jsonl пуст или не прочитан")
     if not d.store.landmarks:
         out.append("нет ориентиров: data/landmarks.json пуст или не прочитан")
+    if index_status(d.settings) == "stale" and not any("устарел" in w
+                                                        for w in d.store.warnings):
+        out.append("индекс эмбеддингов устарел (meta.json: status=stale)")
     return out
+
+
+def _status(d: Deps, problems: list[str]) -> str:
+    """degraded: no POI / landmarks, a missing prompt, or a stale index (meta.json flag)."""
+    return "degraded" if problems or index_status(d.settings) == "stale" else "ok"
+
+
+def check_prompts() -> list[str]:
+    """Startup check: a missing prompt must fail loudly, not look like «LLM unavailable» on
+    every request. The app still starts (the deterministic path needs no prompt)."""
+    problems: list[str] = []
+    checks = (("generate_cards", generate.check_prompt, "тексты карточек ИИ недоступны"),
+              ("parse_query", lambda: load_prompt("parse_query"), "разбор запроса ИИ недоступен"))
+    for name, check, effect in checks:
+        try:
+            check()
+        except Exception as exc:  # noqa: BLE001 - reported in /api/health, logged as error
+            log.error("prompt check failed: prompts/%s.md (%s)", name, type(exc).__name__)
+            problems.append(f"нет промпта prompts/{name}.md: {effect}")
+    return problems
 
 
 def _index_state(d: Deps) -> str:
@@ -244,6 +270,7 @@ def create_app(deps: Deps | None = None) -> FastAPI:
 
     app = FastAPI(title="Qadam API", version=SCHEMA_VERSION, lifespan=lifespan)
     app.state.deps = deps
+    app.state.prompt_problems = check_prompts()
     llm_slots = threading.BoundedSemaphore(MAX_CONCURRENT_LLM)
     app.add_middleware(
         CORSMiddleware,
@@ -269,9 +296,9 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                 content={"status": "unavailable", "poi_count": 0, "index": "lexical",
                          "llm": "off", "schema_version": SCHEMA_VERSION},
             )
-        problems = _store_problems(d)
+        problems = [*_store_problems(d), *request.app.state.prompt_problems]
         return JSONResponse({
-            "status": "degraded" if problems else "ok",
+            "status": _status(d, problems),
             "poi_count": len(d.store.pois),
             "index": _index_state(d),
             "llm": _llm_state(d),
@@ -285,11 +312,11 @@ def create_app(deps: Deps | None = None) -> FastAPI:
         return sorted(d.store.landmarks.values(), key=lambda lm: lm.id)
 
     @app.get("/api/meta", tags=["api"], summary="Сведения о снимке данных")
-    async def meta(d: DepsDep) -> dict[str, Any]:
+    async def meta(request: Request, d: DepsDep) -> dict[str, Any]:
         pois = d.store.pois
-        problems = _store_problems(d)
+        problems = [*_store_problems(d), *request.app.state.prompt_problems]
         return {
-            "status": "degraded" if problems else "ok",
+            "status": _status(d, problems),
             "snapshot_date": d.store.snapshot_date,
             "poi_count": len(pois),
             "by_category": dict(sorted(Counter(p.category for p in pois).items())),

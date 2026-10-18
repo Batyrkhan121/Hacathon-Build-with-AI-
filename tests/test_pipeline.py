@@ -200,7 +200,9 @@ class FakeLLM:
 
 
 def make_settings(tmp_path: Path) -> Settings:
-    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache", h3_res=9)
+    # index_dir too: the real data/index/meta.json may say "stale" — tests must not care
+    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
+                               index_dir=tmp_path / "index", h3_res=9)
 
 
 def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> Store:
@@ -570,6 +572,40 @@ class TestRecommend:
         assert calls == [True]  # the LLM wrote it
         recommend(req("кофе", use_llm=False), deps)
         assert calls == [True, False]  # template counters / airport times: default
+
+    def test_stale_index_is_named_in_the_search_line(self, deps: Deps, tmp_path: Path) -> None:
+        import json
+
+        index = tmp_path / "index"
+        index.mkdir()
+        (index / "meta.json").write_text(json.dumps({"status": "stale"}), encoding="utf-8")
+        deps.settings = dataclasses.replace(deps.settings, index_dir=index)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        filters = recommend(req("кофе"), deps).data_used.filters
+        assert "поиск: по смыслу и по словам (индекс устарел)" in filters
+        en = recommend(req("coffee", lang="en"), deps).data_used.filters
+        assert "search: by meaning and keywords (index outdated)" in en
+
+    def test_hours_dropped_in_filters(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda store, intent, ctx: {
+            "closed": 3, "closed_partial": 1, "closing_soon": 2, "night": 0}, raising=False)
+        ru = recommend(req("кофе", use_llm=False), deps).data_used.filters
+        assert ("по часам работы отсеяно 6: закрыто 3, сегодня не работает 1, "
+                "скоро закроется 2") in ru
+        kk = recommend(req("кофе", lang="kk", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("жұмыс уақыты бойынша алынып тасталды 6") for f in kk)
+        en = recommend(req("coffee", lang="en", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("removed by opening hours 6: closed 3") for f in en)
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda *a: {"closed": 0})
+        assert not any("отсеяно" in f
+                       for f in recommend(req("кофе", use_llm=False), deps).data_used.filters)
+
+        def boom(*_a: Any) -> dict[str, int]:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(retrieval, "hours_dropped", boom)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
 
     def test_old_sanitize_signature_still_works(self, deps: Deps,
                                                 monkeypatch: pytest.MonkeyPatch) -> None:
