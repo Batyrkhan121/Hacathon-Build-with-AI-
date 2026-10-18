@@ -53,11 +53,13 @@ _WORD_BUDGETS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"полтора\s+час|час\w*[\s-]+полтора|one and a half hours?|an hour and a half"
                 r"|бір жарым сағат"), 90),
     (re.compile(r"полчаса|пол\s+часа|half an hour|half-hour|жарты сағат"), 30),
-    (re.compile(r"пар[уаы]\s+час|пар[уаы]-тройк\w*\s+час|couple (?:of )?hours|бір-екі сағат"
-                r"|екі сағат"), 120),
+    (re.compile(r"пар[уаы]\s+(?:свободных\s+)?час|пар[уаы]-тройк\w*\s+час"
+                r"|couple (?:of )?(?:free |spare )?hours|\btwo (?:free |spare )?hours\b"
+                r"|бір-екі сағат|екі сағат"), 120),
+    (re.compile(r"\bthree (?:free |spare )?hours\b|үш сағат"), 180),
     (re.compile(r"полдня|half a day|жарты күн"), 240),
     (re.compile(r"весь день|all day|күні бойы"), 480),
-    (re.compile(r"\bчас\b|\bчасок\b|\ban hour\b|\bone hour\b|бір сағат"), 60),
+    (re.compile(r"\bчас\b|\bчасок\b|\b(?:an|one) (?:free |spare )?hour\b|бір сағат"), 60),
 )
 _NEAR_RE = re.compile(r"недалеко|\bрядом\b|поблизости|\bблизко\b|nearby|near me|close by"
                       r"|close to me|жақын")
@@ -75,6 +77,8 @@ _WHEEL_RE = _rx(r"коляск|колясоч|инвалид|пандус|wheelc
 _NIGHT_RE = _rx(r"\bноч\w*|поздн\w*|после полуночи|\bтүн\w*|\bnight\w*|\blate\b|after midnight")
 _TOURIST_RE = _rx(r"турист|вылет|\bрейс\w*|аэропорт|самол[её]т|пересадк|транзит|tourist"
                   r"|\bflight|airport|layover|first time in|ұшақ|әуежай")
+_FLIGHT_RE = _rx(r"вылет|\bрейс\w*|аэропорт|самол[её]т|\bflight|airport|\bplane\b|ұшақ|әуежай"
+                 r"|ұшу\w*|ұшам|ұшамын")
 _INDOOR_RE = _rx(r"в помещени|внутри|в тепл|тепл\w* мест|под крыш|не на улиц|холодно|мороз"
                  r"|\bдожд|indoor|inside|warm place|somewhere warm|\bcold\b|\brain|жылы\b"
                  r"|ішінде|суық")
@@ -91,7 +95,9 @@ _TAG_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("interactive", _rx(r"интерактив|interactive|hands-on|потрогать|своими руками")),
     ("view", _rx(r"\bвид\b|\bвидом\b|панорам|смотров|\bviews?\b|skyline|көрініс")),
     ("photo_spot", _rx(r"фото|сфотограф|инстаграм|instagram|photo|сурет")),
-    ("free", _rx(r"бесплатн|без денег|\bfree\b|тегін")),
+    # "free hour / free time" is about time, not price
+    ("free", _rx(r"бесплатн|без денег|\bfree\b(?!\s+(?:hours?|time|afternoon|evening|morning"
+                 r"|day))|for free|тегін")),
     ("architecture", _rx(r"архитектур|architecture|сәулет")),
     ("history", _rx(r"истори|history|historic|тарих")),
     ("art", _rx(r"искусств|\bарт\b|\bart\b|картин|өнер|галере|gallery")),
@@ -139,9 +145,24 @@ _GROUP_NUM_RES = (
     re.compile(r"\bнас\s+(\d+)"),
     re.compile(r"(\d+)\s*(?:человек\w*|чел\b|people|persons|adults|адам)"),
 )
+# Collective numerals: «нас пятеро», «вчетвером», «бесеуміз», "five of us", "a group of six".
+_COLLECTIVE: dict[str, int] = {
+    "двое": 2, "трое": 3, "четверо": 4, "пятеро": 5, "шестеро": 6, "семеро": 7,
+    "восьмеро": 8, "девятеро": 9, "десятеро": 10,
+    "вдвоем": 2, "втроем": 3, "вчетвером": 4, "впятером": 5, "вшестером": 6, "всемером": 7,
+    "екеу": 2, "үшеу": 3, "төртеу": 4, "бесеу": 5, "алтау": 6, "жетеу": 7,
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+    "nine": 9, "ten": 10,
+}
+_COLLECTIVE_RES = (
+    re.compile(r"\b(двое|трое|четверо|пятеро|шестеро|семеро|восьмеро|девятеро|десятеро"
+               r"|вдвоем|втроем|вчетвером|впятером|вшестером|всемером)\b"),
+    re.compile(r"\b(екеу|үшеу|төртеу|бесеу|алтау|жетеу)\w*(?:міз|мыз)"),
+    re.compile(r"\b(?:the )?(two|three|four|five|six|seven|eight|nine|ten) of us\b"),
+    re.compile(r"\b(?:group|party) of (two|three|four|five|six|seven|eight|nine|ten)\b"),
+)
 _GROUP_WORDS: tuple[tuple[re.Pattern[str], int], ...] = (
-    (re.compile(r"вдво[её]м|\bдвоем|the two of us|екеуміз|екеуіміз"), 2),
-    (re.compile(r"втро[её]м|the three of us|үшеуміз"), 3),
+    (re.compile(r"\bдвоем|\bвдвоем"), 2),
     (re.compile(r"компани|с друзьями|друзь|friends|\bgroup\b|группой|достар"), GROUP_DEFAULT),
 )
 
@@ -227,15 +248,30 @@ def parse_query(
     return _merge(rules, llm_intent, lang_hint, landmarks)
 
 
+def mentions_flight(text: str) -> bool:
+    """A flight / the airport is mentioned: the "leave for the airport" rule applies only then."""
+    return bool(_FLIGHT_RE.search(_normalise(text)))
+
+
 def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> QueryIntent:
-    """Explicit UI filters always win over the parsed intent."""
+    """Explicit UI filters always win over the parsed intent.
+
+    Mode switches (wave 3): `tourist`, `night` and `departure_in_min` (minutes to departure:
+    tourist mode with that time budget). Read with getattr so this works whether or not the
+    integrator's schema change has landed yet.
+    """
     if overrides is None:
         return intent
     update: dict[str, object] = {}
-    for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size"):
-        value = getattr(overrides, name)
+    for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size",
+                 "tourist", "night"):
+        value = getattr(overrides, name, None)
         if value is not None:
             update[name] = value
+    departure = getattr(overrides, "departure_in_min", None)
+    if departure is not None:
+        update["tourist"] = True
+        update["time_budget_min"] = _clamp(int(departure), 5, 600)
     if overrides.categories is not None:
         update["categories"] = _dedupe(list(overrides.categories))
     if overrides.indoor_only is True:
@@ -294,6 +330,10 @@ def _group_size(t: str) -> int | None:
         m = rx.search(t)
         if m:
             return _clamp(int(m.group(1)), 1, 20)
+    for rx in _COLLECTIVE_RES:
+        m = rx.search(t)
+        if m:
+            return _COLLECTIVE[m.group(1)]
     for rx, size in _GROUP_WORDS:
         if rx.search(t):
             return size
@@ -352,11 +392,19 @@ def _merge(
     landmark = (llm.landmark_mention if llm.landmark_mention in landmarks
                 else rules.landmark_mention)
 
+    budget = llm.time_budget_min or rules.time_budget_min
+    if budget:
+        # With a time budget the radius comes from it: only an explicit walking limit counts
+        # (the LLM tends to turn "поблизости" into 15 min even when a budget is given).
+        max_walk = _walk_minutes(_normalise(rules.raw_query))[0]
+    else:
+        max_walk = llm.max_walk_min or rules.max_walk_min
+
     return QueryIntent(
         raw_query=rules.raw_query,
         lang=lang,
-        time_budget_min=llm.time_budget_min or rules.time_budget_min,
-        max_walk_min=llm.max_walk_min or rules.max_walk_min,
+        time_budget_min=budget,
+        max_walk_min=max_walk,
         categories=_dedupe(llm_cats) or rules.categories,
         must_tags=[t for t in must if t not in avoid],
         avoid_tags=avoid,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,8 @@ def fake_finalize(draft: DraftResponse, candidates: list[Candidate], intent: Que
 
 
 def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | None,
-                    visit_min: dict[str, int], max_stops: int = 3) -> MiniRoute | None:
+                    visit_min: dict[str, int], max_stops: int = 3, *, loop: bool = False,
+                    note: str | None = None) -> MiniRoute | None:
     if not stops:
         return None
     legs, prev, prev_id = [], origin, "origin"
@@ -127,7 +129,7 @@ def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | 
                      total_walk_m=sum(leg.distance_m for leg in legs), total_min=total,
                      fits_budget=budget_min is None or total <= budget_min,
                      path=[origin] + [s.poi.geo for s in stops[:max_stops]],
-                     note="Маршрут приблизительный: прямые отрезки × 1,3")
+                     note=note or "Маршрут приблизительный: прямые отрезки × 1,3")
 
 
 def install_core_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,8 +189,11 @@ def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> 
                  snapshot_date="2026-10-18", **over)
 
 
+DAYTIME = "2026-10-19T15:00:00+05:00"  # fixed: night mode switches on by the clock
+
+
 def req(query: str = "кофе", **kw: Any) -> RecommendRequest:
-    body: dict[str, Any] = {"query": query, "location": {"landmark_id": "expo"}}
+    body: dict[str, Any] = {"query": query, "location": {"landmark_id": "expo"}, "at": DAYTIME}
     body.update(kw)
     return RecommendRequest.model_validate(body)
 
@@ -262,6 +267,22 @@ class TestRecommend:
         a = recommend(req(), deps)
         assert a.data_used.generation == "template"
         assert "шаблонные карточки" in a.warnings
+
+    def test_open_now_claim_is_removed_from_llm_summary(
+        self, deps: Deps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original = deps.llm.generate_structured
+
+        def bragging(*, schema: type, **kw: Any) -> Any:
+            out = original(schema=schema, **kw)
+            if schema is DraftResponse:
+                out = out.model_copy(update={"summary": "Всё открыто сейчас. Две идеи рядом."})
+            return out
+
+        monkeypatch.setattr(deps.llm, "generate_structured", bragging)
+        a = recommend(req("кофе"), deps)
+        assert a.data_used.generation == "llm"
+        assert "открыто сейчас" not in a.summary.lower()
 
     def test_unknown_landmark_is_invalid_input(self, deps: Deps) -> None:
         bad = RecommendRequest.model_validate(
@@ -351,9 +372,16 @@ class TestRecommend:
         assert any("Маршрут не укладывается" in w for w in a.warnings)
 
     def test_context_warnings(self, deps: Deps) -> None:
-        a = recommend(req("ночью с коляской, я турист", use_llm=False), deps)
+        a = recommend(req("ночью с коляской, я турист, скоро вылет", use_llm=False), deps)
         text = " | ".join(a.warnings)
         assert "Ночь:" in text and "коляски" in text and "аэропорт" in text
+
+    def test_tourist_without_flight_gets_no_airport_advice(self, deps: Deps) -> None:
+        a = recommend(req("я турист, есть 2 часа", at="2026-10-19T14:00:00+05:00",
+                          use_llm=False), deps)
+        assert a.intent.tourist
+        assert not any("аэропорт" in w for w in a.warnings)
+        assert a.intent.time_budget_min == 120 and a.cards  # no −95 min without a flight
 
     def test_unknown_hours_are_counted(self, deps: Deps) -> None:
         a = recommend(req(use_llm=False), deps)
@@ -394,13 +422,13 @@ class TestRecommend:
         utc = recommend(req(at="2026-10-19T18:30:00+00:00", use_llm=False), deps)
         assert utc.context.local_time.utcoffset() == timedelta(hours=5)
         assert utc.context.local_time.hour == 23
-        now = recommend(req(use_llm=False), deps)
+        now = recommend(req(use_llm=False, at=None), deps)
         assert now.context.local_time.tzinfo is not None
         assert abs(now.context.local_time - hours.now_astana()) < timedelta(minutes=1)
 
     def test_weather_goes_to_context_and_data_used(self, deps: Deps,
                                                    monkeypatch: pytest.MonkeyPatch) -> None:
-        wx = WeatherInfo(temp_c=-3, summary="-3°C, ветер 5 м/с", outdoor_ok=True,
+        wx = WeatherInfo(temp_c=-3, wind_ms=5, summary="-3°C, ветер 5 м/с", outdoor_ok=True,
                          fetched_at=datetime.now(UTC))
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: wx)
         a = recommend(req(use_llm=False), deps)
@@ -408,7 +436,7 @@ class TestRecommend:
         assert a.data_used.weather == "-3°C, ветер 5 м/с"
         assert "open_meteo" in a.data_used.sources
         b = recommend(req(use_llm=False, lang="en"), deps)
-        assert b.data_used.weather == "-3°C, ветер 5 м/с"
+        assert b.data_used.weather == "-3°C, wind 5 m/s"  # same numbers, answer language
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
         assert recommend(req(use_llm=False), deps).data_used.weather == "погода неизвестна"
 
@@ -513,20 +541,22 @@ class TestRealData:
 
     def test_s4_tourist_deadline_from_baiterek(self, real_deps: Deps,
                                                monkeypatch: pytest.MonkeyPatch) -> None:
-        """EVAL request: walk budget = 120 - 50 = 70 min -> leave by 15:10, at most 2 cards."""
-        seen: list[int | None] = []
-        monkeypatch.setattr(geo, "radius_for",
-                            lambda intent: seen.append(intent.time_budget_min) or 1200)
+        """Walk budget = 120 − 35 transfer − 60 reserve = 25 min -> leave by 14:25, ≤ 2 cards."""
+        seen: list[tuple[int | None, int | None]] = []
+        monkeypatch.setattr(geo, "radius_for", lambda intent: seen.append(
+            (intent.time_budget_min, intent.max_walk_min)) or 865)
         a = recommend(RecommendRequest.model_validate({
             "query": "Я — турист, у меня 2 часа перед вылетом: что можно посмотреть поблизости?",
             "location": {"landmark_id": "baiterek"}, "at": "2026-10-19T14:00:00+05:00",
             "lang": "ru", "use_llm": False}), real_deps)
-        assert "Выезжайте в аэропорт не позже 15:10." in a.warnings
-        assert seen == [70]  # the radius is planned on the walk budget
+        assert ("До вылета 120 мин: дорога до аэропорта ≈35 мин (оценка) и запас 60 мин — "
+                "на прогулку 25 мин. Выезжайте в аэропорт не позже 14:25.") in a.warnings
+        assert seen == [(25, 15)]  # planned on the walk budget, tourist walks ≤ 15 min
         assert a.intent.time_budget_min == 120  # what the user said is kept
         assert 1 <= len(a.cards) <= 2
-        assert "время на прогулку 70 мин (с учётом дороги в аэропорт)" in a.data_used.filters
-        assert not any("Заложите время" in w for w in a.warnings)  # replaced by the deadline
+        assert all(c.walk_min <= 15 for c in a.cards)
+        assert "время на прогулку 25 мин (120 − 35 дорога − 60 запас)" in a.data_used.filters
+        assert not any("Заложите время" in w for w in a.warnings)  # replaced by the plan
         if a.route is not None:
             assert len(a.route.stop_ids) <= 2
 
@@ -547,10 +577,51 @@ class TestRealData:
         assert a.data_used.generation == "llm"
         assert "почти ничего нет" in a.summary
 
-    def test_tourist_deadline_when_time_is_short(self, real_deps: Deps) -> None:
-        a = recommend(req("я турист, до вылета 40 минут", at="2026-10-19T14:00:00+05:00",
-                          use_llm=False), real_deps)
-        assert "Выезжайте в аэропорт не позже 14:00." in a.warnings
+    def test_no_time_before_flight_means_no_cards(self, real_deps: Deps) -> None:
+        """110 − 95 = 15 is the minimum; 100 − 95 = 5 min -> no cards, "leave now"."""
+        a = recommend(req("я турист, до вылета 100 минут", at="2026-10-19T14:00:00+05:00"),
+                      real_deps)
+        assert a.cards == [] and a.route is None
+        assert a.summary == "Времени на прогулку перед вылетом нет — выезжайте в аэропорт сейчас."
+        assert any(w.endswith("Выезжайте в аэропорт сейчас.") and "≈35 мин (оценка)" in w
+                   for w in a.warnings)
+        assert not any("Подходящих мест не нашлось" in w for w in a.warnings)
+        assert real_deps.llm.calls == ["QueryIntent"]  # no generation was paid for
+        enough = recommend(req("я турист, до вылета 110 минут", at="2026-10-19T14:00:00+05:00",
+                               use_llm=False), real_deps)
+        assert enough.cards and any("не позже 14:15" in w for w in enough.warnings)
+
+    def test_departure_override_is_a_flight(self, real_deps: Deps) -> None:
+        from app.schemas import UserOverrides
+
+        if "departure_in_min" not in UserOverrides.model_fields:
+            pytest.skip("UserOverrides.departure_in_min not merged yet")
+        a = recommend(req("что посмотреть рядом?", at="2026-10-19T14:00:00+05:00",
+                          use_llm=False, overrides={"departure_in_min": 150}), real_deps)
+        assert a.intent.tourist and a.intent.time_budget_min == 150
+        assert any("на прогулку 55 мин" in w and "не позже 14:55" in w for w in a.warnings)
+
+    def test_hub_and_tourist_walks_are_short_without_widening(
+        self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """E11: no ×1.5 radius widening at a hub; candidates beyond 15 min are dropped."""
+        radii: list[int] = []
+        real_retrieve = fake_retrieve
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            radii.append(ctx.radius_m)
+            out = real_retrieve(store, intent, ctx, qv, k)
+            far = out[0].model_copy(update={"walk_min": 48}) if out else None
+            return out + ([far] if far else [])
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        a = recommend(RecommendRequest.model_validate({
+            "query": "Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть рядом?",
+            "location": {"landmark_id": "airport_nqz"}, "use_llm": False}), real_deps)
+        assert a.intent.max_walk_min is None and a.context.radius_m == radii[0]
+        assert len(set(radii)) == 1  # never widened
+        assert all(c.walk_min <= 15 for c in a.cards)
 
     def test_sparse_area_warns(self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(geo, "radius_for", lambda intent: 150)
@@ -559,3 +630,176 @@ class TestRealData:
             real_deps)
         assert 0 < len(a.cards) < 3
         assert any("Рядом мало мест в открытых данных" in w for w in a.warnings)
+
+
+# ------------------------------------- real CORE + real data (wave 3, deterministic)
+
+
+def real_req(query: str, landmark: str, **kw: Any) -> RecommendRequest:
+    body: dict[str, Any] = {"query": query, "location": {"landmark_id": landmark},
+                            "at": "2026-10-19T15:00:00+05:00", "use_llm": False}
+    body.update(kw)
+    return RecommendRequest.model_validate(body)
+
+
+@pytest.fixture
+def no_weather(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+
+
+@pytest.mark.usefixtures("no_weather")
+class TestRealCore:
+    def test_s1_walk_is_a_loop_within_budget(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
+                               "что посоветуете?", "mega_silk_way"), real_deps)
+        assert 1 <= len(a.cards) <= 3
+        r = a.route
+        assert r is not None, a.warnings
+        assert r.legs[-1].to_id == "origin" and r.path[0] == r.path[-1]
+        assert r.fits_budget and r.total_min <= 60
+        assert set(r.stop_ids) <= {c.poi_id for c in a.cards}
+        assert "с возвращением к старту" in r.note
+
+    def test_walk_with_kids_note_asks_for_extra_time(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Хочу погулять с ребёнком часик", "khan_shatyr"), real_deps)
+        if a.route is not None:
+            assert "С ребёнком закладывайте больше времени." in a.route.note
+
+    def test_night_by_the_clock(self, real_deps: Deps) -> None:
+        a = recommend(real_req("кофе", "khan_shatyr", at="2026-10-19T23:30:00+05:00"),
+                      real_deps)
+        assert not a.intent.night  # nothing about the night in the text...
+        assert "ночь (по времени)" in a.data_used.filters  # ...but it is 23:30
+        assert any("обратно лучше на такси" in w for w in a.warnings)
+        night_tags = {"late_open", "24_7", "night"}
+        for card in a.cards:
+            assert card.open_status == "open" or night_tags & set(card.tags), card.title
+            assert card.walk_min <= 15
+        day = recommend(real_req("кофе", "khan_shatyr"), real_deps)
+        assert not any("ночь" in f for f in day.data_used.filters)
+
+    def test_e2_deep_night_prefers_surely_open_places(self, real_deps: Deps) -> None:
+        """02:30: unknown-hours bars 10 min away lose to open/24_7 places further away."""
+        a = recommend(real_req("Сейчас глубокая ночь, куда можно пойти поесть или посидеть?",
+                               "khan_shatyr", at="2026-10-20T02:30:00+05:00", lang="ru"),
+                      real_deps)
+        assert a.cards
+        for card in a.cards:
+            assert card.open_status == "open" or {"late_open", "24_7"} & set(card.tags)
+        assert any("лучше доехать на такси" in w or "обратно лучше на такси" in w
+                   for w in a.warnings)
+
+    def test_night_switched_off_in_ui(self, real_deps: Deps) -> None:
+        from app.schemas import UserOverrides
+
+        if "night" not in UserOverrides.model_fields:
+            pytest.skip("UserOverrides.night not merged yet")
+        a = recommend(real_req("кофе", "khan_shatyr", at="2026-10-19T23:30:00+05:00",
+                               overrides={"night": False}), real_deps)
+        assert not any("ночь" in f for f in a.data_used.filters)
+
+    def test_kids_walk_short_unless_user_says_otherwise(self, real_deps: Deps) -> None:
+        a = recommend(real_req("куда сходить с ребёнком", "khan_shatyr"), real_deps)
+        assert "пешком до 15 мин" in a.data_used.filters
+        assert all(c.walk_min <= 15 for c in a.cards)
+        own = recommend(real_req("с ребёнком, не дальше 25 минут пешком", "khan_shatyr"),
+                        real_deps)
+        assert "пешком до 25 мин" in own.data_used.filters
+
+    def test_kids_at_night_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("с ребёнком", "khan_shatyr", at="2026-10-19T23:00:00+05:00"),
+                      real_deps)
+        assert any("поздно для прогулки с ребёнком" in w for w in a.warnings)
+
+    def test_group_warning_for_food_places(self, real_deps: Deps) -> None:
+        a = recommend(real_req("нас 5 человек, хотим поесть", "khan_shatyr"), real_deps)
+        assert a.intent.group_size == 5 and a.cards
+        assert "Для компании из 5 человек: столик в кафе лучше уточнить заранее." in a.warnings
+
+    def test_wheelchair_note_and_short_walks(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я на коляске, хочу прогуляться час", "khan_shatyr"), real_deps)
+        assert "пешком до 15 мин" in a.data_used.filters
+        if a.route is not None:
+            assert "ступени" in a.route.note and "закладывайте больше времени" in a.route.note
+
+    def test_e7_english_answer_has_no_russian_text(self, real_deps: Deps) -> None:
+        a = recommend(real_req("I'm near EXPO with one free hour. What's worth seeing nearby?",
+                               "expo"), real_deps)
+        assert a.lang == "en" and 1 <= len(a.cards) <= 3
+        assert a.intent.time_budget_min == 60 and "free" not in a.intent.must_tags
+        texts = [a.summary, a.disclaimer, a.context.area_label, a.data_used.location,
+                 a.data_used.time, a.data_used.weather or "", *a.warnings, *a.data_used.filters]
+        texts += [t for c in a.cards for t in (c.why, c.what_to_do, c.open_note)]
+        if a.route is not None:
+            texts.append(a.route.note)
+        cyrillic = [x for x in texts if re.search(r"[А-Яа-яЁё]", x)]
+        assert cyrillic == []  # only POI titles / addresses may stay in the local script
+        assert a.context.area_label.startswith("near EXPO")
+
+    def test_e6_kazakh_answer_has_no_russian_service_text(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Мен Бәйтерек жанындамын, бір сағатқа серуендегім келеді. "
+                               "Не ұсынасыз?", "baiterek"), real_deps)
+        assert a.lang == "kk" and 1 <= len(a.cards) <= 3
+        russian = re.compile(r"нет данных|по данным|ежедневно|проверьте|закроется|откроется|"
+                             r"погода|радиус поиска|пешком|время|у Монумент")
+        texts = [a.summary, a.disclaimer, a.context.area_label, a.data_used.location,
+                 a.data_used.weather or "", *a.warnings, *a.data_used.filters]
+        texts += [t for c in a.cards for t in (c.why, c.what_to_do, c.open_note)]
+        if a.route is not None:
+            texts.append(a.route.note)
+        assert [x for x in texts if russian.search(x)] == []
+        assert a.context.area_label.endswith("маңында")
+        assert "серуен" in " ".join(a.data_used.filters)  # tag name, not the code "walk"
+
+    def test_kazakh_cell_area_label(self, real_deps: Deps) -> None:
+        cell = h3.latlng_to_cell(51.128, 71.430, 9)
+        a = recommend(RecommendRequest.model_validate({
+            "query": "кофе", "location": {"h3_cell": cell}, "lang": "kk", "at": DAYTIME,
+            "use_llm": False}), real_deps)
+        assert a.context.area_label.startswith("сіздің ауданыңыз (≈0,1 км²)")
+
+    def test_ui_tourist_switch_at_the_airport_is_honest(self, real_deps: Deps) -> None:
+        """POLISH: tourist + departure 120 from the UI, text without categories -> 2 cafes are
+        found, and the summary still says there is nothing to see near NQZ."""
+        a = recommend(real_req("Что рядом?", "airport_nqz", lang="ru",
+                               overrides={"tourist": True, "departure_in_min": 120}), real_deps)
+        assert a.intent.tourist and a.cards
+        assert a.summary.startswith("Рядом с аэропортом почти ничего нет; ехать в город за "
+                                    "2 часа до вылета не советуем.")
+        coffee = recommend(real_req("где кофе?", "airport_nqz", lang="ru",
+                                    overrides={"tourist": True}), real_deps)
+        assert "почти ничего нет" not in coffee.summary  # food was asked: no lecture
+
+    def test_airport_deadline_is_the_first_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я — турист, у меня 2 часа перед вылетом: что посмотреть?",
+                               "baiterek", lang="ru"), real_deps)
+        assert a.warnings[0].startswith("До вылета 120 мин")
+
+    def test_ui_night_and_tourist_switches(self, real_deps: Deps) -> None:
+        s5 = recommend(real_req("куда сходить?", "khan_shatyr", overrides={"night": True}),
+                       real_deps)
+        assert s5.intent.night and any(w.startswith("Ночь:") for w in s5.warnings)
+        s4 = recommend(real_req("что посмотреть?", "baiterek", lang="ru",
+                                overrides={"tourist": True, "departure_in_min": 120}),
+                       real_deps)
+        assert s4.intent.tourist and s4.intent.time_budget_min == 120
+        assert s4.warnings[0].startswith("До вылета 120 мин") and len(s4.cards) <= 2
+
+    def test_group_collective_numerals_reach_the_warning(self, real_deps: Deps) -> None:
+        a = recommend(real_req("нас пятеро, хотим поесть", "khan_shatyr"), real_deps)
+        assert a.intent.group_size == 5
+        assert "Для компании из 5 человек: столик в кафе лучше уточнить заранее." in a.warnings
+
+    def test_no_route_at_a_transport_hub(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я уже в аэропорту, до вылета 2 часа. Что можно посмотреть "
+                               "рядом?", "airport_nqz", lang="ru"), real_deps)
+        assert a.cards and a.route is None
+        assert all(c.walk_min <= 15 for c in a.cards)
+
+    def test_tourist_route_is_one_way(self, real_deps: Deps) -> None:
+        a = recommend(real_req("Я турист, у меня 3 часа до вылета, хочу прогуляться",
+                               "baiterek"), real_deps)
+        assert len(a.cards) <= 2
+        if a.route is not None:
+            assert a.route.legs[-1].to_id != "origin"
+            assert "без обратной дороги" in a.route.note
