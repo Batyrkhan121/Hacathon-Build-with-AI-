@@ -1,0 +1,212 @@
+{
+  "request_id": "mock-0001",
+  "lang": "ru",
+  "summary": "МОК: три идеи на 1–2 часа пешком у EXPO — музей-сфера, короткая прогулка и тёплый ТРЦ.",
+  "cards": [
+    {
+      "rank": 1,
+      "poi_id": "mock:poi/nur_alem",
+      "title": "Нур Алем — Музей энергии будущего",
+      "category": "museum",
+      "geo": {
+        "lat": 51.0894,
+        "lon": 71.4161
+      },
+      "distance_m": 260,
+      "walk_min": 5,
+      "visit_min_low": 60,
+      "visit_min_high": 90,
+      "why": "Интерактивная экспозиция в сфере EXPO — подходит под «что-то необычное на 1–2 часа».",
+      "what_to_do": "Поднимитесь на верхний уровень за видом на город, затем спускайтесь по залам; заложите 60–90 минут.",
+      "open_status": "open",
+      "open_confidence": "high",
+      "open_note": "МОК: по данным OSM ежедневно 10:00–20:00",
+      "idea_source": "poi_data",
+      "facts_sources": [
+        "mock"
+      ],
+      "data_confidence": 0.85,
+      "tags": [
+        "interactive",
+        "indoor",
+        "view",
+        "kids"
+      ],
+      "address": "МОК-адрес"
+    },
+    {
+      "rank": 2,
+      "poi_id": "mock:poi/boulevard",
+      "title": "Бульвар у EXPO (мок)",
+      "category": "park",
+      "geo": {
+        "lat": 51.091109,
+        "lon": 71.411388
+      },
+      "distance_m": 199,
+      "walk_min": 4,
+      "visit_min_low": 15,
+      "visit_min_high": 25,
+      "why": "Короткая прогулка на воздухе между павильонами — пауза после музея.",
+      "what_to_do": "Идея: снять сферу Нур Алем с бульвара на закате (≈18:00 в октябре).",
+      "open_status": "unknown",
+      "open_confidence": "low",
+      "open_note": "нет данных о часах работы (открытая территория)",
+      "idea_source": "generated",
+      "facts_sources": [
+        "mock"
+      ],
+      "data_confidence": 0.4,
+      "tags": [
+        "outdoor",
+        "walk",
+        "photo_spot"
+      ]
+    },
+    {
+      "rank": 3,
+      "poi_id": "mock:poi/mega_silk_way",
+      "title": "ТРЦ Mega Silk Way",
+      "category": "mall",
+      "geo": {
+        "lat": 51.0889,
+        "lon": 71.4103
+      },
+      "distance_m": 157,
+      "walk_min": 3,
+      "visit_min_low": 25,
+      "visit_min_high": 45,
+      "why": "Тёплый финал прогулки рядом: фудкорт и развлечения, если на улице холодно.",
+      "what_to_do": "Перекусите на фудкорте и пройдитесь по галерее — удобная точка, чтобы вызвать такси.",
+      "open_status": "open",
+      "open_confidence": "medium",
+      "open_note": "МОК: по данным OSM ежедневно 10:00–22:00 (часть дней не подтверждена)",
+      "idea_source": "poi_data",
+      "facts_sources": [
+        "mock"
+      ],
+      "data_confidence": 0.7,
+      "tags": [
+        "shopping",
+        "food",
+        "indoor",
+        "wheelchair"
+      ]
+    }
+  ],
+  "route": {
+    "stop_ids": [
+      "mock:poi/nur_alem",
+      "mock:poi/boulevard",
+      "mock:poi/mega_silk_way"
+    ],
+    "legs": [
+      {
+        "from_id": "origin",
+        "to_id": "mock:poi/nur_alem",
+        "distance_m": 260,
+        "walk_min": 5
+      },
+      {
+        "from_id": "mock:poi/nur_alem",
+        "to_id": "mock:poi/boulevard",
+        "distance_m": 380,
+        "walk_min": 7
+      },
+      {
+        "from_id": "mock:poi/boulevard",
+        "to_id": "mock:poi/mega_silk_way",
+        "distance_m": 257,
+        "walk_min": 5
+      }
+    ],
+    "total_walk_m": 897,
+    "total_min": 117,
+    "fits_budget": true,
+    "path": [
+      {
+        "lat": 51.089433,
+        "lon": 71.412381
+      },
+      {
+        "lat": 51.0894,
+        "lon": 71.4161
+      },
+      {
+        "lat": 51.091109,
+        "lon": 71.411388
+      },
+      {
+        "lat": 51.0889,
+        "lon": 71.4103
+      }
+    ],
+    "note": "Маршрут приблизительный: прямые отрезки × 1,3, скорость 4,5 км/ч"
+  },
+  "intent": {
+    "raw_query": "Я у EXPO, хочу что-то необычное на 1–2 часа, пешком",
+    "lang": "ru",
+    "time_budget_min": 120,
+    "max_walk_min": 15,
+    "categories": [],
+    "must_tags": [
+      "interactive"
+    ],
+    "avoid_tags": [],
+    "with_kids": false,
+    "wheelchair": false,
+    "group_size": null,
+    "indoor": "any",
+    "night": false,
+    "tourist": false,
+    "landmark_mention": "expo",
+    "parser": "llm"
+  },
+  "context": {
+    "origin": {
+      "lat": 51.089433,
+      "lon": 71.412381
+    },
+    "h3_cell": "892153833a7ffff",
+    "h3_res": 9,
+    "area_label": "ваш район у EXPO (≈0,1 км²)",
+    "landmark_id": null,
+    "local_time": "2026-10-19T17:30:00+05:00",
+    "weather": {
+      "temp_c": 6.0,
+      "precipitation_mm": 0.0,
+      "wind_ms": 7.0,
+      "is_day": true,
+      "summary": "+6°C, ветер 7 м/с",
+      "outdoor_ok": true,
+      "source": "open_meteo",
+      "fetched_at": "2026-10-19T17:30:00+05:00"
+    },
+    "radius_m": 865
+  },
+  "data_used": {
+    "location": "H3-ячейка r9 (≈0,1 км²) — точные координаты не передавались",
+    "time": "пн 19.10, 17:30 (UTC+5)",
+    "weather": "+6°C, ветер 7 м/с (Open-Meteo)",
+    "filters": [
+      "пешком ≤ 15 мин",
+      "бюджет 1–2 часа",
+      "необычное / интерактивное"
+    ],
+    "sources": [
+      "МОК-ДАННЫЕ (для разработки UI)",
+      "OpenStreetMap (ODbL)",
+      "Open-Meteo"
+    ],
+    "candidates_considered": 8,
+    "parser": "llm",
+    "generation": "llm",
+    "model": "gemini-3.8-flash"
+  },
+  "warnings": [
+    "МОК-ДАННЫЕ для разработки UI — это не реальный ответ системы",
+    "Для 1 места нет данных о часах работы"
+  ],
+  "disclaimer": "Подсказки основаны на открытых данных и могут устареть. Часы работы проверяйте перед визитом. Тексты «Идея ИИ» сгенерированы моделью.",
+  "latency_ms": 1840
+}
