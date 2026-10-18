@@ -168,7 +168,8 @@ def test_fetch_walk_tiles_cache_and_partial(tmp_path: Path) -> None:
         return answer
 
     files, failed = fetch_walk(raw_dir=tmp_path, query_fn=fake, sleep=lambda s: None)
-    assert len(queries) == 9 and len(files) == 9
+    assert len(queries) == 10 and len(files) == 10  # 9 tiles + the foot-override file
+    assert '["access"="private"]' in queries[-1] and "(51.03,71.2,51.27,71.65)" in queries[-1]
     assert len(failed) == 1 and "partial answer" in failed[0]
     queries.clear()
     fetch_walk(raw_dir=tmp_path, query_fn=fake, sleep=lambda s: None)
@@ -300,3 +301,14 @@ def test_server_timeout_below_the_http_client_timeout() -> None:
     from pipeline.fetch_osm import TIMEOUT_S
 
     assert f"[timeout:{int(TIMEOUT_S) - 10}]" in walk_query("51.03,71.35,51.11,71.5")
+
+
+def test_foot_yes_overrides_access_private() -> None:
+    from pipeline.walk_graph import walkable
+
+    assert walkable({"highway": "service", "access": "private", "foot": "yes"})
+    assert walkable({"highway": "footway", "access": "private", "foot": "designated"})
+    assert not walkable({"highway": "service", "access": "private"})
+    assert not walkable({"highway": "footway", "foot": "no"})
+    q = walk_query("51.03,71.35,51.11,71.5")
+    assert '["access"="private"]["foot"~"^(designated|permissive|yes)$"]' in q
