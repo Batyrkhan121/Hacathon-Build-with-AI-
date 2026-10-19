@@ -382,10 +382,12 @@ fieldset {
   font-weight: 800;
 }
 
+/* Выбранное состояние одно для пресетов, чипов, языка и «Указать на карте»: тёмная заливка --ink.
+   Бирюзовая заливка остаётся только у главной кнопки «Подсказать». */
 .preset[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 /* ------------------------------------------------------------------ form */
@@ -471,10 +473,11 @@ input:focus-visible {
   color: var(--accent-strong);
 }
 
-.btn-ghost[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.btn-ghost[aria-pressed="true"],
+.btn-ghost[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
 }
 
 .form-error {
