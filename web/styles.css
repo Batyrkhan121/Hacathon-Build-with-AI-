@@ -2227,3 +2227,81 @@ input[type="time"],
   height: 28px;
   font-size: var(--v2-fs-s);
 }
+
+/* --- карта: небо и солнце с флага. Маршрут — бирюзовый акцент (опции Leaflet в map.js), остановки —
+   золотые кружки, остальное нейтральное. Тайлы приглушены фильтром только на слое тайлов:
+   маршрут, маркеры и подписи — в других панелях и фильтр не получают. */
+.v2 .leaflet-tile-pane {
+  filter: saturate(0.35) brightness(1.05);
+}
+
+.v2 .stop-icon span {
+  width: 30px;
+  height: 30px;
+  clip-path: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* «Идея ИИ» отличается не только цветом: тёмное кольцо (форма + цвет) */
+.v2 .stop-icon.is-generated span {
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* Блок маршрута — нейтральный; бирюзовый остаётся у линии и итога «по тротуарам» */
+.v2 .route {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.v2 .route > summary strong {
+  color: var(--ink);
+}
+
+/* --- вычитание: служебное уходит с основного экрана, но остаётся доступным */
+/* «Готово за … · карточек: N» — только для скринридера (role=status); во время загрузки виден «Ищу места…» */
+.v2 .results:not([aria-busy="true"]) > .status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* «На сервер уйдёт только id ориентира: …» — в «Что ушло на сервер»; заметки о геолокации и ячейке остаются */
+.v2 .where-note:not([class*="is-"]) {
+  display: none;
+}
+
+/* Без капса и без стрелок в кнопках */
+.v2 .mock-pill {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .back-to-card > span[aria-hidden="true"] {
+  display: none;
+}
+
+.v2 .summary {
+  font-size: var(--v2-fs-l);
+}
+
+/* «Уточнить» (с машиной времени) свёрнут и на широком экране */
+@media (min-width: 900px) {
+  .v2 .refine {
+    margin-top: 16px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+  }
+  .v2 .refine > summary {
+    display: flex;
+  }
+  .v2 .refine > fieldset {
+    margin: 12px 14px 0;
+  }
+}
