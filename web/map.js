@@ -33,11 +33,33 @@ export function initMap(el) {
 function stopIcon(rank, ideaSource) {
   return L.divIcon({
     className: `stop-icon is-${ideaSource}`,
-    html: `<span>${Number(rank)}</span>`,
+    // v2.1 (эталон): золотой шестиугольник с контуром --ink; номер — textContent, без HTML из данных
+    html: document.body.classList.contains('v2') ? hexStop(rank) : `<span>${Number(rank)}</span>`,
     iconSize: [30, 34],
     iconAnchor: [15, 17],
     popupAnchor: [0, -16],
   });
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function hexStop(rank) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', '30');
+  svg.setAttribute('height', '34');
+  svg.setAttribute('viewBox', '0 0 34 38');
+  svg.setAttribute('aria-hidden', 'true');
+  const hex = document.createElementNS(SVG_NS, 'polygon');
+  hex.setAttribute('class', 'stop-hex');
+  hex.setAttribute('points', '17,1.5 32,10 32,28 17,36.5 2,28 2,10');
+  const num = document.createElementNS(SVG_NS, 'text');
+  num.setAttribute('class', 'stop-num');
+  num.setAttribute('x', '17');
+  num.setAttribute('y', '24.5');
+  num.setAttribute('text-anchor', 'middle');
+  num.textContent = String(Number(rank));
+  svg.append(hex, num);
+  return svg;
 }
 
 // Ответ сервера: старт (context.origin), номерные места и мини-маршрут пунктиром (он приблизительный).
