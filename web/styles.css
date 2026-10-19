@@ -2656,3 +2656,13 @@ body:not(.v2) .submit-row .btn-primary {
 .v2 .card > .tags {
   display: none;
 }
+
+/* v2.1, правка 2: предупреждения тише — 13 px, меньше полей; цвет и значок «!» остаются */
+.v2 .warning {
+  padding: 6px 12px 6px 32px;
+  font-size: var(--v2-fs-s);
+}
+
+.v2 .warning::before {
+  top: 8px;
+}
