@@ -486,3 +486,30 @@ def test_report_counts_graph_routes(tmp_path: Path) -> None:
 def test_min_walk_minutes_has_tolerance(straight_m: float, minutes: int) -> None:
     """226 m straight is 3.01 min: within the 3 m tolerance a 3-minute graph leg is fine."""
     assert run_eval.min_walk_minutes(straight_m) == minutes
+
+
+def test_route_source_expectation(mock_answer: Answer) -> None:
+    assert check_expect(mock_answer, {"route_source": "straight"}) == []
+    assert any("ожидали graph" in f for f in check_expect(mock_answer, {"route_source": "graph"}))
+    no_route = mock_answer.model_copy(deep=True)
+    no_route.route = None
+    assert any("маршрут нет" in f for f in check_expect(no_route, {"route_source": "graph"}))
+
+
+def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) -> None:
+    """WALK_GRAPH=false: no answer in the run is a graph route -> route_source=graph is skipped;
+    once any answer is a graph route, a straight one in a graph-expecting scenario fails."""
+    base = run_eval.load_scenarios()[0]
+    scns = [{**base, "id": "X1", "expect": {"route_source": "graph"}},
+            {**base, "id": "X2", "expect": {}}]
+    straight = run_eval.mock_runner()
+    assert all(r.passed for r in run_eval.run_all(scns, straight))
+
+    graph = graph_answer(mock_answer)
+    answers = iter([mock_answer, graph])  # X1 straight, X2 graph
+
+    def mixed(req: RecommendRequest) -> Outcome:
+        return Outcome(answer=next(answers))
+
+    results = {r.id: r for r in run_eval.run_all(scns, mixed)}
+    assert not results["X1"].passed and results["X2"].passed

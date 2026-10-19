@@ -26,11 +26,15 @@ def test_landmarks_valid(landmarks) -> None:
         assert all(alias == alias.lower() for alias in lm.aliases), lm.id
 
 
-def test_mock_answer_valid() -> None:
-    raw = json.loads((ROOT / "web" / "mock" / "answer_sample.json").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json"])
+def test_mock_answer_valid(name: str) -> None:
+    raw = json.loads((ROOT / "web" / "mock" / name).read_text(encoding="utf-8"))
     answer = Answer.model_validate(raw)
     assert 1 <= len(answer.cards) <= 3
     assert [c.rank for c in answer.cards] == list(range(1, len(answer.cards) + 1))
+    if name == "answer_route.json":  # the walk-graph mock of web/?mock=route
+        assert answer.route is not None and answer.route.path_source == "graph"
+        assert answer.route.crossings and len(answer.route.path) >= 2
 
 
 @pytest.mark.parametrize(
@@ -131,3 +135,16 @@ def test_walk_graph_flag_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("WALK_GRAPH", "false")
     get_settings.cache_clear()
     assert not get_settings().walk_graph_ready
+
+
+def test_location_accepts_cells_up_to_r10() -> None:
+    import h3
+
+    from app.schemas import MAX_H3_RES
+
+    assert MAX_H3_RES == 10
+    for res in (8, 9, 10):
+        LocationInput(h3_cell=h3.latlng_to_cell(51.0894, 71.4161, res))
+    for res in (11, 13, 15):
+        with pytest.raises(ValidationError, match="finer than r10"):
+            LocationInput(h3_cell=h3.latlng_to_cell(51.0894, 71.4161, res))

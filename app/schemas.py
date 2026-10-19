@@ -15,7 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.1.0"  # 1.1.0: walking route on the OSM walk graph (MiniRoute)
+SCHEMA_VERSION = "1.2.0"  # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10
+MAX_H3_RES = 10  # finest H3 cell the server accepts (r10 ≈ 0,015 км²); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
 
@@ -168,6 +169,9 @@ class LocationInput(BaseModel):
     def _exactly_one(self) -> LocationInput:
         if (self.h3_cell is None) == (self.landmark_id is None):
             raise ValueError("provide exactly one of h3_cell or landmark_id")
+        if self.h3_cell is not None and (int(self.h3_cell, 16) >> 52) & 0xF > MAX_H3_RES:
+            # resolution bits of the H3 index; a finer cell is effectively a raw coordinate
+            raise ValueError(f"H3 cell finer than r{MAX_H3_RES} is not accepted")
         return self
 
 
