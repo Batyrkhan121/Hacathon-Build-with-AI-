@@ -2328,8 +2328,8 @@ input[type="time"],
 }
 
 /* --- вычитание: служебное уходит с основного экрана, но остаётся доступным */
-/* «Готово за … · карточек: N» — только для скринридера (role=status); во время загрузки виден «Ищу места…» */
-.v2 .results:not([aria-busy="true"]) > .status {
+/* «Готово за … · карточек: N» — только для скринридера (role=status); «Ищу места…» и «Запрос отменён» видны */
+.v2 .results > .status[data-kind="done"] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2531,4 +2531,41 @@ body:not(.v2) .submit-row .btn-primary {
 .v2 .directions .directions-btn {
   grid-row: 2;
   width: 100%;
+}
+
+/* v2.1, ожидание: заголовок «Ищу места рядом с …» 21 px, под ним «Учитываю:» — чипы реальных параметров запроса */
+.v2 .results > .status[data-kind="loading"] {
+  margin: 0 0 8px;
+  font-size: var(--v2-fs-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.v2 .loading-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding-right: 96px; /* место под «Отменить» справа */
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+.v2 .loading-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.v2 .loading .sk-summary {
+  display: none; /* полоску сводки заменяет «Учитываю» */
+}
+
+.v2 .sk {
+  background-image: linear-gradient(90deg, #e3eaee 0%, #f0f4f6 50%, #e3eaee 100%); /* скелетон в холодной палитре B */
 }

@@ -120,7 +120,7 @@ export function renderIntro(root, { onExample } = {}) {
 }
 
 // Скелетон повторяет форму карточек, чтобы ничего не прыгало, когда придёт ответ.
-export function renderLoading(root, { onCancel } = {}) {
+export function renderLoading(root, { onCancel, context = [] } = {}) {
   const skel = () =>
     h(
       'li',
@@ -136,6 +136,15 @@ export function renderLoading(root, { onCancel } = {}) {
       { class: 'loading', 'aria-label': t('loading.label') },
       onCancel
         ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
+        : null,
+      // v2.1: что учтено в запросе — чипами; без v2 скрыто
+      context.length
+        ? h(
+            'p',
+            { class: 'loading-context v2-only' },
+            h('span', { class: 'loading-context-label', text: t('loading.context') }),
+            context.map((c) => h('span', { class: 'loading-chip', text: c })),
+          )
         : null,
       h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
       h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),

@@ -203,8 +203,8 @@ async function submit({ useLlm = true } = {}) {
   setStale(false);
   mapView.clearAnswer();
   showBackToCard(null);
-  view.renderLoading(els.answer, { onCancel: cancelRequest });
-  setStatus(t('status.loading', { where: whereLabel() }));
+  view.renderLoading(els.answer, { onCancel: cancelRequest, context: loadingContext() });
+  setStatus(t('status.loading', { where: whereLabel() }), 'loading');
   revealResults(); // скелетон должен быть виден сразу, а не после ответа
   const started = performance.now();
 
@@ -217,6 +217,7 @@ async function submit({ useLlm = true } = {}) {
     renderAnswer();
     setStatus(
       t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1), n: answer.cards.length }),
+      'done',
     );
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
@@ -246,7 +247,18 @@ function cancelRequest() {
   ctrl.abort();
   setBusy(false);
   restoreResults();
-  setStatus(t('status.cancelled'));
+  setStatus(t('status.cancelled'), 'cancelled');
+}
+
+// v2.1, ожидание: «Учитываю: …» — только то, что реально ушло в запрос (день и время, бюджет, режимы;
+// место уже названо в заголовке «Ищу места: …»).
+// Никаких выдуманных этапов и чисел: API отвечает одним запросом.
+function loadingContext() {
+  const when = `${t(state.day ? 'when.tomorrow' : 'when.today')}, ${state.time || astanaClock()}`;
+  const out = [when];
+  if (state.budget) out.push(t(`budget.${state.budget}`));
+  FLAGS.forEach((f) => state.flags[f] && out.push(t(`flag.${f}`)));
+  return out;
 }
 
 function restoreResults() {
@@ -271,8 +283,9 @@ function setBusy(busy) {
   els.submit.querySelector('span').textContent = busy ? t('submit.busy') : t('submit');
 }
 
-function setStatus(text) {
+function setStatus(text, kind = '') {
   els.status.textContent = text;
+  els.status.dataset.kind = kind; // v2: на экране прячем только «Готово за …», остальное видно
 }
 
 function showFormError(text) {
