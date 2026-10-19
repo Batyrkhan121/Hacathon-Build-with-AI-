@@ -2305,3 +2305,7 @@ input[type="time"],
     margin: 12px 14px 0;
   }
 }
+
+.v2 .refine-count {
+  white-space: nowrap;
+}
