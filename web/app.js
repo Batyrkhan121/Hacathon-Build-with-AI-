@@ -39,6 +39,7 @@ const state = {
   flags: Object.fromEntries(FLAGS.map((f) => [f, false])),
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
+  backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
@@ -61,6 +62,8 @@ const els = {
   whereNote: $('where-note'),
   presets: $('presets'),
   budgetChips: $('budget-chips'),
+  refine: $('refine'),
+  refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
   modeChips: $('mode-chips'),
   departure: $('departure'),
@@ -76,6 +79,7 @@ const els = {
   stale: $('stale'),
   staleBtn: $('stale-btn'),
   mapFallback: $('map-fallback'),
+  backToCard: $('back-to-card'),
 };
 
 // ------------------------------------------------------------------ helpers
@@ -194,6 +198,7 @@ async function submit({ useLlm = true } = {}) {
   setBusy(true);
   setStale(false);
   mapView.clearAnswer();
+  showBackToCard(null);
   view.renderLoading(els.answer, { onCancel: cancelRequest });
   setStatus(t('status.loading', { where: whereLabel() }));
   revealResults(); // скелетон должен быть виден сразу, а не после ответа
@@ -296,6 +301,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       clearFilters();
       submit();
     },
+    onEditQuery: () => focusQuery(),
   });
   if (!redrawMap) return;
   const route = answer.route;
@@ -320,28 +326,37 @@ function renderError() {
     canRetryNoAi: state.lastRequest?.use_llm !== false,
     onRetry: () => submit({ useLlm: state.lastRequest?.use_llm !== false }),
     onRetryNoAi: () => submit({ useLlm: false }),
-    onShorten: () => {
-      els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
-      els.query.focus();
-      els.query.select();
-    },
+    onShorten: () => focusQuery({ select: true }),
   });
+}
+
+function focusQuery({ select = false } = {}) {
+  els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+  els.query.focus();
+  if (select) els.query.select();
 }
 
 function focusOnMap(rank) {
   mapView.focusStop(rank);
-  scrollMapIntoView();
+  scrollMapIntoView(rank);
 }
 
 function showRoute(rank) {
   mapView.showRoute(rank, legendLabels());
-  scrollMapIntoView();
+  scrollMapIntoView(rank);
 }
 
-function scrollMapIntoView() {
+function scrollMapIntoView(rank) {
   if (window.matchMedia('(max-width: 899px)').matches) {
     document.querySelector('.map-wrap').scrollIntoView({ behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    showBackToCard(rank);
   }
+}
+
+function showBackToCard(rank) {
+  state.backRank = rank ?? null;
+  els.backToCard.hidden = state.backRank === null;
+  if (state.backRank !== null) els.backToCard.textContent = t('map.backToCard', { n: state.backRank });
 }
 
 function renderPresets() {
@@ -429,6 +444,13 @@ function renderChips() {
   if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
   els.filterHint.hidden = !hints.length;
   els.filterHint.textContent = hints.join(' ');
+  // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
+  const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
+  els.refineCount.textContent = picked ? `· ${picked}` : '';
+}
+
+function syncRefineOpen() {
+  if (window.matchMedia('(min-width: 900px)').matches) els.refine.open = true;
 }
 
 function filtersChanged() {
@@ -531,6 +553,7 @@ function setLocation(loc) {
   state.whereMsg = null;
   state.activePreset = null;
   mapView.clearAnswer();
+  showBackToCard(null);
   renderLandmarkSelect();
   renderWhereNote();
   renderLocationOnMap();
@@ -771,6 +794,7 @@ function renderAll() {
   renderChips();
   renderLandmarkSelect();
   renderWhereNote();
+  showBackToCard(state.backRank);
 }
 
 async function init() {
@@ -784,6 +808,16 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  els.backToCard.addEventListener('click', () => {
+    const rank = state.backRank;
+    showBackToCard(null);
+    if (rank === null) return;
+    // начало карточки к верху экрана: при «nearest» длинная карточка осталась бы с середины
+    view.highlightCard(rank); // подсветка; её прокрутку «nearest» перебивает следующая строка
+    document.getElementById(`card-${rank}`)?.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+  });
+  syncRefineOpen();
+  window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
   renderAll();
   renderIntro();
 

@@ -9,7 +9,7 @@
   --ink-2: #48575f;
   --ink-3: #5f6b74; /* ≥4.5:1 и на белом, и на тёплом фоне */
   --line: #e2ddd2;
-  --line-strong: #cfc8ba;
+  --line-strong: #8f8778; /* рамки контролов ≥ 3:1 на --surface и --bg (WCAG 1.4.11) */
 
   --accent: #0a6e87;
   --accent-strong: #08566a;
@@ -96,7 +96,7 @@ textarea {
 .skip {
   position: absolute;
   left: 8px;
-  top: -40px;
+  top: -60px; /* при min-height 44 px ссылка не должна выглядывать сверху */
   z-index: 2000;
   background: var(--ink);
   color: #fff;
@@ -145,6 +145,20 @@ textarea {
   position: absolute;
   inset: 0;
   background: #e8e4da;
+}
+
+.map-wrap .back-to-card {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+  width: auto; /* не наследует width:100% кнопки «Подсказать» на ≤ 420 px и не закрывает зум справа */
+  max-width: calc(100% - 80px);
+  box-shadow: var(--shadow);
+}
+
+.back-to-card[hidden] {
+  display: none;
 }
 
 .map-fallback {
@@ -207,6 +221,12 @@ textarea {
   }
   .results {
     padding: 4px 16px 28px;
+  }
+  /* Скелетон и короткий ответ ниже экрана: без запаса высоты scrollIntoView упирается в низ
+     страницы, и ответ начинается с середины экрана под хвостом формы. */
+  .results:has(.loading, .answer, .error-box) {
+    min-height: 100vh;
+    min-height: 100svh;
   }
 }
 
@@ -376,10 +396,12 @@ fieldset {
   font-weight: 800;
 }
 
+/* Выбранное состояние одно для пресетов, чипов, языка и «Указать на карте»: тёмная заливка --ink.
+   Бирюзовая заливка остаётся только у главной кнопки «Подсказать». */
 .preset[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 /* ------------------------------------------------------------------ form */
@@ -426,7 +448,9 @@ input:focus-visible {
   border: 1px solid transparent;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal; /* длинные kk-подписи переносятся, а не вылезают за край на 360 px */
+  text-align: center;
+  text-wrap: balance;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
@@ -463,10 +487,11 @@ input:focus-visible {
   color: var(--accent-strong);
 }
 
-.btn-ghost[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.btn-ghost[aria-pressed="true"],
+.btn-ghost[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
 }
 
 .form-error {
@@ -650,9 +675,10 @@ input[type="time"] {
   position: relative;
 }
 
-.loading-cancel {
+/* .loading внутри — иначе .btn-link { position: relative } из блока polish сбивает кнопку под статус. */
+.loading .loading-cancel {
   position: absolute;
-  top: -6px;
+  top: -9px;
   right: 0;
 }
 
@@ -1024,8 +1050,10 @@ input[type="time"] {
 }
 
 .card-text {
-  margin: 10px 0 0;
-  font-size: 14px;
+  margin: 12px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
 }
 
 .card-text dt {
@@ -1062,10 +1090,24 @@ input[type="time"] {
   background: var(--surface-2);
 }
 
+/* Служебное (полнота и источники фактов) — одна приглушённая группа под текстом, метки остаются видны. */
 .card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.card-meta .sources {
+  margin: 0;
+}
+
+/* в flex-ряду .confidence сжимается по содержимому — полосе нужна своя ширина */
+.card-meta .bar {
+  flex: 0 0 72px;
 }
 
 .confidence {
@@ -1113,8 +1155,8 @@ input[type="time"] {
 .card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 6px 8px;
+  margin-top: 12px;
 }
 
 /* «Как пройти»: внешние навигаторы, отдельной строкой под действиями карточки. */
@@ -1130,6 +1172,32 @@ input[type="time"] {
 .directions-label {
   font-weight: 600;
   color: var(--ink-2);
+}
+
+/* «Как пройти»: подпись своей строкой, ссылки под ней от одного края — длинная kk-подпись
+   («Қалай жетуге болады (сіздің нүктеңізден):») не рвёт ряд ссылок. */
+.directions .directions-label {
+  flex-basis: 100%;
+}
+
+/* «Как пройти» — главное действие карточки: кнопки с бирюзовой рамкой (один компонент .btn-ghost). */
+.directions {
+  gap: 6px 8px;
+  margin-top: 12px;
+}
+
+.directions .directions-btn {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-size: 15px;
+  text-decoration: none;
+}
+
+/* «На карте» / «Маршрут» / «Сайт» и «Показать на карте» в маршруте — ссылки от края текста, без отступа */
+.card-actions .btn-link,
+.route-foot .btn-link {
+  padding-inline: 0;
+  margin-right: 12px;
 }
 
 /* Легенда к пунктиру на карте. */
@@ -1184,7 +1252,14 @@ input[type="time"] {
 @media (max-width: 899px) {
   .line-legend {
     font-size: 11px;
-    padding: 5px 8px;
+    line-height: 1.25;
+    padding: 4px 8px;
+    max-width: min(360px, calc(100vw - 32px));
+  }
+  /* над строкой атрибуции OSM, а не поверх неё: атрибуцию закрывать нельзя */
+  .leaflet-bottom.leaflet-left .line-legend {
+    margin-bottom: 24px;
+    margin-left: 8px;
   }
   .legend-kinds {
     display: flex;
@@ -1359,6 +1434,17 @@ input[type="time"] {
   font-weight: 700;
 }
 
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.empty-actions:empty {
+  display: none;
+}
+
 .empty-hint {
   margin: 4px 0 10px;
   color: var(--ink-2);
@@ -1366,6 +1452,78 @@ input[type="time"] {
 }
 
 /* --- data used */
+
+/* «Уточнить» на телефоне: свёрнутый блок с режимом, фильтрами и временем. */
+.refine {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.refine > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.refine > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* шеврон справа: ▾ свёрнуто, ▴ открыто */
+.refine > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+
+.refine[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.refine-count {
+  color: var(--accent-strong);
+}
+
+.refine[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.refine > fieldset {
+  margin: 12px 14px 0;
+}
+
+.refine > fieldset:last-child {
+  margin-bottom: 12px;
+}
+
+/* Широкий экран: блок всегда открыт, заголовок-переключатель не нужен. */
+@media (min-width: 900px) {
+  .refine {
+    margin-top: 0;
+    border: 0;
+    background: none;
+  }
+  .refine > summary {
+    display: none;
+  }
+  .refine > fieldset {
+    margin: 12px 0 0;
+  }
+}
 
 .data-used {
   margin-top: 14px;
@@ -1574,12 +1732,13 @@ input[type="time"] {
 
 /* ------------------------------------------------------------------ polish (T75/T76) */
 
-/* Зона клика ≥ 40 px без изменения вида: псевдоэлемент на 3 px сверху и снизу
-   (ровно половина зазора 6 px между рядами, так что зоны соседей не пересекаются). */
+/* Зона нажатия ≥ 44 px. Чипы и маленькие кнопки видны на 38 px, а псевдоэлемент добавляет
+   по 3 px сверху и снизу (ровно половина зазора 6 px между рядами, зоны соседей не пересекаются). */
 .chip,
 .btn-sm,
 .btn-link {
   position: relative;
+  min-height: 38px;
 }
 
 .chip::after,
@@ -1590,15 +1749,31 @@ input[type="time"] {
   inset: -3px 0;
 }
 
-.lang button {
-  min-height: 36px;
+.btn,
+select,
+input[type="time"],
+.preset,
+.lang button,
+.pick-cancel,
+.skip {
+  min-height: 44px;
+}
+
+.btn-sm,
+.btn-link {
+  min-height: 38px;
+}
+
+/* «Указать на карте» внутри текста заметки: вид прежний, зона нажатия 44 px. */
+.where-note .where-pick::after {
+  inset: -8px 0;
 }
 
 .leaflet-bar a,
 .leaflet-touch .leaflet-bar a {
-  width: 36px;
-  height: 36px;
-  line-height: 36px;
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
 }
 
 /* Атрибуция OSM: ссылка была 3,9:1 на полупрозрачном фоне — делаем ≥ 4,5:1. */
