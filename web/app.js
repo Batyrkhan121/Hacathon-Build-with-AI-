@@ -551,9 +551,9 @@ function setCellFromPoint(lat, lng) {
 }
 
 // ------------------------------------------------------------------ geolocation (T102)
-// Точная точка GPS не покидает браузер: в запрос уходит только ячейка r10, ссылки «Как пройти»
-// строятся от context.origin (центр ячейки), в localStorage и консоль ничего не пишем.
-// Сама точка нужна только для отметки «вы здесь» на карте.
+// Точная точка GPS не уходит на наш сервер: в запрос уходит только ячейка r10, в localStorage
+// и консоль ничего не пишем. Ссылки «Как пройти» берут точную точку только по клику (см. preciseStart),
+// href в DOM строится от context.origin (центр ячейки).
 let geoWatch = null;
 let geoTimer = null;
 // Точная точка GPS — только в памяти страницы. Нужна для отметки «вы здесь» и, по решению пользователя,
@@ -585,7 +585,7 @@ function applyGpsFix(lat, lng, accuracyM) {
   } else {
     setLocation({ type: 'cell', cell, far, accuracy, source: 'gps' });
   }
-  gpsPoint = { cell, lat, lon: lng }; // последняя (самая точная) фиксация
+  gpsPoint = { cell, lat, lon: lng }; // последняя фиксация
   mapView.showHere(lat, lng, accuracyM, t('map.here'));
 }
 

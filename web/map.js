@@ -323,7 +323,8 @@ export function updateCellTooltip(text) {
   cellLayer?.eachLayer((layer) => layer.setTooltipContent?.(text));
 }
 
-// Синяя точка и круг точности GPS. Рисуются в браузере; координаты не уходят ни в API, ни в ссылки.
+// Синяя точка и круг точности GPS. Рисуются в браузере; координаты не уходят в API,
+// в ссылку — только по клику «Как пройти».
 export function showHere(lat, lng, accuracyM, label) {
   if (!map) return;
   hereLayer.clearLayers();
