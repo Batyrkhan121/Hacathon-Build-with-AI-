@@ -2024,3 +2024,47 @@ input[type="time"],
     min-height: 180px;
   }
 }
+
+/* --- ответ как в картах: панель-лист наезжает на карту на 16 px, скругление 20 сверху, тень вверх */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    z-index: 0; /* панели Leaflet (z 400+) остаются внутри карты и не перекрывают лист */
+  }
+  .v2 .panel {
+    position: relative;
+    z-index: 1;
+    margin-top: -16px;
+    border-radius: var(--v2-r-panel) var(--v2-r-panel) 0 0;
+    box-shadow: var(--v2-shadow-2);
+  }
+  /* атрибуция OSM и легенда — над краем листа, видимы */
+  .v2 .leaflet-bottom {
+    bottom: 16px;
+  }
+}
+
+/* --- первое место — главная карточка, остальные — спокойный список с тонкими разделителями */
+.v2 .cards {
+  gap: 0;
+}
+
+.v2 .cards > .card:first-child {
+  margin-bottom: 8px;
+  padding: 16px;
+  border-radius: var(--v2-r-btn);
+  box-shadow: var(--v2-shadow-1);
+}
+
+.v2 .cards > .card + .card {
+  padding: 16px 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.v2 .cards > .card + .card:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
