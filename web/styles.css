@@ -1360,11 +1360,6 @@ input[type="time"] {
 }
 
 /* Блок «По тротуарам…» под таймлайном маршрута. */
-.route-graph {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(10, 86, 106, 0.18);
-}
 
 .route-graph-line {
   margin: 0;
@@ -2568,4 +2563,91 @@ body:not(.v2) .submit-row .btn-primary {
 
 .v2 .sk {
   background-image: linear-gradient(90deg, #e3eaee 0%, #f0f4f6 50%, #e3eaee 100%); /* скелетон в холодной палитре B */
+}
+
+/* v2.1: номера остановок на карте — золотой шестиугольник с контуром --ink (эталон), номер — textContent */
+.v2 .stop-icon svg {
+  display: block;
+  overflow: visible;
+  transition: transform 0.15s;
+}
+
+.v2 .stop-hex {
+  fill: var(--gold);
+  stroke: var(--ink);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.v2 .stop-num {
+  fill: var(--ink);
+  font: 700 16px var(--font);
+}
+
+/* «Идея ИИ» на карте — сиреневая заливка и тот же контур (цвет + подпись в карточке) */
+.v2 .stop-icon.is-generated .stop-hex {
+  fill: #d9ccf5;
+}
+
+.v2 .stop-icon.is-active svg {
+  transform: scale(1.2);
+}
+
+.v2 .stop-icon.is-active .stop-hex {
+  fill: var(--accent);
+}
+
+.v2 .stop-icon.is-active .stop-num {
+  fill: #fff;
+}
+
+/* Номера в карточках и таймлайне — тоже шестиугольники, как на карте */
+.v2 .rank,
+.v2 .tl-rank {
+  clip-path: var(--hex);
+  border-radius: 0;
+}
+
+.v2 .rank {
+  width: 30px;
+  height: 34px;
+}
+
+/* Лист — белый, с «ручкой» сверху на телефоне; главная карточка — тонкая рамка без тени */
+.v2 .panel {
+  background: var(--surface);
+}
+
+@media (max-width: 899px) {
+  .v2 .panel::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 2px;
+    background: var(--line);
+  }
+}
+
+.v2 .cards > .card:first-child {
+  border-color: var(--line);
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+/* Выбранный чип и сценарий: мягкая заливка + кольцо --accent (не только цвет заливки) */
+.v2 .preset[aria-pressed="true"],
+.v2 .chip[aria-pressed="true"],
+.v2 .btn-ghost[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent-strong);
+}
+
+/* Фокус: одна видимая обводка 2 px --accent для всех элементов v2 */
+.v2 :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
