@@ -4,7 +4,12 @@ Qadam подсказывает, куда сходить рядом. Вы зад�
 
 Проект сделан для хакатона Build with AI, кейс НИЦ Smart City.
 
-> Статус: модули влиты в main, идёт доводка. Ход работ: [план](docs/PLAN.md).
+> Статус: версия для сдачи 19.10.2026. Ход работ: [план](docs/PLAN.md).
+
+## Демо
+
+- Видео: _ссылка появится здесь_ <!-- VIDEO_URL: вставить ссылку на демо-видео -->
+- [Слайды (PDF)](docs/slides.pdf)
 
 ## Запуск
 
@@ -53,15 +58,20 @@ cp .env.example .env
 Для сдачи:
 - [Концепция](docs/CONCEPT.md): проблема, аудитория, сценарии.
 - [Как устроен RAG](docs/RAG.md): шаги от запроса до карточек и запасной путь без LLM.
-- [Сценарии и ограничения](docs/SCENARIOS.md): 16 сценариев eval и результаты прогонов.
+- [Сценарии и ограничения](docs/SCENARIOS.md): 16 сценариев eval, результаты прогонов и ограничения.
 - [Этика и приватность](docs/ETHICS.md): персональные данные, кому уходят данные, лицензии.
 - [Данные](docs/DATA.md): источники, автоматический сбор, индекс эмбеддингов.
-- [Питч](docs/PITCH.md) и [сценарий видео](docs/VIDEO.md).
+- [Питч](docs/PITCH.md), [слайды (PDF)](docs/slides.pdf) и [сценарий видео](docs/VIDEO.md).
 
 Для команды:
 - [Кейс](docs/TASK.md), [архитектура](docs/ARCHITECTURE.md), [план](docs/PLAN.md).
 - [Docker и хостинг](docs/DEPLOY.md).
 - [Промпты для Claude Code](docs/PROMPTS.md).
 
-## Данные
-© участники OpenStreetMap (ODbL), Wikidata (CC0). Погода: Open-Meteo.
+## Данные и атрибуция
+- © участники OpenStreetMap, лицензия [ODbL 1.0](https://www.openstreetmap.org/copyright). База мест `data/processed/poi.jsonl` и граф тротуаров `data/processed/walk_graph.npz` — производные базы данных OpenStreetMap, они распространяются под той же лицензией ODbL 1.0. Тайлы карты: OpenStreetMap.
+- Wikidata: [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+- Погода: [Open-Meteo](https://open-meteo.com/).
+- 2GIS и Яндекс Карты: данные оттуда не берём; кнопка «Как пройти» только открывает ссылку на их сайт.
+
+Подробнее: [Этика и приватность](docs/ETHICS.md), раздел «Данные и лицензии».
