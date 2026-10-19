@@ -2321,3 +2321,21 @@ input[type="time"],
 .v2 .badge-poi::before {
   display: none;
 }
+
+/* ================================================================== v2.1
+   Эталон Claude Design: qadam-v2-skin.css («Структура v2.1») и style.md. Всё по-прежнему только под body.v2. */
+
+/* Палитра B «Небо» (style.md): только токены под .v2 */
+.v2 {
+  --bg: #f2f5f7;
+  --surface-2: #f7f9fa;
+  --line: #dde4e8;
+  --line-strong: #788790; /* рамки полей 3,38:1 на фоне, 3,71:1 на белом */
+  --ink-2: #4b5a63; /* 6,52:1 на фоне */
+  --ink-3: #5c6870; /* 5,23:1 на фоне */
+  --accent-soft: #dcecef;
+}
+
+.v2 .hero-title {
+  margin: 4px 0 0;
+}
