@@ -281,18 +281,17 @@ function renderGraphSummary(route, ctx) {
   const stepsText = steps
     ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
     : t('route.noSteps');
-  return h(
-    'div',
-    { class: 'route-graph' },
-    h(
-      'p',
+  // line — в заголовке свёрнутого маршрута (итог виден без раскрытия), caveat — внутри
+  return {
+    line: h(
+      'span',
       { class: 'route-graph-line' },
       base,
       ' · ',
       h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
     ),
-    h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
-  );
+    caveat: h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
+  };
 }
 
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
@@ -336,21 +335,25 @@ function renderRoute(route, byId, ctx, originName) {
       );
     }
   }
+  // Телефон: маршрут свёрнут до итога (время, метры, переходы, лестницы, превышение бюджета),
+  // чтобы «Почему» первой карточки попало на первый экран ответа; таймлайн — по касанию. ≥ 900 px — открыт.
+  const graph = route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null;
   return h(
-    'section',
-    { class: 'route', 'aria-label': t('route.title') },
+    'details',
+    { class: 'route', open: window.matchMedia('(min-width: 900px)').matches },
     h(
-      'div',
+      'summary',
       { class: 'route-head' },
       h('strong', { text: t('route.title') }),
       h('span', {
         class: 'route-total',
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
+      graph ? graph.line : null,
+      route.fits_budget === false ? h('span', { class: 'route-over', text: t('route.overBudget') }) : null,
     ),
     h('ol', { class: 'timeline' }, items),
-    route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null,
-    route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
+    graph ? graph.caveat : null,
     h(
       'div',
       { class: 'route-foot' },
