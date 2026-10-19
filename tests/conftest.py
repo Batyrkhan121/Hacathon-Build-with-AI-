@@ -48,6 +48,17 @@ def _no_live_keys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_live_weather(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests pin `at` to 19.10.2026; within 3 h of that moment the pipeline would ask for live
+    weather. Weather is unknown unless a test sets its own (test_weather.py tests the client)."""
+    if request.module.__name__.endswith("test_weather"):
+        return
+    from app import weather
+
+    monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
+
+
 def _is_loopback(address: object) -> bool:
     host = address[0] if isinstance(address, tuple) else address
     return isinstance(host, str) and (host.startswith("127.") or host in ("::1", "localhost"))
