@@ -24,7 +24,10 @@ const DEFAULT_DEPARTURE = 120;
 const GROUP_SIZE = 4; // «нас 3–5»
 const TIMES = [null, '10:00', '19:00', '23:30'];
 const DEFAULT_LANDMARK = 'expo';
-const H3_RES = 9;
+const H3_RES = 10; // контракт 1.2.0: сервер принимает ячейки до r10 (≈0,015 км²), мельче — 422
+const GEO_GOOD_M = 76; // ≈ ребро ячейки r10: точнее этого — дальше не уточняем
+const GEO_MAX_WAIT_MS = 20000; // дольше не ждём: берём лучшую полученную точку
+const GEO_LOW_M = 500; // хуже — обычно Wi-Fi или сотовая сеть без GPS: подсказываем, но ячейку не блокируем
 const ASTANA_CENTER = { lat: 51.128, lon: 71.43 };
 const FAR_KM = 40;
 
@@ -86,11 +89,24 @@ function landmarkName(lm) {
   return lm.names?.[getLang()] || lm.names?.ru || lm.id;
 }
 
-function cellAreaKm2(cell) {
+// Площадь района в гектарах по реальной площади этой ячейки — тот же формат, что у сервера
+// («ваш район (≈1,8 га)»): r10 у EXPO ≈ 1,8 га, r9 ≈ 13 га. От 10 га — целое, иначе один знак.
+function cellAreaHa(cell) {
+  let ha;
   try {
-    return formatNumber(h3.cellArea(cell, 'km2'), 1);
+    ha = h3.cellArea(cell, 'km2') * 100;
   } catch {
-    return formatNumber(0.1, 1);
+    ha = 1.8;
+  }
+  return formatNumber(ha, ha >= 10 ? 0 : 1);
+}
+
+// Разрешение берём из самой ячейки, а не пишем «r9» в тексте: подпись не соврёт и для r10.
+function cellRes(cell) {
+  try {
+    return h3.getResolution(cell);
+  } catch {
+    return H3_RES;
   }
 }
 
@@ -272,6 +288,7 @@ function renderAnswer({ redrawMap = true } = {}) {
     request: state.lastRequest,
     meta: state.meta,
     originName: requestOriginName(),
+    preciseStart, // функция: точку отдаёт только в момент клика по «Как пройти»
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
@@ -456,11 +473,33 @@ function renderWhereNote() {
   if (state.whereMsg) {
     note.textContent = t(state.whereMsg.key);
     note.classList.add(`is-${state.whereMsg.kind}`);
+    if (state.whereMsg.offerPick && window.h3) {
+      // Без GPS остаётся «Указать на карте» — предлагаем прямо в сообщении.
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'btn btn-link btn-sm where-pick';
+      pick.textContent = t('pick.btn');
+      pick.addEventListener('click', onPickClick);
+      note.append(' ', pick);
+    }
     return;
   }
   if (state.location.type === 'cell') {
-    note.textContent = t('where.noteCell', { cell: state.location.cell, area: cellAreaKm2(state.location.cell) });
+    const { cell, accuracy } = state.location;
+    note.textContent = t('where.noteCell', { cell, area: cellAreaHa(cell), res: cellRes(cell) });
     note.classList.add('is-privacy');
+    if (accuracy) {
+      // Точность GPS — число, а не место: её можно показать. Хуже размера ячейки — говорим честно.
+      note.append(document.createElement('br'));
+      if (accuracy > GEO_LOW_M) {
+        note.append(t('geo.lowAccuracy', { m: formatNumber(accuracy) }));
+        note.classList.add('is-warn');
+      } else {
+        note.append(t('geo.accuracy', { m: formatNumber(accuracy) }));
+        if (accuracy > GEO_GOOD_M) note.append(' ', t('geo.coarse'));
+      }
+      if (geoWatch !== null) note.append(' ', t('geo.refining'));
+    }
     if (state.location.far) {
       note.append(document.createElement('br'), t('geo.far'));
       note.classList.add('is-warn');
@@ -472,7 +511,7 @@ function renderWhereNote() {
 
 function renderLocationOnMap() {
   if (state.location.type === 'cell') {
-    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
   } else {
     const lm = landmarkById(state.location.id);
     mapView.showLandmark(lm, t('map.origin', { name: landmarkName(lm) }));
@@ -482,6 +521,12 @@ function renderLocationOnMap() {
 // ------------------------------------------------------------------ location
 
 function setLocation(loc) {
+  // Любой выбор, кроме GPS, останавливает уточнение и убирает «вы здесь».
+  if (loc.source !== 'gps') {
+    stopGeoWatch();
+    mapView.clearHere();
+    gpsPoint = null; // ориентир или точка с карты: старт «Как пройти» снова context.origin
+  }
   state.location = loc;
   state.whereMsg = null;
   state.activePreset = null;
@@ -493,40 +538,118 @@ function setLocation(loc) {
   setStale(true);
 }
 
-function setCellFromPoint(lat, lng) {
-  // Координаты живут только внутри этой функции: дальше идёт лишь ячейка H3 r9.
+function cellFromPoint(lat, lng) {
   const cell = h3.latLngToCell(lat, lng, H3_RES);
   const [cLat, cLon] = h3.cellToLatLng(cell);
-  const far = haversineKm(ASTANA_CENTER, { lat: cLat, lon: cLon }) > FAR_KM;
-  setLocation({ type: 'cell', cell, far });
+  return { cell, far: haversineKm(ASTANA_CENTER, { lat: cLat, lon: cLon }) > FAR_KM };
+}
+
+// «Указать на карте»: координаты клика живут только здесь, дальше идёт лишь ячейка r10.
+function setCellFromPoint(lat, lng) {
+  const { cell, far } = cellFromPoint(lat, lng);
+  setLocation({ type: 'cell', cell, far, source: 'pick' });
+}
+
+// ------------------------------------------------------------------ geolocation (T102)
+// Точная точка GPS не покидает браузер: в запрос уходит только ячейка r10, ссылки «Как пройти»
+// строятся от context.origin (центр ячейки), в localStorage и консоль ничего не пишем.
+// Сама точка нужна только для отметки «вы здесь» на карте.
+let geoWatch = null;
+let geoTimer = null;
+// Точная точка GPS — только в памяти страницы. Нужна для отметки «вы здесь» и, по решению пользователя,
+// как старт в «Как пройти» (по клику, прямо в 2GIS/Яндекс, мимо нашего сервера). Не в API, не в DOM,
+// не в localStorage, не в консоль.
+let gpsPoint = null; // { cell, lat, lon }
+
+// Старт «Как пройти» от точной точки — только если ответ получен для той же ячейки, что и GPS-точка.
+function preciseStart() {
+  if (!gpsPoint || state.lastRequest?.location?.h3_cell !== gpsPoint.cell) return null;
+  return { lat: gpsPoint.lat, lon: gpsPoint.lon };
+}
+
+function stopGeoWatch() {
+  if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
+  geoWatch = null;
+  clearTimeout(geoTimer);
+  geoTimer = null;
+  els.geoBtn.disabled = false;
+}
+
+function applyGpsFix(lat, lng, accuracyM) {
+  const { cell, far } = cellFromPoint(lat, lng);
+  const accuracy = Math.max(1, Math.round(accuracyM));
+  const same = state.location.type === 'cell' && state.location.source === 'gps' && state.location.cell === cell;
+  if (same) {
+    state.location.accuracy = accuracy; // та же ячейка — запрос не меняется, обновляем только точность
+    renderWhereNote();
+  } else {
+    setLocation({ type: 'cell', cell, far, accuracy, source: 'gps' });
+  }
+  gpsPoint = { cell, lat, lon: lng }; // последняя (самая точная) фиксация
+  mapView.showHere(lat, lng, accuracyM, t('map.here'));
 }
 
 function onGeoClick() {
   stopPicking();
+  stopGeoWatch();
   if (!window.h3) return setWhereMsg('h3.missing', 'error');
-  if (!navigator.geolocation) return setWhereMsg('geo.unsupported', 'error');
+  // Геолокация работает только в защищённом контексте (https; localhost браузер тоже считает таким).
+  if (!window.isSecureContext) return setWhereMsg('geo.insecure', 'error', { offerPick: true });
+  if (!navigator.geolocation) return setWhereMsg('geo.unsupported', 'error', { offerPick: true });
   els.geoBtn.disabled = true;
   setWhereMsg('geo.locating', 'info');
-  navigator.geolocation.getCurrentPosition(
+  let gotFix = false;
+  // watchPosition до первой фиксации не хуже размера ячейки, потом стоп; максимум 20 с.
+  geoWatch = navigator.geolocation.watchPosition(
     (pos) => {
-      els.geoBtn.disabled = false;
-      setCellFromPoint(pos.coords.latitude, pos.coords.longitude);
+      gotFix = true;
+      const { latitude, longitude, accuracy } = pos.coords;
+      if (accuracy <= GEO_GOOD_M) stopGeoWatch();
+      applyGpsFix(latitude, longitude, accuracy);
     },
     (err) => {
-      els.geoBtn.disabled = false;
-      setWhereMsg(err.code === 1 ? 'geo.denied' : 'geo.unavailable', 'error');
+      stopGeoWatch();
+      if (gotFix && err.code !== 1) return renderWhereNote(); // есть точка — оставляем лучшую
+      showGeoFailure(err.code);
     },
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
   );
+  geoTimer = setTimeout(() => {
+    stopGeoWatch();
+    if (gotFix) renderWhereNote();
+    else showGeoFailure(3); // как TIMEOUT
+  }, GEO_MAX_WAIT_MS);
 }
 
-function setWhereMsg(key, kind) {
-  state.whereMsg = { key, kind };
+// Разрешение сайту на геопозицию: 'granted' | 'denied' | 'prompt', или null, если браузер не говорит.
+async function geoPermission() {
+  try {
+    return (await navigator.permissions?.query({ name: 'geolocation' }))?.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Включён ли GPS на телефоне, браузер не скажет. Поэтому косвенно: разрешение сайту дано, а точки нет
+// (POSITION_UNAVAILABLE, TIMEOUT или отказ при уже выданном разрешении) — просим проверить настройки телефона.
+// Без Permissions API различаем по коду ошибки: 1 — запрещено, 2 и 3 — не определяется.
+async function showGeoFailure(code) {
+  const { whereMsg, location } = state;
+  const perm = await geoPermission();
+  // Пока ждали ответ, человек мог выбрать ориентир, точку на карте или снова нажать «Моё место».
+  if (state.whereMsg !== whereMsg || state.location !== location || geoWatch !== null) return;
+  const denied = perm === 'denied' || (perm !== 'granted' && code === 1);
+  setWhereMsg(denied ? 'geo.denied' : 'geo.unavailable', 'error', { offerPick: true });
+}
+
+function setWhereMsg(key, kind, { offerPick = false } = {}) {
+  state.whereMsg = { key, kind, offerPick };
   renderWhereNote();
 }
 
 function onPickClick() {
   if (state.picking) return stopPicking();
+  stopGeoWatch(); // точка с карты заменяет GPS: уточнение больше не нужно
   if (!window.h3) return setWhereMsg('h3.missing', 'error');
   const ok = mapView.startPick(
     (lat, lng) => {
@@ -624,8 +747,9 @@ function bindEvents() {
     mapView.setLegendLabels(legendLabels());
     autoGrow();
     if (state.location.type === 'cell') {
-      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
     }
+    mapView.setHereLabel(t('map.here'));
     setBusy(Boolean(state.inflight));
   });
   // Часы на чипе «Сейчас» обновляем раз в минуту.

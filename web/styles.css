@@ -510,6 +510,14 @@ select {
   color: var(--error-ink);
 }
 
+/* «Указать на карте» прямо в сообщении, когда GPS недоступен (нет https, запрет, нет фиксации). */
+.where-note .where-pick {
+  display: inline-flex;
+  vertical-align: baseline;
+  padding: 0 4px;
+  min-height: 28px;
+}
+
 .where-note.is-warn {
   border-left-color: var(--warn-line);
 }

@@ -453,7 +453,7 @@ function renderCard(card, when, ctx) {
         ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
         : null,
     ),
-    renderDirections(card, ctx.origin),
+    renderDirections(card, ctx.origin, ctx.preciseStart),
   );
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
@@ -478,27 +478,43 @@ export function directionsUrls(dest, origin) {
   return { yandex, twogis };
 }
 
-function renderDirections(card, origin) {
+// preciseStart() отдаёт точную GPS-точку (только в памяти страницы) или null.
+// В href всегда лежит старт context.origin; точную точку подставляем лишь в момент клика —
+// сами открываем навигатор, ссылка в DOM не меняется (точки нет в разметке и в предпросмотре).
+function renderDirections(card, origin, preciseStart) {
   const { yandex, twogis } = directionsUrls(card.geo, origin);
   const title = cardTitle(card);
-  const link = (href, app) =>
-    h(
+  const fromHere = Boolean(preciseStart?.());
+  const link = (href, app, key) => {
+    const a = h(
       'a',
       {
         class: 'btn btn-link btn-sm',
         href,
         target: '_blank',
         rel: 'noopener noreferrer',
-        'aria-label': t('dir.aria', { title, app }),
+        'aria-label': t(fromHere ? 'dir.ariaHere' : 'dir.aria', { title, app }),
       },
       app,
     );
+    const open = (e) => {
+      const p = preciseStart?.();
+      if (!p) return; // нет точной точки — обычная ссылка от context.origin
+      e.preventDefault();
+      window.open(directionsUrls(card.geo, p)[key], '_blank', 'noopener,noreferrer');
+    };
+    a.addEventListener('click', open);
+    a.addEventListener('auxclick', (e) => {
+      if (e.button === 1) open(e); // средняя кнопка тоже открывает от вашей точки
+    });
+    return a;
+  };
   return h(
     'div',
     { class: 'directions' },
-    h('span', { class: 'directions-label', text: t('dir.title') }),
-    link(twogis, t('dir.2gis')),
-    link(yandex, t('dir.yandex')),
+    h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
+    link(twogis, t('dir.2gis'), 'twogis'),
+    link(yandex, t('dir.yandex'), 'yandex'),
   );
 }
 

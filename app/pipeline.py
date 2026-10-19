@@ -37,6 +37,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 import h3
 import numpy as np
@@ -979,16 +980,31 @@ def _night_sure(c: Candidate) -> bool:
 
 
 def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:
-    """CORE builds the Russian label («у EXPO», «ваш район (≈0,1 км²) у …»); kk / en here."""
+    """geo builds the Russian label («у EXPO», «ваш район (≈13 га) у …»); kk / en here.
+    The cell area is in hectares, as the browser shows it: an r10 cell is ≈1,8 га, and
+    «≈0,0 км²» said nothing."""
     if lang == "ru":
         return ru_label
     if landmark is not None:
         name = landmark.names.get(lang) or landmark.names.get("ru") or landmark.id
         return f"near {name}" if lang == "en" else f"{name} маңында"
-    area = f"{h3.cell_area(cell, unit='km^2'):.1f}"
+    area = _format_ha(h3.cell_area(cell, unit="km^2") * 100, lang)
     if lang == "en":
-        return f"your area (≈{area} km²)"
-    return f"сіздің ауданыңыз (≈{area.replace('.', ',')} км²)"
+        return f"your area (≈{area} ha)"
+    return f"сіздің ауданыңыз (≈{area} га)"
+
+
+def _format_ha(ha: float, lang: Lang) -> str:
+    """Hectares like web/app.js cellAreaHa (Intl.NumberFormat, maximumFractionDigits 0 from
+    10 ha, else 1): half up, no trailing «,0», groups of thousands; kk «1,8», en «1.8»."""
+    step = Decimal(1) if ha >= 10 else Decimal("0.1")
+    value = Decimal(repr(ha)).quantize(step, rounding=ROUND_HALF_UP)
+    if value == value.to_integral_value():
+        value = value.quantize(Decimal(1))
+    text = f"{value:,}"  # «3,612.5»
+    if lang == "en":
+        return text
+    return text.replace(",", "\u00a0").replace(".", ",")  # 3 612,5 (no-break space)
 
 
 def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime, lang: Lang

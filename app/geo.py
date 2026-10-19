@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 
 import h3
 
-from app.schemas import GeoPoint, Landmark, LocationInput, QueryIntent
+from app.schemas import MAX_H3_RES, GeoPoint, Landmark, Lang, LocationInput, QueryIntent
 
 WALK_SPEED_M_PER_MIN = 75.0  # 4.5 km/h
 DETOUR_FACTOR = 1.3  # straight line -> real streets
 DEFAULT_H3_RES = 9  # ~0.1 km² cell, edge ~200 m
+# Wave 6 (T101): a person's cell may be up to r10 (≈1,8 га in Astana, schemas.MAX_H3_RES);
+# a landmark's cell stays r9 (labels, tests and the context of a landmark do not change).
+LANDMARK_H3_RES = 9
 MIN_RADIUS_M = 400
 MAX_RADIUS_M = 2500
 DEFAULT_RADIUS_M = 1200
@@ -110,29 +114,46 @@ def resolve_origin(
 ) -> tuple[GeoPoint, str, str | None, str]:
     """Return (origin, h3_cell, landmark_id, area_label).
 
-    h3_cell input -> origin = cell centre, area_label like "ваш район (≈0,1 км²)".
-    Cells finer than r9 are rejected with ValueError (privacy: no near-exact points).
-    landmark_id input -> origin = landmark point, h3_cell = to_h3(point), label "у <name>".
-    Unknown landmark id -> raise KeyError (API maps it to HTTP 422).
+    h3_cell input -> origin = cell centre, area_label like "ваш район (≈13 га)" (r9) or
+    "ваш район (≈1,8 га)" (r10). Cells finer than MAX_H3_RES (r10) are rejected with
+    ValueError (privacy: no near-exact points), even if the schema check was skipped.
+    landmark_id input -> origin = landmark point, h3_cell = its LANDMARK_H3_RES (r9) cell,
+    label "у <name>". Unknown landmark id -> raise KeyError (API maps it to HTTP 422).
     """
     if loc.landmark_id is not None:
         lm = landmarks.get(loc.landmark_id)
         if lm is None:
             raise KeyError(f"unknown landmark id: {loc.landmark_id}")
-        return lm.geo, to_h3(lm.geo), lm.id, f"у {_display_name(lm)}"
+        return lm.geo, to_h3(lm.geo, LANDMARK_H3_RES), lm.id, f"у {_display_name(lm)}"
 
     cell = loc.h3_cell
     if cell is None or not h3.is_valid_cell(cell):
         raise ValueError("invalid H3 cell")
-    if h3.get_resolution(cell) > DEFAULT_H3_RES:  # finer cells are effectively raw coordinates
-        raise ValueError(f"H3 cell finer than r{DEFAULT_H3_RES} is not accepted")
+    if h3.get_resolution(cell) > MAX_H3_RES:  # finer cells are effectively raw coordinates
+        raise ValueError(f"H3 cell finer than r{MAX_H3_RES} is not accepted")
     origin = h3_center(cell)
-    area = f"{h3.cell_area(cell, unit='km^2'):.1f}".replace(".", ",")
-    label = f"ваш район (≈{area} км²)"
+    label = f"ваш район (≈{hectares_text(h3.cell_area(cell, unit='km^2'))} га)"
     near = _nearest_landmark(origin, landmarks)
     if near is not None:
         label += f" у {_display_name(near)}"
     return origin, cell, None, label
+
+
+def hectares_text(km2: float, lang: Lang = "ru") -> str:
+    """A cell area in hectares, the number only: «13» (r9), «1,8» (r10; «0,0 км²» would say
+    nothing). Same as the browser (web/app.js cellAreaHa + Intl.NumberFormat with
+    maximumFractionDigits): from 10 ha a whole number, below at most one decimal (no trailing
+    zero), half up; decimal comma for ru / kk, point for en; digit groups like Intl
+    (ru / kk from 10 000 with a no-break space, en from 1 000 with a comma)."""
+    ha = Decimal(km2 * 100)  # the exact float value, as Intl rounds it
+    step = Decimal(1) if ha >= 10 else Decimal("0.1")
+    number = ha.quantize(step, rounding=ROUND_HALF_UP)
+    whole, _, frac = f"{number:f}".partition(".")
+    frac = frac.rstrip("0")
+    en = lang == "en"
+    if len(whole) >= (4 if en else 5):
+        whole = f"{int(whole):,}".replace(",", "," if en else " ")
+    return whole + (("." if en else ",") + frac if frac else "")
 
 
 def radius_for(intent: QueryIntent) -> int:

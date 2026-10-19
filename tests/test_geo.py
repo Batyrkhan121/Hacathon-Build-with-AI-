@@ -7,11 +7,13 @@ import pytest
 
 from app.geo import (
     DEFAULT_RADIUS_M,
+    LANDMARK_H3_RES,
     MAX_RADIUS_M,
     MIN_RADIUS_M,
     h3_center,
     h3_resolution,
     haversine_m,
+    hectares_text,
     match_landmark,
     radius_for,
     resolve_origin,
@@ -123,7 +125,7 @@ def test_resolve_origin_cell_uses_centre_not_raw_point(landmarks: dict[str, Land
     assert out_cell == cell
     assert landmark_id is None
     assert "ваш район" in label
-    assert "≈0,1 км²" in label
+    assert label.startswith("ваш район (≈13 га)"), label  # r9 in Astana: 12,6 ha
     assert "у EXPO" in label  # nearest landmark within walking distance
 
 
@@ -164,10 +166,39 @@ def test_radius_for(kwargs: dict[str, int], radius: int) -> None:
     assert radius_for(QueryIntent(raw_query="погулять", **kwargs)) == radius
 
 
-def test_resolve_origin_rejects_cells_finer_than_r9(landmarks: dict[str, Landmark]) -> None:
-    fine = to_h3(EXPO, res=15)  # ~1 m², effectively a raw coordinate
-    with pytest.raises(ValueError):
-        resolve_origin(LocationInput(h3_cell=fine), landmarks)
-    coarse = to_h3(EXPO, res=8)  # coarser is fine for privacy
-    origin, _, _, _ = resolve_origin(LocationInput(h3_cell=coarse), landmarks)
-    assert origin == h3_center(coarse)
+def test_resolve_origin_rejects_cells_finer_than_r10(landmarks: dict[str, Landmark]) -> None:
+    for res in (11, 15):  # r15 ~1 m²: effectively a raw coordinate
+        fine = to_h3(EXPO, res=res)
+        with pytest.raises(ValueError):  # the schema says no (422) ...
+            LocationInput(h3_cell=fine)
+        with pytest.raises(ValueError, match="r10"):  # ... and geo does not rely on it
+            resolve_origin(LocationInput.model_construct(h3_cell=fine, landmark_id=None),
+                           landmarks)
+    for res in (8, 9, 10):  # coarser cells and r10 are fine
+        cell = to_h3(EXPO, res=res)
+        origin, out_cell, _, _ = resolve_origin(LocationInput(h3_cell=cell), landmarks)
+        assert origin == h3_center(cell) and out_cell == cell
+
+
+def test_resolve_origin_r10_label_in_hectares(landmarks: dict[str, Landmark]) -> None:
+    cell = to_h3(EXPO, res=10)  # 1,79 ha in Astana; «0,0 км²» would say nothing
+    _, _, _, label = resolve_origin(LocationInput(h3_cell=cell), landmarks)
+    assert label.startswith("ваш район (≈1,8 га)"), label
+    far = to_h3(GeoPoint(lat=51.20, lon=71.30), res=10)
+    assert resolve_origin(LocationInput(h3_cell=far), landmarks)[3] == "ваш район (≈1,8 га)"
+
+
+# same as the browser (web/app.js cellAreaHa + Intl.NumberFormat, maximumFractionDigits):
+# from 10 ha a whole number, below one decimal at most (no trailing zero), half up
+@pytest.mark.parametrize(("km2", "lang", "text"), [
+    (0.8793, "ru", "88"), (0.1256, "ru", "13"), (0.0179, "ru", "1,8"), (0.0153, "kk", "1,5"),
+    (0.0179, "en", "1.8"), (0.0200, "ru", "2"), (0.0996, "ru", "10"), (0.125, "ru", "13"),
+    (0.0125, "ru", "1,3"), (125.0, "ru", "12 500"), (125.0, "en", "12,500"),
+    (35.0, "ru", "3500"), (35.0, "en", "3,500")])
+def test_hectares_text_matches_the_browser(km2: float, lang: str, text: str) -> None:
+    assert hectares_text(km2, lang) == text
+
+
+def test_landmark_cell_stays_r9(landmarks: dict[str, Landmark]) -> None:
+    _, cell, _, _ = resolve_origin(LocationInput(landmark_id="expo"), landmarks)
+    assert h3_resolution(cell) == LANDMARK_H3_RES == 9
