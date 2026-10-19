@@ -115,6 +115,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "Уже поздно для прогулки с ребёнком — лучше место в помещении рядом.",
         "night_far": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
                      "показаны ближайшие подтверждённые; лучше доехать на такси.",
+        "night_far_open": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
+                          "показаны ближайшие подтверждённые.",
+        "night_taxi": "Ночью до этих мест дольше {v} мин пешком — пеший маршрут не строим, "
+                      "туда и обратно лучше на такси; выбирайте освещённые людные места.",
         "group": "Для компании из {n} человек: столик в кафе лучше уточнить заранее.",
         "f_night_clock": "ночь (по времени)",
         "widened": "Рядом мало вариантов — радиус поиска расширен до {r} м.",
@@ -184,6 +188,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "Баламен серуендеуге кеш — жақын жердегі жабық орынды таңдаған дұрыс.",
         "night_far": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
                      "орындар көрсетілді; таксимен барған дұрыс.",
+        "night_far_open": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
+                          "орындар көрсетілді.",
+        "night_taxi": "Түнде бұл орындарға жаяу {v} минуттан ұзақ — жаяу маршрут құрмаймыз, "
+                      "барып-қайту үшін такси дұрыс; жарық әрі адамы көп жерлерді таңдаңыз.",
         "group": "{n} адамдық топқа: кафеде үстелді алдын ала нақтылаңыз.",
         "f_night_clock": "түн (уақыт бойынша)",
         "widened": "Жақын жерде нұсқа аз — іздеу радиусы {r} м-ге дейін ұлғайтылды.",
@@ -250,6 +258,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "It is late for a walk with a child — an indoor place nearby is better.",
         "night_far": "No surely-open place within a 15-minute walk tonight — showing the "
                      "nearest confirmed ones; better take a taxi.",
+        "night_far_open": "No surely-open place within a 15-minute walk tonight — showing the "
+                          "nearest confirmed ones.",
+        "night_taxi": "At night these places are over {v} min on foot — no walking route; "
+                      "better take a taxi there and back, and choose well-lit, busy places.",
         "group": "For a group of {n}: check table availability at cafes in advance.",
         "f_night_clock": "night (by the clock)",
         "widened": "Few options nearby — search radius widened to {r} m.",
@@ -693,10 +705,17 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     graph_note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
                                   wheelchair=intent.wheelchair, graph=True)
     # At a transport hub people pick one place to wait: a tour of three cafes makes no sense.
+    # At night with every place over the walking limit (E2: 02:30, 29 and 33 min away) a long
+    # walking route is bad advice: no route, the cards stay, the taxi is advised once.
+    night_taxi = _night_taxi(plan_intent, cards)
+    if night_taxi:
+        over = t["graph_over_limit"].format(v=plan_intent.max_walk_min)
+        warn[:] = [t["night_far_open"] if w == t["night_far"] else w
+                   for w in warn if w != over]
     mini_route, route_broke = _route(ctx, cards, candidates, search_intent,
-                                     req.want_route and not at_hub, request_id, loop=walk_loop,
-                                     note=note, graph=graph, mode=walk_mode,
-                                     graph_note=graph_note)
+                                     req.want_route and not at_hub and not night_taxi,
+                                     request_id, loop=walk_loop, note=note, graph=graph,
+                                     mode=walk_mode, graph_note=graph_note)
     if route_broke:
         warn.append(t["route_failed"])
 
@@ -709,7 +728,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         # first: the deadline matters more than any other warning (POLISH request)
         warn.insert(0, _airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
     warn.extend(_context_warnings(t, plan_intent, cards, candidates, mini_route, at_hub=at_hub,
-                                  flight=flight, deadline_given=walk_budget is not None))
+                                  flight=flight, deadline_given=walk_budget is not None,
+                                  night_taxi=night_taxi))
     if summary is None:
         summary = _template_summary(t, len(cards))
     if no_time:
@@ -1036,6 +1056,12 @@ def _retrieve(
         return [], True
 
 
+def _night_taxi(intent: QueryIntent, cards: list[Card]) -> bool:
+    """Night and every card over the walking limit (graph or straight minutes, as shown)."""
+    limit = intent.max_walk_min
+    return bool(intent.night and limit and cards and all(c.walk_min > limit for c in cards))
+
+
 def _walk_graph(settings: Settings, request_id: str) -> walkgraph.WalkGraph | None:
     """The walk graph when WALK_GRAPH is on and the file is there; None on any problem."""
     if not settings.walk_graph_ready:
@@ -1123,6 +1149,7 @@ def _context_warnings(
     at_hub: bool = False,
     flight: bool = False,
     deadline_given: bool = False,
+    night_taxi: bool = False,
 ) -> list[str]:
     out: list[str] = []
     unknown = sum(1 for c in cards if c.open_status == "unknown")
@@ -1131,7 +1158,7 @@ def _context_warnings(
     elif unknown > 1:
         out.append(t["hours_unknown_n"].format(n=unknown))
     if intent.night:
-        out.append(t["night"])
+        out.append(t["night_taxi"].format(v=intent.max_walk_min) if night_taxi else t["night"])
         if intent.with_kids:
             out.append(t["kids_night"])
     if intent.wheelchair and cards:
