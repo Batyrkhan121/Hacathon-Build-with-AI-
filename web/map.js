@@ -1,5 +1,5 @@
 // Карта Leaflet: старт (ориентир или H3-ячейка), места из ответа и мини-маршрут.
-// Точную точку пользователя карта не показывает: только полигон его H3-ячейки.
+// GPS stays in browser memory; the server receives only the H3 cell or landmark.
 
 const ASTANA = [51.128, 71.43];
 // Стандартные тайлы OSM: CARTO basemaps с 2026 года отдают без ключа заглушку «API KEY REQUIRED».
@@ -13,6 +13,8 @@ let hereLayer; // «вы здесь»: точная точка GPS, только
 let answerLayer;
 let directLayer;
 let routeLine = null;
+let stepLayer;
+let stepPath = [];
 let originPoint = null;
 const stopMarkers = new Map(); // rank -> marker
 let pickHandler = null;
@@ -27,16 +29,21 @@ export function initMap(el) {
   hereLayer = L.layerGroup().addTo(map);
   answerLayer = L.layerGroup().addTo(map);
   directLayer = L.layerGroup().addTo(map);
+  const pane = map.createPane('routeSteps');
+  pane.style.zIndex = '410';
+  pane.style.pointerEvents = 'none';
+  stepLayer = L.layerGroup().addTo(map);
+  map.on('zoomend viewreset resize', drawRouteSteps);
   return true;
 }
 
-function stopIcon(rank, ideaSource) {
+function stopIcon(rank, ideaSource, first) {
   return L.divIcon({
-    className: `stop-icon is-${ideaSource}`,
+    className: `stop-icon is-${ideaSource}${first ? ' is-first' : ''}`,
     // v2.1 (эталон): золотой шестиугольник с контуром --ink; номер — textContent, без HTML из данных
     html: document.body.classList.contains('v2') ? hexStop(rank) : `<span>${Number(rank)}</span>`,
-    iconSize: [30, 34],
-    iconAnchor: [15, 17],
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
     popupAnchor: [0, -16],
   });
 }
@@ -200,13 +207,14 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
     );
     // graph: путь по тротуарам — сплошной; straight: прямые отрезки — пунктир (это оценка, не дорога).
     routeLine = L.polyline(latlngs, {
-      color: '#0a6e87',
-      weight: graph ? 5 : 4,
-      dashArray: graph ? null : '2 9',
+      color: '#9dbbe9',
+      weight: 7,
+      dashArray: graph ? null : '12 8',
       lineCap: 'round',
       lineJoin: 'round',
     }).addTo(answerLayer);
     routeLine.bindTooltip(lineTooltip(routeLabel, graph ? legend.graph : legend.straight), { sticky: true });
+    stepPath = latlngs;
     const crossings = graph ? route.crossings || [] : [];
     for (const c of crossings) {
       if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked
@@ -226,7 +234,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   for (const card of answer.cards) {
     const ll = [card.geo.lat, card.geo.lon];
     const marker = L.marker(ll, {
-      icon: stopIcon(card.rank, card.idea_source),
+      icon: stopIcon(card.rank, card.idea_source, answer.route?.stop_ids?.[0] === card.poi_id),
       // Цвет метки (золото / лаванда) дублируем словами: «Данные POI» или «Идея ИИ».
       title: markerLabel(card),
       alt: markerLabel(card),
@@ -245,6 +253,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   if (pts.length) {
     map.fitBounds(L.latLngBounds(pts), fitOptions(48));
   }
+  drawRouteSteps();
 }
 
 export function clearAnswer() {
@@ -252,6 +261,8 @@ export function clearAnswer() {
   directLayer?.clearLayers();
   stopMarkers.clear();
   routeLine = null;
+  stepPath = [];
+  stepLayer?.clearLayers();
   hideLineLegend();
 }
 
@@ -275,12 +286,14 @@ export function showRoute(rank, legend) {
   const marker = stopMarkers.get(rank);
   if (!marker || !originPoint) return;
   const line = L.polyline([originPoint, marker.getLatLng()], {
-    color: '#0a6e87',
-    weight: 4,
-    dashArray: '2 9',
+    color: '#9dbbe9',
+    weight: 7,
+    dashArray: '12 8',
     lineCap: 'round',
   }).addTo(directLayer);
   line.bindTooltip(lineTooltip(legend.straight), { sticky: true });
+  stepPath = [originPoint, marker.getLatLng()];
+  drawRouteSteps();
   showLegend({ solid: false, kinds: [] }, legend);
   map.fitBounds(line.getBounds(), fitOptions(60));
 }
@@ -424,4 +437,40 @@ export function stopPick() {
 
 export function reducedMotion() {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+// Decorative direction cues use the returned path, never the GPS position or an invented route.
+// Screen-space spacing keeps the graph's short segments from creating dense clusters.
+function drawRouteSteps() {
+  stepLayer?.clearLayers();
+  if (!map || stepPath.length < 2) return;
+  const points = stepPath.map(p => map.project(L.latLng(p)));
+  const stops = [...stopMarkers.values()].map(m => map.project(m.getLatLng()));
+  if (originPoint) stops.push(map.project(L.latLng(originPoint)));
+  const segments = points.slice(1).map((p, i) => ({ a: points[i], b: p, length: points[i].distanceTo(p) }));
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+  if (total < 64) return;
+  const spacing = Math.max(36, total / 120);
+  let walked = 0, next = spacing / 2, index = 0;
+  for (const segment of segments) {
+    if (segment.length < .01) continue;
+    const dx = (segment.b.x - segment.a.x) / segment.length;
+    const dy = (segment.b.y - segment.a.y) / segment.length;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    while (next < walked + segment.length) {
+      const d = next - walked;
+      const point = L.point(segment.a.x + dx * d, segment.a.y + dy * d);
+      next += spacing;
+      if (stops.some(stop => stop.distanceTo(point) < 32)) continue;
+      const side = index++ % 2 ? 1 : -1;
+      const offset = point.add(L.point(-dy * 1.5 * side, dx * 1.5 * side));
+      const icon = L.divIcon({
+        className: 'route-step', iconSize: [14, 28], iconAnchor: [7, 14],
+        html: `<span style="transform:rotate(${angle}deg)"><img src="assets/search-sole.svg" alt="" style="--step-delay:${(next / total * 2.4).toFixed(3)}s;--step-side:${side}" width="12" height="25"></span>`,
+      });
+      const marker = L.marker(map.unproject(offset), { icon, pane: 'routeSteps', interactive: false, keyboard: false }).addTo(stepLayer);
+      marker.getElement()?.setAttribute('aria-hidden', 'true');
+    }
+    walked += segment.length;
+  }
 }

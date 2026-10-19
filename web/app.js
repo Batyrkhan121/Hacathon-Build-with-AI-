@@ -18,7 +18,7 @@ const BUDGETS = [30, 60, 120];
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
 const FLAGS = [...MODES, ...FILTER_FLAGS];
-const MODE_ICON = { tourist: '✈', night: '🌙', with_kids: '🧒', wheelchair: '♿', group: '👥' };
+const MODE_ICON = { tourist: 'airplane', night: 'moon', with_kids: 'child', wheelchair: 'accessibility', group: 'group' };
 const DEPARTURES = [90, 120, 180, 240]; // минут до вылета (контракт: 30–1440)
 const DEFAULT_DEPARTURE = 120;
 const GROUP_SIZE = 4; // «нас 3–5»
@@ -49,6 +49,8 @@ const state = {
   lastAnswer: null,
   lastError: null,
   meta: null,
+  screen: 'home',
+  mapReturnFocus: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -84,6 +86,9 @@ const els = {
   askNearText: $('ask-near-text'),
   whereToggle: $('where-toggle'),
   whereBox: $('where'),
+  querySummary: $('query-summary'),
+  editReturn: $('edit-return'),
+  mapClose: $('map-close'),
 };
 
 // ------------------------------------------------------------------ helpers
@@ -158,6 +163,53 @@ function whereLabel() {
   return landmarkName(landmarkById(state.location.id)) || state.location.id;
 }
 
+// Presentation state only: request building, GPS privacy and API handling stay below.
+function setScreen(screen) {
+  state.screen = screen;
+  document.body.classList.toggle('home-view', screen === 'home');
+  document.body.classList.toggle('result-view', screen === 'result');
+  document.body.classList.toggle('edit-view', screen === 'edit');
+  document.querySelector('.controls').hidden = screen === 'result';
+  els.results.hidden = screen !== 'result';
+  els.editReturn.hidden = screen !== 'edit';
+  els.querySummary.hidden = screen !== 'result';
+  document.querySelector('.skip').href = screen === 'result' ? '#results' : '#query';
+  requestAnimationFrame(() => mapView.invalidate());
+}
+
+function syncConditions() {
+  $('condition-budget').textContent = state.budget ? t(`budget.${state.budget}`) : t('guide.autoBudget');
+  $('condition-time').textContent = state.time
+    ? `${state.day ? `${t('when.tomorrow')} · ` : ''}${state.time}`
+    : (state.day ? `${t('when.tomorrow')} · ${t('when.sameTime')}` : t('when.now'));
+  $('budget-toggle').setAttribute('aria-expanded', String(els.refine.open));
+  $('time-toggle').setAttribute('aria-expanded', String(els.refine.open));
+  $('map-area').textContent = whereLabel();
+}
+
+function syncSubmittedQuery() {
+  $('submitted-query').textContent = state.lastRequest?.query || els.query.value;
+  const at = state.lastRequest?.at;
+  const budget = state.lastAnswer?.intent?.time_budget_min;
+  $('submitted-conditions').textContent = [requestOriginName(), budget ? t('guide.minute', { n: budget }) : '', at?.slice(11, 16)].filter(Boolean).join(' · ');
+}
+
+function closeMap({ focus = true } = {}) {
+  document.body.classList.remove('map-open');
+  els.mapClose.hidden = true;
+  showBackToCard(null);
+  mapView.invalidate();
+  if (focus && state.mapReturnFocus?.isConnected) state.mapReturnFocus.focus({ preventScroll: true });
+  state.mapReturnFocus = null;
+}
+
+function openRefinement(target) {
+  els.refine.open = true;
+  syncConditions();
+  document.querySelector(target)?.focus({ preventScroll: true });
+  document.querySelector(target)?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+}
+
 // ------------------------------------------------------------------ request
 
 function buildRequest(query, useLlm = true) {
@@ -199,6 +251,10 @@ async function submit({ useLlm = true } = {}) {
   state.inflight?.abort();
   const ctrl = new AbortController();
   state.inflight = ctrl;
+  closeMap({ focus: false });
+  setScreen('result');
+  $('submitted-query').textContent = query;
+  $('submitted-conditions').textContent = loadingContext().join(' · ');
   setBusy(true);
   setStale(false);
   mapView.clearAnswer();
@@ -264,7 +320,7 @@ function loadingContext() {
 function restoreResults() {
   if (state.lastAnswer) renderAnswer();
   else if (state.lastError) renderError();
-  else renderIntro();
+  else { renderIntro(); setScreen('home'); }
 }
 
 function renderIntro() {
@@ -296,9 +352,10 @@ function showFormError(text) {
 }
 
 function revealResults() {
-  const wide = window.matchMedia('(min-width: 1280px)').matches;
-  if (wide) return; // результаты в своей колонке, уже видны
-  els.results.scrollIntoView({ behavior: mapView.reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  const panel = document.querySelector('.panel');
+  panel.scrollTop = 0;
+  if (window.matchMedia('(max-width: 999px)').matches) window.scrollTo({ top: 0, behavior: 'auto' });
+  els.results.focus({ preventScroll: true });
 }
 
 // ------------------------------------------------------------------ rendering
@@ -306,6 +363,7 @@ function revealResults() {
 function renderAnswer({ redrawMap = true } = {}) {
   const answer = state.lastAnswer;
   if (!answer) return;
+  syncSubmittedQuery();
   view.renderAnswer(els.answer, answer, {
     request: state.lastRequest,
     meta: state.meta,
@@ -314,6 +372,11 @@ function renderAnswer({ redrawMap = true } = {}) {
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
+    onStop: (rank) => {
+      view.highlightCard(rank);
+      mapView.highlightStop(rank);
+      document.getElementById(`card-${rank}`)?.focus({ preventScroll: true });
+    },
     onClearFilters: () => {
       clearFilters();
       submit();
@@ -327,7 +390,8 @@ function renderAnswer({ redrawMap = true } = {}) {
     popupFor: view.popupFor,
     onSelect: (rank) => {
       mapView.highlightStop(rank);
-      view.highlightCard(rank);
+      if (document.body.classList.contains('map-open')) showBackToCard(rank);
+      else view.highlightCard(rank);
     },
     routeLabel: route
       ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
@@ -348,25 +412,31 @@ function renderError() {
 }
 
 function focusQuery({ select = false } = {}) {
+  closeMap({ focus: false });
+  setScreen('edit');
   els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
   els.query.focus();
   if (select) els.query.select();
 }
 
 function focusOnMap(rank) {
-  mapView.focusStop(rank);
   scrollMapIntoView(rank);
+  mapView.focusStop(rank);
 }
 
 function showRoute(rank) {
-  mapView.showRoute(rank, legendLabels());
   scrollMapIntoView(rank);
+  mapView.showRoute(rank, legendLabels());
 }
 
 function scrollMapIntoView(rank) {
-  if (window.matchMedia('(max-width: 899px)').matches) {
-    document.querySelector('.map-wrap').scrollIntoView({ behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+  if (window.matchMedia('(max-width: 999px)').matches) {
+    state.mapReturnFocus = document.activeElement;
+    document.body.classList.add('map-open');
+    els.mapClose.hidden = false;
+    mapView.invalidate();
     showBackToCard(rank);
+    els.mapClose.focus({ preventScroll: true });
   }
 }
 
@@ -375,7 +445,7 @@ function showBackToCard(rank) {
   els.backToCard.hidden = state.backRank === null;
   if (state.backRank === null) return;
   // стрелка — только визуальная подсказка направления, скринридер читает лишь текст
-  const arrow = Object.assign(document.createElement('span'), { textContent: '↓' });
+  const arrow = Object.assign(document.createElement('i'), { className: 'ui-chevron back-chevron' });
   arrow.setAttribute('aria-hidden', 'true');
   els.backToCard.replaceChildren(arrow, t('map.backToCard', { n: state.backRank }));
 }
@@ -388,9 +458,10 @@ function renderPresets() {
       btn.className = 'preset';
       btn.setAttribute('aria-pressed', String(state.activePreset === p.id));
       btn.title = t(`preset.${p.id}.query`);
-      const tag = document.createElement('span');
-      tag.className = 'preset-tag';
-      tag.textContent = p.id;
+      const tag = Object.assign(document.createElement('img'), {
+        src: `assets/icons/${({ S1: 'walking', S2: 'clock', S3: 'child', S4: 'airplane', S5: 'moon' })[p.id]}.svg`,
+        alt: '', width: 18, height: 18,
+      });
       const label = document.createElement('span');
       label.textContent = t(`preset.${p.id}.label`);
       btn.append(tag, label);
@@ -427,7 +498,7 @@ function renderChips() {
   els.modeChips.replaceChildren(
     ...MODES.map((f) => {
       const b = chip(t(`flag.${f}`), state.flags[f], toggle(f));
-      b.prepend(Object.assign(document.createElement('span'), { className: 'chip-icon', textContent: MODE_ICON[f] }));
+      b.prepend(Object.assign(document.createElement('img'), { className: 'chip-icon', src: `assets/icons/${MODE_ICON[f]}.svg`, alt: '', width: 18, height: 18 }));
       b.firstChild.setAttribute('aria-hidden', 'true');
       return b;
     }),
@@ -483,11 +554,12 @@ function renderChips() {
     });
     els.refineCount.append(dot, sr);
   }
+  syncConditions();
 }
 
 function syncRefineOpen() {
   // v2: «Уточнить» сворачивается и на широком экране (машина времени и фильтры — не на основном экране)
-  if (document.body.classList.contains('v2')) return;
+  if (document.body.classList.contains('city-guide') || document.body.classList.contains('v2')) return;
   if (window.matchMedia('(min-width: 900px)').matches) els.refine.open = true;
 }
 
@@ -511,7 +583,7 @@ function renderLandmarkSelect() {
   ];
   const nodes = [];
   if (state.location.type === 'cell') {
-    const opt = new Option(`⬡ ${t('where.cellOption')}`, '__cell', true, true);
+    const opt = new Option(t('where.cellOption'), '__cell', true, true);
     nodes.push(opt);
   }
   for (const g of groups) {
@@ -529,7 +601,8 @@ function renderLandmarkSelect() {
 
 function renderWhereNote() {
   // v2.1: «Рядом с: {место}» у кнопки — видно, откуда ищем, даже когда «Где я» свёрнуто
-  els.askNearText.textContent = t('query.near', { where: whereLabel() });
+  els.askNearText.textContent = whereLabel();
+  syncConditions();
   const note = els.whereNote;
   note.className = 'where-note';
   if (state.whereMsg) {
@@ -719,6 +792,7 @@ function onPickClick() {
       state.picking = false;
       syncPickButton();
       setCellFromPoint(lat, lng);
+      closeMap();
     },
     { label: t('pick.banner'), cancelLabel: t('pick.cancel'), onCancel: stopPicking },
   );
@@ -795,7 +869,7 @@ function bindEvents() {
   });
   els.staleBtn.addEventListener('click', () => submit());
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') stopPicking();
+    if (e.key === 'Escape') { stopPicking(); closeMap(); }
   });
   document.querySelectorAll('.lang button').forEach((b) => {
     b.addEventListener('click', () => setLang(b.dataset.lang));
@@ -803,12 +877,16 @@ function bindEvents() {
   onLangChange(() => {
     syncLangButtons();
     renderAll();
-    if (state.lastAnswer) renderAnswer({ redrawMap: false });
+    if (state.inflight) {
+      view.renderLoading(els.answer, { onCancel: cancelRequest, context: loadingContext() });
+      setStatus(t('status.loading', { where: whereLabel() }), 'loading');
+    } else if (state.lastAnswer) renderAnswer({ redrawMap: false });
     else if (state.lastError) renderError();
     else if (!state.inflight) renderIntro();
     if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
     mapView.setLegendLabels(legendLabels());
     autoGrow();
+    if (!state.inflight) syncSubmittedQuery();
     if (state.location.type === 'cell') {
       mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
     }
@@ -819,7 +897,10 @@ function bindEvents() {
   setInterval(() => {
     if (!state.time) renderChips();
   }, 60000);
-  window.addEventListener('resize', () => mapView.invalidate());
+  window.addEventListener('resize', () => {
+    if (window.matchMedia('(min-width: 1000px)').matches) closeMap({ focus: false });
+    mapView.invalidate();
+  });
 }
 
 function syncLangButtons() {
@@ -835,9 +916,13 @@ function renderAll() {
   renderLandmarkSelect();
   renderWhereNote();
   showBackToCard(state.backRank);
+  document.querySelector('.skip').href = state.screen === 'result' ? '#results' : '#query';
 }
 
 async function init() {
+  new ResizeObserver(([entry]) => {
+    document.body.style.setProperty('--header-height', `${entry.target.getBoundingClientRect().height}px`);
+  }).observe(document.querySelector('.site-header'));
   applyI18n();
   syncLangButtons();
   els.mockPill.hidden = !isMock;
@@ -849,16 +934,23 @@ async function init() {
   }
   bindEvents();
   // v2.1: «Где я» свёрнуто за «Изменить»; поле подписано заголовком «Куда пойдём?»
-  els.whereToggle.addEventListener('click', () => {
-    const open = !els.whereBox.classList.contains('is-open');
-    els.whereBox.classList.toggle('is-open', open);
+  const toggleWhere = (open) => {
+    els.whereBox.hidden = !open;
     els.whereToggle.setAttribute('aria-expanded', String(open));
     if (open) els.landmark?.focus();
-  });
-  if (document.body.classList.contains('v2')) els.query.setAttribute('aria-labelledby', 'hero-title');
+  };
+  els.whereToggle.addEventListener('click', () => toggleWhere(els.whereBox.hidden));
+  $('where-done').addEventListener('click', () => { toggleWhere(false); els.whereToggle.focus(); });
+  $('budget-toggle').addEventListener('click', () => openRefinement('#budget-chips button'));
+  $('time-toggle').addEventListener('click', () => openRefinement('#time-input'));
+  els.refine.addEventListener('toggle', syncConditions);
+  $('refine-done').addEventListener('click', () => { els.refine.open = false; $('budget-toggle').focus(); });
+  els.querySummary.addEventListener('click', () => focusQuery());
+  els.editReturn.addEventListener('click', () => { setScreen('result'); els.querySummary.focus(); });
+  els.mapClose.addEventListener('click', () => { stopPicking(); closeMap(); });
   els.backToCard.addEventListener('click', () => {
     const rank = state.backRank;
-    showBackToCard(null);
+    closeMap({ focus: false });
     if (rank === null) return;
     // начало карточки к верху экрана: при «nearest» длинная карточка осталась бы с середины
     view.highlightCard(rank); // подсветка; её прокрутку «nearest» перебивает следующая строка
@@ -873,6 +965,7 @@ async function init() {
   window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
   renderAll();
   renderIntro();
+  setScreen('home');
 
   try {
     state.landmarks = await fetchLandmarks();

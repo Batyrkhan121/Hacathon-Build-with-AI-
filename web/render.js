@@ -18,29 +18,6 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-const CATEGORY_ICON = {
-  cafe: '☕',
-  restaurant: '🍽️',
-  fast_food: '🍔',
-  bar: '🍸',
-  nightlife: '🌙',
-  museum: '🏛️',
-  gallery: '🖼️',
-  theatre: '🎭',
-  cinema: '🎬',
-  library: '📚',
-  park: '🌳',
-  playground: '🎠',
-  viewpoint: '🔭',
-  attraction: '🎡',
-  monument: '🗿',
-  religious: '🛐',
-  mall: '🛍️',
-  sport: '⚽',
-  entertainment: '🎳',
-  other: '📍',
-};
-
 // В OSM 110 из 111 площадок без имени: пайплайн подставляет родовое название.
 const GENERIC_TITLES = new Set(['детская площадка', 'балалар алаңы', 'playground', 'площадка']);
 
@@ -134,6 +111,8 @@ export function renderLoading(root, { onCancel, context = [] } = {}) {
     h(
       'div',
       { class: 'loading', 'aria-label': t('loading.label') },
+      h('div', { class: 'search-steps', 'aria-hidden': 'true' },
+        [0, 1, 2, 3].map((n) => h('img', { src: 'assets/search-sole.svg', alt: '', width: 15, height: 30, style: `--step:${n}` }))),
       onCancel
         ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
         : null,
@@ -141,13 +120,13 @@ export function renderLoading(root, { onCancel, context = [] } = {}) {
       context.length
         ? h(
             'p',
-            { class: 'loading-context v2-only' },
+            { class: 'loading-context' },
             h('span', { class: 'loading-context-label', text: t('loading.context') }),
             context.map((c) => h('span', { class: 'loading-chip', text: c })),
           )
         : null,
       h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
-      h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),
+      h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel()),
     ),
   );
 }
@@ -207,12 +186,33 @@ export function renderAnswer(root, answer, ctx) {
   const when = whenOf(ctx.request, answer);
   const byId = new Map(answer.cards.map((c) => [c.poi_id, c]));
   const noAi = answer.data_used?.generation === 'template';
+  // The planner may keep only a subset of recommendations to fit the time budget.
+  // Preserve its explicit sequence; extra cards are alternatives, not included stops.
+  const stopIds = answer.route?.stop_ids ?? answer.route?.legs.map(leg => leg.to_id).filter(id => id !== 'origin') ?? [];
+  const routed = [...new Set(stopIds)].map(id => byId.get(id)).filter(Boolean);
+  const routedIds = new Set(routed.map(card => card.poi_id));
+  const alternatives = answer.cards.filter(card => !routedIds.has(card.poi_id));
+  const hasRoute = Boolean(answer.route && routed.length);
+  const cards = (items, className) => h('ol', { class: `cards ${className}` },
+    items.map(card => renderCard(card, when, { ...ctx, origin: answer.context?.origin })));
 
   const head = h(
     'div',
     { class: 'answer-head' },
+    h('div', { class: 'result-heading' },
+      h('h2', { text: t(hasRoute ? 'guide.journey' : 'guide.nearby') }),
+      answer.cards.length ? h('button', { class: 'btn map-toggle', type: 'button', onclick: () => ctx.onRoute(null) }, t('guide.map')) : null),
+    answer.cards.length ? h('p', { class: 'answer-count' },
+      hasRoute ? t('guide.total', { min: answer.route.total_min, dist: formatDistance(answer.route.total_walk_m) }) : null,
+      hasRoute ? ' · ' : null, t(hasRoute ? 'guide.stops' : 'guide.places', { n: hasRoute ? routed.length : answer.cards.length })) : null,
+    hasRoute && answer.route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
     h('p', { class: 'summary', text: answer.summary }),
     noAi ? h('span', { class: 'pill pill-noai', text: t('answer.noAi') }) : null,
+    routed.length > 1 ? h('nav', { class: 'walk-overview', 'aria-label': t('route.title') },
+      routed.map((c) => h('button', { type: 'button', class: 'walk-stop',
+        'aria-label': t('guide.stop', { n: c.rank, title: cardTitle(c) }), onclick: () => ctx.onStop(c.rank) },
+        h('span', { class: 'walk-stop-number', 'aria-hidden': 'true', text: c.rank }),
+        h('span', {}, h('strong', { text: cardTitle(c) }), h('small', { text: t('card.visit', { lo: c.visit_min_low, hi: c.visit_min_high }) }))))) : null,
   );
 
   const warnings = answer.warnings?.length
@@ -225,12 +225,11 @@ export function renderAnswer(root, answer, ctx) {
 
   const body = answer.cards.length
     ? [
-        answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
-        h(
-          'ol',
-          { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, when, { ...ctx, origin: answer.context?.origin })),
-        ),
+        hasRoute ? cards(routed, 'routed-cards') : cards(answer.cards, 'recommendations'),
+        hasRoute ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
+        hasRoute && alternatives.length ? h('section', { class: 'alternatives' },
+          h('h3', { text: t('guide.alternatives') }), h('p', { text: t('guide.alternativesHint') }),
+          cards(alternatives, 'alternative-cards')) : null,
       ]
     : [renderEmpty(ctx)];
 
@@ -349,7 +348,7 @@ function renderRoute(route, byId, ctx, originName) {
   const graph = route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null;
   return h(
     'details',
-    { class: 'route', open: window.matchMedia('(min-width: 900px)').matches },
+    { class: 'route' },
     h(
       'summary',
       { class: 'route-head' },
@@ -378,105 +377,39 @@ function renderCard(card, when, ctx) {
   const pct = Math.round((card.data_confidence ?? 0) * 100);
   const site = card.website ? safeUrl(card.website) : null;
   const unnamed = isUnnamed(card);
-
-  const li = h(
-    'li',
-    { class: 'card', id: `card-${card.rank}`, 'data-rank': card.rank },
-    h(
-      'div',
-      { class: 'card-head' },
-      h('span', { class: `rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
-      h(
-        'div',
-        { class: 'card-title-wrap' },
-        h(
-          'h3',
-          { class: 'card-title' },
-          h('span', { class: 'visually-hidden', text: `${card.rank}. ` }),
-          cardTitle(card),
-        ),
-        h(
-          'p',
-          { class: 'card-cat' },
-          h('span', { 'aria-hidden': 'true', text: CATEGORY_ICON[card.category] || CATEGORY_ICON.other }),
-          // У безымянного места заголовок и так равен категории — не повторяем её.
-          unnamed
-            ? h('span', { class: 'unnamed', text: ` ${t('card.unnamed')}` })
-            : ` ${categoryLabel(card.category)}`,
-        ),
-      ),
-    ),
-    h(
-      'p',
-      { class: 'card-facts' },
-      h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
-      h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
-      // v2.1: статус часов — в строке фактов (тот же текст и та же логика, что у бейджа; бейдж скрыт в v2)
-      h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
-    ),
+  const details = h('details', { class: 'card-details' },
+    h('summary', {}, t('guide.details')),
+    h('dl', { class: 'card-more-text' }, h('dt', { text: t('card.what') }), h('dd', { text: card.what_to_do })),
     card.address ? h('p', { class: 'card-address', text: card.address }) : null,
-    h(
-      'div',
-      { class: 'badges' },
-      h('span', {
-        class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`,
-        title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
-        text: poi ? t('badge.poi') : t('badge.ai'),
-      }),
-      h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
-    ),
-    h('p', { class: `hours-note is-${badge.cls}`, text: card.open_note || t('hours.noData') }),
+    card.tags?.length ? h('ul', { class: 'tags', 'aria-label': t('card.tags') }, card.tags.slice(0, 6).map((tag) => h('li', { text: tagLabel(tag) }))) : null,
     poi ? null : h('p', { class: 'ai-note', text: t('badge.aiTitle') }),
-    h(
-      'dl',
-      { class: 'card-text' },
-      h('dt', { text: t('card.why') }),
-      h('dd', { text: card.why }),
-      h('dt', { text: t('card.what') }),
-      h('dd', { text: card.what_to_do }),
-    ),
-    card.tags?.length
-      ? h(
-          'ul',
-          { class: 'tags', 'aria-label': t('card.tags') },
-          card.tags.slice(0, 6).map((tag) => h('li', { text: tagLabel(tag) })),
-        )
-      : null,
-    // Главное действие критического пути — «Как пройти»: сразу после «почему / что делать».
-    renderDirections(card, ctx.origin, ctx.preciseStart, poi),
-    h(
-      'div',
-      { class: 'card-meta' },
-      h(
-        'div',
-        { class: 'confidence' },
+    h('div', { class: 'card-meta' },
+      h('div', { class: 'confidence' },
         h('span', { class: 'confidence-label', text: t('card.confidence') }),
-        h(
-          'span',
-          {
-            class: 'bar',
-            role: 'meter',
-            'aria-valuemin': 0,
-            'aria-valuemax': 100,
-            'aria-valuenow': pct,
-            'aria-label': t('card.confidence'),
-          },
-          h('i', { class: pct >= 70 ? 'is-high' : pct >= 40 ? 'is-mid' : 'is-low', style: `width:${pct}%` }),
-        ),
-        h('span', { class: 'confidence-val', text: `${pct}%` }),
-      ),
-      h('p', { class: 'sources', text: `${t('card.sources')} ${card.facts_sources.map(sourceName).join(' · ')}` }),
-    ),
-    h(
-      'div',
-      { class: 'card-actions' },
-      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
-      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')),
-      site
-        ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
-        : null,
-    ),
-  );
+        h('span', { class: 'bar', role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct, 'aria-label': t('card.confidence') },
+          h('i', { class: pct >= 70 ? 'is-high' : pct >= 40 ? 'is-mid' : 'is-low', style: `width:${pct}%` })),
+        h('span', { class: 'confidence-val', text: `${pct}%` })),
+      h('p', { class: 'sources', text: `${t('card.sources')} ${card.facts_sources.map(sourceName).join(' · ')}` })),
+    site ? h('a', { class: 'btn btn-link', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site')) : null);
+  const li = h('li', { class: 'card', id: `card-${card.rank}`, 'data-rank': card.rank, tabindex: '-1' },
+    h('div', { class: 'card-head' },
+      h('span', { class: 'rank', 'aria-hidden': 'true', text: card.rank }),
+      h('div', { class: 'card-title-wrap' },
+        h('h3', { class: 'card-title' }, h('span', { class: 'visually-hidden', text: `${card.rank}. ` }), cardTitle(card)),
+        h('p', { class: 'card-cat', text: unnamed ? t('card.unnamed') : categoryLabel(card.category) }))),
+    h('dl', { class: 'card-text stop-reason' }, h('dt', { class: 'visually-hidden', text: t('card.why') }), h('dd', { text: card.why })),
+    h('p', { class: 'card-facts' },
+      h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
+      h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) })),
+    h('div', { class: 'badges' },
+      h('span', { class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`, title: t(poi ? 'badge.poiTitle' : 'badge.aiTitle'), text: t(poi ? 'badge.poi' : 'badge.ai') }),
+      h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text })),
+    h('p', { class: `hours-note is-${badge.cls}`, text: card.open_note || t('hours.noData') }),
+    renderDirections(card, ctx.origin, ctx.preciseStart, poi),
+    h('div', { class: 'card-tools' }, details,
+      h('div', { class: 'card-actions' },
+        h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
+        h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')))));
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
   return li;
@@ -536,7 +469,7 @@ function renderDirections(card, origin, preciseStart, poi = false) {
     { class: 'directions' },
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
     // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
-    poi ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
+    poi ? h('span', { class: 'dir-source', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
     link(twogis, t('dir.2gis'), 'twogis'),
     link(yandex, t('dir.yandex'), 'yandex'),
   );
