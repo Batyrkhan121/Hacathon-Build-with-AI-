@@ -661,9 +661,10 @@ input[type="time"] {
   position: relative;
 }
 
-.loading-cancel {
+/* .loading внутри — иначе .btn-link { position: relative } из блока polish сбивает кнопку под статус. */
+.loading .loading-cancel {
   position: absolute;
-  top: -6px;
+  top: -9px;
   right: 0;
 }
 
