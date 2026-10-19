@@ -48,11 +48,17 @@ function conditionText(){return `${locationName()} · ${t('budget.'+state.budget
 function syncChrome(){
  const home=['home','geo-denied','geo-far','query-empty'].includes(state.view);
  document.body.classList.toggle('is-loading',state.view==='loading');document.body.classList.toggle('home-view',home);document.body.classList.toggle('result-view',!home);document.body.classList.toggle('editing',state.editing);document.body.classList.toggle('map-open',state.mapOpen&&ifSmall());
- hero.querySelector('.eyebrow').textContent=ux('eyebrow');hero.querySelector('h2').textContent=ux('hero');hero.querySelector('.home-intro').textContent=ux('intro');
+ hero.querySelector('.eyebrow').textContent=ux('eyebrow');hero.querySelector('h2').replaceChildren(view.h('span',{class:'hero-city',text:ux('heroCity')}),' ',view.h('span',{class:'hero-tagline',text:ux('heroTagline')}));hero.querySelector('h2').setAttribute('aria-label',ux('hero'));hero.querySelector('.home-intro').textContent=ux('intro');
  $('presets-title').textContent=ux('presets');$('query').placeholder=ux('placeholder');$('submit').querySelector('span').textContent=ux('submit');
  $('mock-pill').textContent=ux('demo');$('mock-pill').title=ux('mockHint');privacy.querySelector('span').textContent=ux('privacy');
  const conditionValues={where:[t('where.legend'),locationName()],duration:[ux('durationLabel'),t('budget.'+state.budget)],when:[t('when.legend'),(state.day?t('when.tomorrow')+' · ':'')+(state.time||t('when.now'))]};
- for(const [kind,[label,value]] of Object.entries(conditionValues)){const control=mobileConditions.querySelector('.condition-'+kind);control.querySelector('small').textContent=label;control.querySelector('strong').textContent=value;}
+ for(const [kind,[label,value]] of Object.entries(conditionValues)){const control=mobileConditions.querySelector('.condition-'+kind);const changed=control._displayValue!==undefined&&control._displayLang===getLang()&&control._displayValue!==value;
+  control.querySelector('small').textContent=label;control.querySelector('strong').textContent=value;
+  if(changed&&home&&!map.reducedMotion()&&control.offsetParent){
+   control.getAnimations().forEach(animation=>animation.cancel());
+   control.animate([{backgroundColor:'#fff0b0'},{backgroundColor:'#ffffff'}],{duration:320,easing:'cubic-bezier(.16,1,.3,1)'});
+  }
+  control._displayValue=value;control._displayLang=getLang();}
  done.textContent=ux('apply');editCancel.textContent=ux('cancelEdit');editCancel.hidden=!state.editing;
  toolbar.querySelector('strong').textContent=$('query').value||t(`preset.${state.scenario}.query`);toolbar.querySelector('small').textContent=conditionText();toolbar.querySelector('.edit-label').textContent=ux('edit');toolbar.setAttribute('aria-label',ux('editQuery'));
  mapBack.lastElementChild.textContent=state.answer?ux('back'):ux('editQuery');mapLabel.querySelector('span').textContent=ux('mapTitle');mapLabel.querySelector('small').textContent=locationName();

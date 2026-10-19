@@ -34,6 +34,12 @@ typography:
     fontWeight: 750
     lineHeight: 1.02
     letterSpacing: "-0.035em"
+  hero-tagline:
+    fontFamily: "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", sans-serif"
+    fontSize: "clamp(26px, 8vw, 40px)"
+    fontWeight: 750
+    lineHeight: 1.12
+    letterSpacing: "-0.025em"
   headline:
     fontFamily: "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", sans-serif"
     fontSize: "36px"
@@ -241,3 +247,9 @@ Only original SVG interface assets and live map tiles ship in this surface; ther
 - Don't turn the main itinerary back into equal rounded card stacks.
 - Don't add photos, ratings, favorites or factual claims absent from the supplied product data.
 - Don't describe the approximate route or decorative footsteps as street navigation or live location.
+
+## Localized headline and control feedback
+
+The city and promise are separate block spans. Each locale supplies heroCity/heroTagline; screen readers receive the complete hero label. The promise is unbroken: mobile clamp(26px,8vw,40px), tablet44px, desktop clamp(36px,3.6vw,54px). The existing city display scale remains. Options use real translated summary text instead of CSS-generated copy.
+
+A changed visible condition receives a320ms pale-yellow (#fff0b0) background acknowledgement, cancelled before a repeated update; reduced motion skips it. The existing SVG search arrow moves4px on pointer hover/keyboard focus and6px on press, over160ms; reduced motion keeps it static. No load entrance or extra wait is added.

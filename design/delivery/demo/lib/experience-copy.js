@@ -4,6 +4,8 @@ const COPY={
   "kk": {
     "durationLabel": "Ұзақтығы",
     "hero": "Астана. Өз ырғағыңызбен.",
+    "heroCity": "Астана.",
+    "heroTagline": "Өз ырғағыңызбен.",
     "intro": "Жақын орындар. Уақытыңызға сай серуен.",
     "eyebrow": "Астана · жаяу серуен",
     "presets": "Жылдам бастау",
@@ -53,6 +55,8 @@ const COPY={
   "ru": {
     "durationLabel": "На сколько",
     "hero": "Астана. В вашем темпе.",
+    "heroCity": "Астана.",
+    "heroTagline": "В вашем темпе.",
     "intro": "Близкие места. Прогулка на ваше время.",
     "eyebrow": "Астана · пешком по городу",
     "presets": "Быстрый старт",
@@ -102,6 +106,8 @@ const COPY={
   "en": {
     "durationLabel": "Duration",
     "hero": "Astana. At your pace.",
+    "heroCity": "Astana.",
+    "heroTagline": "At your pace.",
     "intro": "Nearby places. A walk to fit your time.",
     "eyebrow": "Astana · on foot",
     "presets": "Quick start",

@@ -383,6 +383,10 @@
       "badge": {
         "displayName": "Badge",
         "purpose": "Hours and provenance labels."
+      },
+      "hero-tagline": {
+        "displayName": "Home promise",
+        "purpose": "One localized unbroken line below city: mobile clamp(26px,8vw,40px), tablet44px, desktop clamp(36px,3.6vw,54px)."
       }
     },
     "shadows": [
@@ -422,6 +426,16 @@
         "name": "route-steps",
         "value": "3.6s ease-out infinite",
         "purpose": "Decorative footsteps along the approximate map path; reduced motion disables animation."
+      },
+      {
+        "name": "condition-acknowledgement",
+        "value": "320ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Pale yellow to white after user changes a condition; no initial/locale flash; reduced motion skips it."
+      },
+      {
+        "name": "search-arrow-feedback",
+        "value": "160ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "4px forward on hover/focus,6px on press; static reduced-motion path."
       }
     ],
     "breakpoints": [
@@ -536,6 +550,11 @@
         "name": "The Flat Reading Rule",
         "body": "The home composer and itinerary rows have no shadow. Reserve small shadows for controls floating over the map.",
         "section": "elevation"
+      },
+      {
+        "name": "The Two-Line Promise Rule",
+        "body": "Render city and localized promise as separate spans. Never strand a preposition after the city; the promise remains one responsive line.",
+        "section": "typography"
       }
     ],
     "dos": [

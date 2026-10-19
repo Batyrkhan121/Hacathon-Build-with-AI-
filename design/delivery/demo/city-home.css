@@ -448,3 +448,22 @@ html[lang='en'] .home-view .parameters > summary::before {
     margin-bottom: 23px;
   }
 }
+
+/* Clarify + adapt: city and promise are two deliberate, localized lines. */
+.home-view .home-heading h2{max-width:none;text-wrap:initial}
+.hero-city,.hero-tagline{display:block}
+.home-view .hero-city{line-height:1.02}
+.home-view .hero-tagline{white-space:nowrap;font-size:clamp(26px,8vw,40px);line-height:1.12;margin-top:.08em;letter-spacing:-.025em}
+/* The visible label is real localized text, shared with its accessible name. */
+.home-view .parameters>summary{font-size:13px}
+.home-view .parameters>summary::before{display:none;content:none}
+.home-view .query-row #submit{transition:background-color 120ms ease-out,box-shadow 120ms ease-out}
+.home-view .query-row #submit::after{transition:transform 160ms cubic-bezier(.16,1,.3,1)}
+.home-view .query-row #submit:focus-visible::after{transform:translateX(4px)}
+.home-view .query-row #submit:active::after{transform:translateX(6px)}
+@media(hover:hover){.home-view .query-row #submit:hover::after{transform:translateX(4px)}}
+.home-view .condition-control:active{background:#fff0b0}
+@media(min-width:600px) and (max-width:999px){.home-view .hero-tagline{font-size:44px}}
+@media(min-width:1000px){.home-view .hero-tagline{font-size:clamp(36px,3.6vw,54px)}}
+@media(max-width:599px){.home-view .controls{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}}
+@media(prefers-reduced-motion:reduce){.home-view .query-row #submit::after{transition:none;transform:none!important}}
