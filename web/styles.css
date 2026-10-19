@@ -326,6 +326,22 @@ textarea {
   color: #fff;
 }
 
+/* Мок-режим на узком экране: рядом с «QADAM» плашка «Мок-данные» (kk «Мок-деректер») не помещается
+   в строку 360 px, и вниз уезжал переключатель языков. Плашка уходит под надпись, а знак, QADAM
+   и языки остаются в одной строке. Без плашки (живой API) шапка прежняя, на flex. */
+@media (max-width: 420px) {
+  .brand:has(> .mock-pill:not([hidden])) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: 4px;
+  }
+  .brand:has(> .mock-pill:not([hidden])) > .mock-pill {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+}
+
 /* ------------------------------------------------------------------ blocks */
 
 .block {
