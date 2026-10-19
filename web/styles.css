@@ -1378,6 +1378,17 @@ input[type="time"] {
   font-weight: 700;
 }
 
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.empty-actions:empty {
+  display: none;
+}
+
 .empty-hint {
   margin: 4px 0 10px;
   color: var(--ink-2);

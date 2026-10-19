@@ -132,6 +132,7 @@ const DICT = {
     'empty.title': 'Рядом ничего не подошло',
     'empty.hint': 'Попробуйте больше времени, другой ориентир или меньше фильтров.',
     'empty.clear': 'Сбросить фильтры и повторить',
+    'empty.edit': 'Изменить запрос',
 
     'card.walk': '≈{dist} · {min} мин пешком',
     'card.visit': 'на месте {lo}–{hi} мин',
@@ -405,6 +406,7 @@ const DICT = {
     'empty.title': 'Жақын жерде ештеңе сәйкес келмеді',
     'empty.hint': 'Көбірек уақыт, басқа бағдар немесе азырақ сүзгі таңдап көріңіз.',
     'empty.clear': 'Сүзгілерді тазартып, қайталау',
+    'empty.edit': 'Сұрауды өзгерту',
 
     'card.walk': '≈{dist} · жаяу {min} мин',
     'card.visit': 'орнында {lo}–{hi} мин',
@@ -677,6 +679,7 @@ const DICT = {
     'empty.title': 'Nothing nearby matched',
     'empty.hint': 'Try more time, another landmark or fewer filters.',
     'empty.clear': 'Clear filters and retry',
+    'empty.edit': 'Edit the request',
 
     'card.walk': '≈{dist} · {min} min walk',
     'card.visit': '{lo}–{hi} min there',

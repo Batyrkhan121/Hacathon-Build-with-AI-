@@ -245,9 +245,16 @@ function renderEmpty(ctx) {
     { class: 'empty' },
     h('p', { class: 'empty-title', text: t('empty.title') }),
     h('p', { class: 'empty-hint', text: t('empty.hint') }),
-    hasFilters
-      ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
-      : null,
+    h(
+      'div',
+      { class: 'empty-actions' },
+      hasFilters
+        ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
+        : null,
+      ctx.onEditQuery
+        ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onEditQuery }, t('empty.edit'))
+        : null,
+    ),
   );
 }
 
