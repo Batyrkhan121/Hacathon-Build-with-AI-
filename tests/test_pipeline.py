@@ -19,6 +19,7 @@ from typing import Any
 import h3
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from app import geo, hours, retrieval, route, validate, weather
 from app import pipeline as pipeline_mod
@@ -332,13 +333,11 @@ class TestRecommend:
             recommend(req("я турист, 2 часа", at=at), deps)
         assert deps.llm.calls == []
 
-    def test_fine_cell_is_coarsened_to_r9(self, deps: Deps) -> None:
-        fine = h3.latlng_to_cell(51.0894, 71.4161, 13)
-        a = recommend(RecommendRequest.model_validate(
-            {"query": "кофе", "location": {"h3_cell": fine}, "use_llm": False}), deps)
-        assert a.context.h3_res == 9
-        assert a.context.h3_cell == h3.cell_to_parent(fine, 9)
-        assert a.data_used.location.endswith("H3 r9")
+    def test_cell_finer_than_r10_is_rejected_by_the_contract(self, deps: Deps) -> None:
+        fine = h3.latlng_to_cell(51.0894, 71.4161, 13)  # ~40 m²: effectively a raw coordinate
+        with pytest.raises(ValidationError, match="finer than r10"):
+            RecommendRequest.model_validate(
+                {"query": "кофе", "location": {"h3_cell": fine}, "use_llm": False})
 
     def test_radius_widened_once(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: list[int] = []

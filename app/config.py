@@ -106,7 +106,7 @@ def get_settings() -> Settings:
         embed_dim=int(os.getenv("EMBED_DIM") or "768"),
         llm_enabled=_bool("LLM_ENABLED", True),
         llm_timeout_s=float(os.getenv("LLM_TIMEOUT_S") or "20"),
-        h3_res=int(os.getenv("H3_RES") or "9"),
+        h3_res=int(os.getenv("H3_RES") or "10"),
         data_dir=data_dir,
         poi_path=Path(os.getenv("QADAM_POI_PATH", data_dir / "processed" / "poi.jsonl")),
         index_dir=Path(os.getenv("QADAM_INDEX_DIR", data_dir / "index")),

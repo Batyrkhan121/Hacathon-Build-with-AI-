@@ -135,3 +135,16 @@ def test_walk_graph_flag_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("WALK_GRAPH", "false")
     get_settings.cache_clear()
     assert not get_settings().walk_graph_ready
+
+
+def test_location_accepts_cells_up_to_r10() -> None:
+    import h3
+
+    from app.schemas import MAX_H3_RES
+
+    assert MAX_H3_RES == 10
+    for res in (8, 9, 10):
+        LocationInput(h3_cell=h3.latlng_to_cell(51.0894, 71.4161, res))
+    for res in (11, 13, 15):
+        with pytest.raises(ValidationError, match="finer than r10"):
+            LocationInput(h3_cell=h3.latlng_to_cell(51.0894, 71.4161, res))
