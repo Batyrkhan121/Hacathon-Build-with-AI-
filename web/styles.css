@@ -1196,7 +1196,14 @@ input[type="time"] {
 @media (max-width: 899px) {
   .line-legend {
     font-size: 11px;
-    padding: 5px 8px;
+    line-height: 1.25;
+    padding: 4px 8px;
+    max-width: min(360px, calc(100vw - 32px));
+  }
+  /* над строкой атрибуции OSM, а не поверх неё: атрибуцию закрывать нельзя */
+  .leaflet-bottom.leaflet-left .line-legend {
+    margin-bottom: 24px;
+    margin-left: 8px;
   }
   .legend-kinds {
     display: flex;
