@@ -766,6 +766,47 @@ input[type="time"] {
   gap: 4px 10px;
 }
 
+/* Маршрут — details: итог в summary, таймлайн по касанию (handoff Claude Design, строка 2, вариант б). */
+.route > summary {
+  position: relative;
+  min-height: 44px;
+  padding-right: 28px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.route > summary::-webkit-details-marker {
+  display: none;
+}
+
+.route > summary::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border: solid var(--accent-strong);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.route[open] > summary::after {
+  top: 10px;
+  transform: rotate(-135deg);
+}
+
+.route > summary .route-graph-line,
+.route > summary .route-over {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.route[open] > summary {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(10, 86, 106, 0.18);
+}
+
 .route-total {
   font-size: 13.5px;
   font-variant-numeric: tabular-nums;
@@ -1341,7 +1382,7 @@ input[type="time"] {
 }
 
 .route-caveat {
-  margin: 3px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
   color: var(--accent-strong);
 }
@@ -1838,4 +1879,445 @@ input[type="time"],
     animation: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ================================================================== v2
+   Новый внешний вид поверх текущей вёрстки. Всё — только под body.v2: без класса сайт прежний,
+   откат — убрать class="v2" у <body> в index.html. Палитра — существующие токены; вариант из style.md
+   подставляется переопределением переменных в блоке «.v2 { … }» ниже. */
+
+.v2-only {
+  display: none;
+}
+
+.v2 {
+  /* шкала v2: кегли 13 / 15 / 17 / 21 / 28, отступы 4 / 8 / 12 / 16 / 24 / 32, радиусы 20 / 14 / капсула */
+  --v2-fs-s: 13px;
+  --v2-fs-m: 15px;
+  --v2-fs-l: 17px;
+  --v2-fs-xl: 21px;
+  --v2-fs-hero: 28px;
+  --v2-r-panel: 20px;
+  --v2-r-btn: 14px;
+  --v2-shadow-1: 0 1px 2px rgba(21, 34, 44, 0.06), 0 2px 8px rgba(21, 34, 44, 0.05);
+  --v2-shadow-2: 0 -4px 16px rgba(21, 34, 44, 0.1);
+}
+
+.v2 .v2-only {
+  display: block;
+}
+
+/* --- первый экран: заголовок-вопрос, одна строка ценности, поле и кнопка в одной белой панели */
+.v2 .tagline {
+  display: none; /* ценность говорит строка под заголовком */
+}
+
+.v2 .brand {
+  margin-bottom: 12px;
+}
+
+.v2 .brand h1 {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .hero {
+  margin: 0 0 16px;
+}
+
+.v2 .hero-title {
+  margin: 0;
+  font-size: var(--v2-fs-hero);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.v2 .hero-value {
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-m);
+  line-height: 1.4;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* Подписи блоков без капса */
+.v2 .label,
+.v2 legend.label {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+/* «Что хотите?» — визуально заголовок-вопрос; подпись поля остаётся для скринридера */
+.v2 .ask > .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Порядок первого экрана: заголовок → панель запроса → сценарии → «Где я» → «Уточнить».
+   form: display: contents — его дети становятся пунктами колонки; DOM и отправка формы прежние. */
+.v2 .controls {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2 .controls > .brand { order: 0; }
+.v2 .controls > .hero { order: 1; }
+.v2 .controls > .ask { display: contents; }
+.v2 .ask > .query-row { order: 2; }
+.v2 .ask > .form-error { order: 3; }
+.v2 .controls > .presets { order: 4; margin-top: 16px; }
+.v2 .ask > .where { order: 5; }
+.v2 .ask > .refine { order: 6; }
+
+.v2 .query-row,
+.v2 .ask .query-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--v2-r-panel);
+  box-shadow: var(--v2-shadow-1);
+}
+
+.v2 .query-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 110, 135, 0.25);
+}
+
+.v2 .query-row textarea {
+  min-height: 52px;
+  padding: 8px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .query-row textarea:focus-visible {
+  outline: none; /* фокус показывает рамка панели (:focus-within) */
+  box-shadow: none;
+}
+
+.v2 .query-row .btn-primary,
+.v2 .ask .query-row .btn-primary {
+  width: 100%;
+  min-height: 52px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-l);
+}
+
+/* Телефон: карта на первом экране — не больше 30 % высоты */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    height: 30vh;
+    height: 30svh;
+    min-height: 180px;
+  }
+}
+
+/* --- ответ как в картах: панель-лист наезжает на карту на 16 px, скругление 20 сверху, тень вверх */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    z-index: 0; /* панели Leaflet (z 400+) остаются внутри карты и не перекрывают лист */
+  }
+  .v2 .panel {
+    position: relative;
+    z-index: 1;
+    margin-top: -16px;
+    border-radius: var(--v2-r-panel) var(--v2-r-panel) 0 0;
+    box-shadow: var(--v2-shadow-2);
+  }
+  /* атрибуция OSM и легенда — над краем листа, видимы */
+  .v2 .leaflet-bottom {
+    bottom: 16px;
+  }
+}
+
+/* --- первое место — главная карточка, остальные — спокойный список с тонкими разделителями */
+.v2 .cards {
+  gap: 0;
+}
+
+.v2 .cards > .card:first-child {
+  margin-bottom: 8px;
+  padding: 16px;
+  border-radius: var(--v2-r-btn);
+  box-shadow: var(--v2-shadow-1);
+}
+
+.v2 .cards > .card + .card {
+  padding: 16px 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.v2 .cards > .card + .card:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+/* --- карточка: название 21 → «Почему» 16 основным цветом сразу под ним → факты «иконка + значение» 13 →
+   маленькие бейджи (форма + цвет) → «Как пройти» двумя кнопками 44. Порядок — через order, DOM прежний
+   (скринридер читает метки источника и часов до текста, как раньше). */
+.v2 .card:not(.skeleton) {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2 .card > .card-head { order: 0; }
+.v2 .card > .card-text { order: 1; margin-top: 8px; }
+.v2 .card > .card-facts { order: 2; }
+.v2 .card > .badges { order: 3; }
+.v2 .card > .hours-note { order: 4; }
+.v2 .card > .ai-note { order: 5; }
+.v2 .card > .card-address { order: 6; }
+.v2 .card > .tags { order: 7; }
+.v2 .card > .directions { order: 8; }
+.v2 .card > .card-meta { order: 9; }
+.v2 .card > .card-actions { order: 10; }
+
+.v2 .card-title {
+  font-size: var(--v2-fs-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.v2 .card-cat {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Почему» — без подписи на экране (она остаётся для скринридера), «Что делать» — тихая подпись без капса */
+.v2 .card-text {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .card-text dt {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .card-text dt:first-of-type {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.v2 .card-text dd:first-of-type {
+  margin-bottom: 12px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+/* Факты — пары «иконка + значение», 13 px; иконки встроенным SVG (data-URI, не внешний адрес) */
+.v2 .card-facts {
+  gap: 4px 16px;
+  margin-top: 12px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.v2 .card-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+}
+
+.v2 .card-facts > span::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: var(--ink-3);
+  -webkit-mask: var(--v2-icon) center / contain no-repeat;
+  mask: var(--v2-icon) center / contain no-repeat;
+}
+
+.v2 .card-facts > span:first-child {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='9' cy='2.5' r='1.6'/%3E%3Cpath d='M7.2 5.2h2.6l1.7 2.7h2v1.6h-2.9L9.6 8.1 9 10.6l2 2.3V16H9.4v-2.4L7.6 11.7 6.7 16H5l1.4-7.1-1 .7V12H3.8V8.7z'/%3E%3C/svg%3E");
+}
+
+.v2 .card-facts > span:nth-child(2) {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.6a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zM7.2 4.5h1.6v3.1l2.2 1.3-.8 1.4-3-1.8z'/%3E%3C/svg%3E");
+}
+
+/* Бейджи — маленькие: форма точки + цвет (как раньше), 13 px */
+.v2 .badges {
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+
+.v2 .badge {
+  padding: 2px 8px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+}
+
+.v2 .hours-note,
+.v2 .ai-note,
+.v2 .card-address,
+.v2 .tags li,
+.v2 .card-meta,
+.v2 .sources {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Как пройти» — две равные кнопки 44 px, радиус 14 */
+.v2 .directions {
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.v2 .directions .directions-label {
+  font-size: var(--v2-fs-s);
+}
+
+.v2 .directions .directions-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-m);
+}
+
+/* Номер места — золотой кружок (как остановки на карте) */
+.v2 .rank,
+.v2 .tl-rank {
+  clip-path: none;
+  border-radius: 50%;
+}
+
+.v2 .rank {
+  width: 32px;
+  height: 32px;
+  font-size: var(--v2-fs-m);
+}
+
+/* Спокойный список: название 17, «Почему» 15 */
+.v2 .cards > .card + .card .card-title {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .cards > .card + .card .card-text dd:first-of-type {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .cards > .card + .card .rank {
+  width: 28px;
+  height: 28px;
+  font-size: var(--v2-fs-s);
+}
+
+/* --- карта: небо и солнце с флага. Маршрут — бирюзовый акцент (опции Leaflet в map.js), остановки —
+   золотые кружки, остальное нейтральное. Тайлы приглушены фильтром только на слое тайлов:
+   маршрут, маркеры и подписи — в других панелях и фильтр не получают. */
+.v2 .leaflet-tile-pane {
+  filter: saturate(0.35) brightness(1.05);
+}
+
+.v2 .stop-icon span {
+  width: 30px;
+  height: 30px;
+  clip-path: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* «Идея ИИ» отличается не только цветом: тёмное кольцо (форма + цвет) */
+.v2 .stop-icon.is-generated span {
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* Блок маршрута — нейтральный; бирюзовый остаётся у линии и итога «по тротуарам» */
+.v2 .route {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.v2 .route > summary strong {
+  color: var(--ink);
+}
+
+/* --- вычитание: служебное уходит с основного экрана, но остаётся доступным */
+/* «Готово за … · карточек: N» — только для скринридера (role=status); во время загрузки виден «Ищу места…» */
+.v2 .results:not([aria-busy="true"]) > .status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* «На сервер уйдёт только id ориентира: …» — в «Что ушло на сервер»; заметки о геолокации и ячейке остаются */
+.v2 .where-note:not([class*="is-"]) {
+  display: none;
+}
+
+/* Без капса и без стрелок в кнопках */
+.v2 .mock-pill {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .back-to-card > span[aria-hidden="true"] {
+  display: none;
+}
+
+.v2 .summary {
+  font-size: var(--v2-fs-l);
+}
+
+/* «Уточнить» (с машиной времени) свёрнут и на широком экране */
+@media (min-width: 900px) {
+  .v2 .refine {
+    margin-top: 16px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+  }
+  .v2 .refine > summary {
+    display: flex;
+  }
+  .v2 .refine > fieldset {
+    margin: 12px 14px 0;
+  }
+}
+
+.v2 .refine-count {
+  white-space: nowrap;
+}
+
+/* Зелёный — только «открыто». Источник «Из базы мест» — нейтральный контур без точки (форма отличает
+   его от статуса часов); «Идея ИИ» — прежний сиреневый с ромбом. */
+.v2 .badge-poi {
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.v2 .badge-poi::before {
+  display: none;
 }

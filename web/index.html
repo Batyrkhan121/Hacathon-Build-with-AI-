@@ -15,7 +15,8 @@
   <script src="vendor/h3-js-4.1.0/h3-js.umd.js" defer></script>
   <script type="module" src="app.js"></script>
 </head>
-<body>
+<!-- v2: новый внешний вид. Откат — убрать class="v2" (все правила v2 только под body.v2). -->
+<body class="v2">
   <a class="skip" href="#results" data-i18n="skip">К результатам</a>
 
   <div class="app">
@@ -37,6 +38,12 @@
             <button type="button" data-lang="en" aria-pressed="false">EN</button>
           </div>
         </header>
+
+        <!-- v2: заголовок-вопрос и строка ценности; без класса v2 на body скрыт -->
+        <div class="hero v2-only">
+          <p class="hero-title" data-i18n="hero.title">Куда пойдём?</p>
+          <p class="hero-value" data-i18n="hero.value">1–3 места рядом: почему туда, сколько идти, открыто ли</p>
+        </div>
 
         <section class="block presets" aria-labelledby="presets-title">
           <h2 id="presets-title" class="label" data-i18n="presets.title">Попробуйте сценарий</h2>
