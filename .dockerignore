@@ -13,6 +13,8 @@
 !data/landmarks.json
 !data/processed/poi.jsonl
 !data/processed/REPORT.md
+!data/processed/walk_graph.npz
+!data/processed/walk_graph_meta.json
 !data/index/embeddings.npy
 !data/index/ids.json
 !data/index/meta.json
