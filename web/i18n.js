@@ -135,6 +135,7 @@ const DICT = {
     'empty.clear': 'Сбросить фильтры и повторить',
     'empty.edit': 'Изменить запрос',
     'refine.title': 'Уточнить: режим, фильтры, время',
+    'refine.picked': 'выбрано: {n}',
 
     'card.walk': '≈{dist} · {min} мин пешком',
     'card.visit': 'на месте {lo}–{hi} мин',
@@ -411,6 +412,7 @@ const DICT = {
     'empty.clear': 'Сүзгілерді тазартып, қайталау',
     'empty.edit': 'Сұрауды өзгерту',
     'refine.title': 'Нақтылау: режим, сүзгілер, уақыт',
+    'refine.picked': 'таңдалғаны: {n}',
 
     'card.walk': '≈{dist} · жаяу {min} мин',
     'card.visit': 'орнында {lo}–{hi} мин',
@@ -686,6 +688,7 @@ const DICT = {
     'empty.clear': 'Clear filters and retry',
     'empty.edit': 'Edit the request',
     'refine.title': 'Refine: mode, filters, time',
+    'refine.picked': '{n} selected',
 
     'card.walk': '≈{dist} · {min} min walk',
     'card.visit': '{lo}–{hi} min there',

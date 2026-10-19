@@ -450,7 +450,17 @@ function renderChips() {
   els.filterHint.textContent = hints.join(' ');
   // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
   const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
-  els.refineCount.textContent = picked ? `· ${picked}` : '';
+  // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
+  els.refineCount.replaceChildren();
+  if (picked) {
+    const dot = Object.assign(document.createElement('span'), { textContent: `· ${picked}` });
+    dot.setAttribute('aria-hidden', 'true');
+    const sr = Object.assign(document.createElement('span'), {
+      className: 'visually-hidden',
+      textContent: `(${t('refine.picked', { n: picked })})`,
+    });
+    els.refineCount.append(dot, sr);
+  }
 }
 
 function syncRefineOpen() {
