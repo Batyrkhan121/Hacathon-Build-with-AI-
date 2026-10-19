@@ -2068,3 +2068,162 @@ input[type="time"],
   border-color: var(--line);
   box-shadow: none;
 }
+
+/* --- карточка: название 21 → «Почему» 16 основным цветом сразу под ним → факты «иконка + значение» 13 →
+   маленькие бейджи (форма + цвет) → «Как пройти» двумя кнопками 44. Порядок — через order, DOM прежний
+   (скринридер читает метки источника и часов до текста, как раньше). */
+.v2 .card:not(.skeleton) {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2 .card > .card-head { order: 0; }
+.v2 .card > .card-text { order: 1; margin-top: 8px; }
+.v2 .card > .card-facts { order: 2; }
+.v2 .card > .badges { order: 3; }
+.v2 .card > .hours-note { order: 4; }
+.v2 .card > .ai-note { order: 5; }
+.v2 .card > .card-address { order: 6; }
+.v2 .card > .tags { order: 7; }
+.v2 .card > .directions { order: 8; }
+.v2 .card > .card-meta { order: 9; }
+.v2 .card > .card-actions { order: 10; }
+
+.v2 .card-title {
+  font-size: var(--v2-fs-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.v2 .card-cat {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Почему» — без подписи на экране (она остаётся для скринридера), «Что делать» — тихая подпись без капса */
+.v2 .card-text {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .card-text dt {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .card-text dt:first-of-type {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.v2 .card-text dd:first-of-type {
+  margin-bottom: 12px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+/* Факты — пары «иконка + значение», 13 px; иконки встроенным SVG (data-URI, не внешний адрес) */
+.v2 .card-facts {
+  gap: 4px 16px;
+  margin-top: 12px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.v2 .card-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+}
+
+.v2 .card-facts > span::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: var(--ink-3);
+  -webkit-mask: var(--v2-icon) center / contain no-repeat;
+  mask: var(--v2-icon) center / contain no-repeat;
+}
+
+.v2 .card-facts > span:first-child {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='9' cy='2.5' r='1.6'/%3E%3Cpath d='M7.2 5.2h2.6l1.7 2.7h2v1.6h-2.9L9.6 8.1 9 10.6l2 2.3V16H9.4v-2.4L7.6 11.7 6.7 16H5l1.4-7.1-1 .7V12H3.8V8.7z'/%3E%3C/svg%3E");
+}
+
+.v2 .card-facts > span:nth-child(2) {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.6a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zM7.2 4.5h1.6v3.1l2.2 1.3-.8 1.4-3-1.8z'/%3E%3C/svg%3E");
+}
+
+/* Бейджи — маленькие: форма точки + цвет (как раньше), 13 px */
+.v2 .badges {
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+
+.v2 .badge {
+  padding: 2px 8px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+}
+
+.v2 .hours-note,
+.v2 .ai-note,
+.v2 .card-address,
+.v2 .tags li,
+.v2 .card-meta,
+.v2 .sources {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Как пройти» — две равные кнопки 44 px, радиус 14 */
+.v2 .directions {
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.v2 .directions .directions-label {
+  font-size: var(--v2-fs-s);
+}
+
+.v2 .directions .directions-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-m);
+}
+
+/* Номер места — золотой кружок (как остановки на карте) */
+.v2 .rank,
+.v2 .tl-rank {
+  clip-path: none;
+  border-radius: 50%;
+}
+
+.v2 .rank {
+  width: 32px;
+  height: 32px;
+  font-size: var(--v2-fs-m);
+}
+
+/* Спокойный список: название 17, «Почему» 15 */
+.v2 .cards > .card + .card .card-title {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .cards > .card + .card .card-text dd:first-of-type {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .cards > .card + .card .rank {
+  width: 28px;
+  height: 28px;
+  font-size: var(--v2-fs-s);
+}
