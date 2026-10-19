@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.2.0"  # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10
-MAX_H3_RES = 10  # finest H3 cell the server accepts (r10 ≈ 1,8 га in Astana); finer = near-exact point
+MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
 
