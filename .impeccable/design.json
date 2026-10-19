@@ -1,0 +1,650 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T18:48:33.679507Z",
+  "title": "Design System: Qadam",
+  "extensions": {
+    "colorMeta": {
+      "cobalt": {
+        "role": "primary",
+        "displayName": "Wayfinding Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.1709 260.61)",
+          "oklch(26% 0.1709 260.61)",
+          "oklch(38% 0.1709 260.61)",
+          "oklch(49% 0.1709 260.61)",
+          "oklch(61% 0.1709 260.61)",
+          "oklch(72% 0.1709 260.61)",
+          "oklch(84% 0.1709 260.61)",
+          "oklch(95% 0.1709 260.61)"
+        ]
+      },
+      "cobalt-strong": {
+        "role": "primary",
+        "displayName": "Strong Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.1468 260.32)",
+          "oklch(26% 0.1468 260.32)",
+          "oklch(38% 0.1468 260.32)",
+          "oklch(49% 0.1468 260.32)",
+          "oklch(61% 0.1468 260.32)",
+          "oklch(72% 0.1468 260.32)",
+          "oklch(84% 0.1468 260.32)",
+          "oklch(95% 0.1468 260.32)"
+        ]
+      },
+      "cobalt-soft": {
+        "role": "primary",
+        "displayName": "Soft Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.0173 264.49)",
+          "oklch(26% 0.0173 264.49)",
+          "oklch(38% 0.0173 264.49)",
+          "oklch(49% 0.0173 264.49)",
+          "oklch(61% 0.0173 264.49)",
+          "oklch(72% 0.0173 264.49)",
+          "oklch(84% 0.0173 264.49)",
+          "oklch(95% 0.0173 264.49)"
+        ]
+      },
+      "start-yellow": {
+        "role": "primary",
+        "displayName": "Start Yellow",
+        "tonalRamp": [
+          "oklch(15% 0.1656 84.96)",
+          "oklch(26% 0.1656 84.96)",
+          "oklch(38% 0.1656 84.96)",
+          "oklch(49% 0.1656 84.96)",
+          "oklch(61% 0.1656 84.96)",
+          "oklch(72% 0.1656 84.96)",
+          "oklch(84% 0.1656 84.96)",
+          "oklch(95% 0.1656 84.96)"
+        ]
+      },
+      "start-hover": {
+        "role": "primary",
+        "displayName": "Start Hover",
+        "tonalRamp": [
+          "oklch(15% 0.1599 83.69)",
+          "oklch(26% 0.1599 83.69)",
+          "oklch(38% 0.1599 83.69)",
+          "oklch(49% 0.1599 83.69)",
+          "oklch(61% 0.1599 83.69)",
+          "oklch(72% 0.1599 83.69)",
+          "oklch(84% 0.1599 83.69)",
+          "oklch(95% 0.1599 83.69)"
+        ]
+      },
+      "start-active": {
+        "role": "primary",
+        "displayName": "Start Active",
+        "tonalRamp": [
+          "oklch(15% 0.1524 81.85)",
+          "oklch(26% 0.1524 81.85)",
+          "oklch(38% 0.1524 81.85)",
+          "oklch(49% 0.1524 81.85)",
+          "oklch(61% 0.1524 81.85)",
+          "oklch(72% 0.1524 81.85)",
+          "oklch(84% 0.1524 81.85)",
+          "oklch(95% 0.1524 81.85)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0224 262.46)",
+          "oklch(26% 0.0224 262.46)",
+          "oklch(38% 0.0224 262.46)",
+          "oklch(49% 0.0224 262.46)",
+          "oklch(61% 0.0224 262.46)",
+          "oklch(72% 0.0224 262.46)",
+          "oklch(84% 0.0224 262.46)",
+          "oklch(95% 0.0224 262.46)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Reading Gray",
+        "tonalRamp": [
+          "oklch(15% 0.0279 258.37)",
+          "oklch(26% 0.0279 258.37)",
+          "oklch(38% 0.0279 258.37)",
+          "oklch(49% 0.0279 258.37)",
+          "oklch(61% 0.0279 258.37)",
+          "oklch(72% 0.0279 258.37)",
+          "oklch(84% 0.0279 258.37)",
+          "oklch(95% 0.0279 258.37)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Gray",
+        "tonalRamp": [
+          "oklch(15% 0.0269 258.37)",
+          "oklch(26% 0.0269 258.37)",
+          "oklch(38% 0.0269 258.37)",
+          "oklch(49% 0.0269 258.37)",
+          "oklch(61% 0.0269 258.37)",
+          "oklch(72% 0.0269 258.37)",
+          "oklch(84% 0.0269 258.37)",
+          "oklch(95% 0.0269 258.37)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "Daylight White",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Utility Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0029 264.54)",
+          "oklch(26% 0.0029 264.54)",
+          "oklch(38% 0.0029 264.54)",
+          "oklch(49% 0.0029 264.54)",
+          "oklch(61% 0.0029 264.54)",
+          "oklch(72% 0.0029 264.54)",
+          "oklch(84% 0.0029 264.54)",
+          "oklch(95% 0.0029 264.54)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Fine Rule",
+        "tonalRamp": [
+          "oklch(15% 0.0109 256.70)",
+          "oklch(26% 0.0109 256.70)",
+          "oklch(38% 0.0109 256.70)",
+          "oklch(49% 0.0109 256.70)",
+          "oklch(61% 0.0109 256.70)",
+          "oklch(72% 0.0109 256.70)",
+          "oklch(84% 0.0109 256.70)",
+          "oklch(95% 0.0109 256.70)"
+        ]
+      },
+      "composer-border": {
+        "role": "neutral",
+        "displayName": "Composer Border",
+        "tonalRamp": [
+          "oklch(15% 0.0317 256.04)",
+          "oklch(26% 0.0317 256.04)",
+          "oklch(38% 0.0317 256.04)",
+          "oklch(49% 0.0317 256.04)",
+          "oklch(61% 0.0317 256.04)",
+          "oklch(72% 0.0317 256.04)",
+          "oklch(84% 0.0317 256.04)",
+          "oklch(95% 0.0317 256.04)"
+        ]
+      },
+      "route-rail": {
+        "role": "neutral",
+        "displayName": "Route Rail",
+        "tonalRamp": [
+          "oklch(15% 0.0467 259.50)",
+          "oklch(26% 0.0467 259.50)",
+          "oklch(38% 0.0467 259.50)",
+          "oklch(49% 0.0467 259.50)",
+          "oklch(61% 0.0467 259.50)",
+          "oklch(72% 0.0467 259.50)",
+          "oklch(84% 0.0467 259.50)",
+          "oklch(95% 0.0467 259.50)"
+        ]
+      },
+      "route-path": {
+        "role": "neutral",
+        "displayName": "Route Path",
+        "tonalRamp": [
+          "oklch(15% 0.0737 258.81)",
+          "oklch(26% 0.0737 258.81)",
+          "oklch(38% 0.0737 258.81)",
+          "oklch(49% 0.0737 258.81)",
+          "oklch(61% 0.0737 258.81)",
+          "oklch(72% 0.0737 258.81)",
+          "oklch(84% 0.0737 258.81)",
+          "oklch(95% 0.0737 258.81)"
+        ]
+      },
+      "poi-bg": {
+        "role": "neutral",
+        "displayName": "POI Neutral",
+        "tonalRamp": [
+          "oklch(15% 0.0045 258.32)",
+          "oklch(26% 0.0045 258.32)",
+          "oklch(38% 0.0045 258.32)",
+          "oklch(49% 0.0045 258.32)",
+          "oklch(61% 0.0045 258.32)",
+          "oklch(72% 0.0045 258.32)",
+          "oklch(84% 0.0045 258.32)",
+          "oklch(95% 0.0045 258.32)"
+        ]
+      },
+      "open-bg": {
+        "role": "secondary",
+        "displayName": "Open Green Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0231 157.59)",
+          "oklch(26% 0.0231 157.59)",
+          "oklch(38% 0.0231 157.59)",
+          "oklch(49% 0.0231 157.59)",
+          "oklch(61% 0.0231 157.59)",
+          "oklch(72% 0.0231 157.59)",
+          "oklch(84% 0.0231 157.59)",
+          "oklch(95% 0.0231 157.59)"
+        ]
+      },
+      "open-ink": {
+        "role": "secondary",
+        "displayName": "Open Green Ink",
+        "tonalRamp": [
+          "oklch(15% 0.1002 155.26)",
+          "oklch(26% 0.1002 155.26)",
+          "oklch(38% 0.1002 155.26)",
+          "oklch(49% 0.1002 155.26)",
+          "oklch(61% 0.1002 155.26)",
+          "oklch(72% 0.1002 155.26)",
+          "oklch(84% 0.1002 155.26)",
+          "oklch(95% 0.1002 155.26)"
+        ]
+      },
+      "maybe-bg": {
+        "role": "secondary",
+        "displayName": "Maybe Teal Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0144 213.10)",
+          "oklch(26% 0.0144 213.10)",
+          "oklch(38% 0.0144 213.10)",
+          "oklch(49% 0.0144 213.10)",
+          "oklch(61% 0.0144 213.10)",
+          "oklch(72% 0.0144 213.10)",
+          "oklch(84% 0.0144 213.10)",
+          "oklch(95% 0.0144 213.10)"
+        ]
+      },
+      "maybe-ink": {
+        "role": "secondary",
+        "displayName": "Maybe Teal Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0741 221.65)",
+          "oklch(26% 0.0741 221.65)",
+          "oklch(38% 0.0741 221.65)",
+          "oklch(49% 0.0741 221.65)",
+          "oklch(61% 0.0741 221.65)",
+          "oklch(72% 0.0741 221.65)",
+          "oklch(84% 0.0741 221.65)",
+          "oklch(95% 0.0741 221.65)"
+        ]
+      },
+      "unknown-bg": {
+        "role": "secondary",
+        "displayName": "Unknown Gray Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0034 247.86)",
+          "oklch(26% 0.0034 247.86)",
+          "oklch(38% 0.0034 247.86)",
+          "oklch(49% 0.0034 247.86)",
+          "oklch(61% 0.0034 247.86)",
+          "oklch(72% 0.0034 247.86)",
+          "oklch(84% 0.0034 247.86)",
+          "oklch(95% 0.0034 247.86)"
+        ]
+      },
+      "unknown-ink": {
+        "role": "secondary",
+        "displayName": "Unknown Gray Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0214 240.48)",
+          "oklch(26% 0.0214 240.48)",
+          "oklch(38% 0.0214 240.48)",
+          "oklch(49% 0.0214 240.48)",
+          "oklch(61% 0.0214 240.48)",
+          "oklch(72% 0.0214 240.48)",
+          "oklch(84% 0.0214 240.48)",
+          "oklch(95% 0.0214 240.48)"
+        ]
+      },
+      "closed-bg": {
+        "role": "secondary",
+        "displayName": "Closed Red Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0232 24.13)",
+          "oklch(26% 0.0232 24.13)",
+          "oklch(38% 0.0232 24.13)",
+          "oklch(49% 0.0232 24.13)",
+          "oklch(61% 0.0232 24.13)",
+          "oklch(72% 0.0232 24.13)",
+          "oklch(84% 0.0232 24.13)",
+          "oklch(95% 0.0232 24.13)"
+        ]
+      },
+      "closed-ink": {
+        "role": "secondary",
+        "displayName": "Closed Red Ink",
+        "tonalRamp": [
+          "oklch(15% 0.1609 29.67)",
+          "oklch(26% 0.1609 29.67)",
+          "oklch(38% 0.1609 29.67)",
+          "oklch(49% 0.1609 29.67)",
+          "oklch(61% 0.1609 29.67)",
+          "oklch(72% 0.1609 29.67)",
+          "oklch(84% 0.1609 29.67)",
+          "oklch(95% 0.1609 29.67)"
+        ]
+      },
+      "ai-bg": {
+        "role": "secondary",
+        "displayName": "AI Purple Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0248 301.07)",
+          "oklch(26% 0.0248 301.07)",
+          "oklch(38% 0.0248 301.07)",
+          "oklch(49% 0.0248 301.07)",
+          "oklch(61% 0.0248 301.07)",
+          "oklch(72% 0.0248 301.07)",
+          "oklch(84% 0.0248 301.07)",
+          "oklch(95% 0.0248 301.07)"
+        ]
+      },
+      "ai-ink": {
+        "role": "secondary",
+        "displayName": "AI Purple Ink",
+        "tonalRamp": [
+          "oklch(15% 0.1649 292.01)",
+          "oklch(26% 0.1649 292.01)",
+          "oklch(38% 0.1649 292.01)",
+          "oklch(49% 0.1649 292.01)",
+          "oklch(61% 0.1649 292.01)",
+          "oklch(72% 0.1649 292.01)",
+          "oklch(84% 0.1649 292.01)",
+          "oklch(95% 0.1649 292.01)"
+        ]
+      },
+      "warning-bg": {
+        "role": "secondary",
+        "displayName": "Warning Amber Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0479 94.26)",
+          "oklch(26% 0.0479 94.26)",
+          "oklch(38% 0.0479 94.26)",
+          "oklch(49% 0.0479 94.26)",
+          "oklch(61% 0.0479 94.26)",
+          "oklch(72% 0.0479 94.26)",
+          "oklch(84% 0.0479 94.26)",
+          "oklch(95% 0.0479 94.26)"
+        ]
+      },
+      "warning-ink": {
+        "role": "secondary",
+        "displayName": "Warning Amber Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0809 85.04)",
+          "oklch(26% 0.0809 85.04)",
+          "oklch(38% 0.0809 85.04)",
+          "oklch(49% 0.0809 85.04)",
+          "oklch(61% 0.0809 85.04)",
+          "oklch(72% 0.0809 85.04)",
+          "oklch(84% 0.0809 85.04)",
+          "oklch(95% 0.0809 85.04)"
+        ]
+      },
+      "error-bg": {
+        "role": "secondary",
+        "displayName": "Error Red Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0187 25.60)",
+          "oklch(26% 0.0187 25.60)",
+          "oklch(38% 0.0187 25.60)",
+          "oklch(49% 0.0187 25.60)",
+          "oklch(61% 0.0187 25.60)",
+          "oklch(72% 0.0187 25.60)",
+          "oklch(84% 0.0187 25.60)",
+          "oklch(95% 0.0187 25.60)"
+        ]
+      },
+      "error-ink": {
+        "role": "secondary",
+        "displayName": "Error Red Ink",
+        "tonalRamp": [
+          "oklch(15% 0.1492 29.68)",
+          "oklch(26% 0.1492 29.68)",
+          "oklch(38% 0.1492 29.68)",
+          "oklch(49% 0.1492 29.68)",
+          "oklch(61% 0.1492 29.68)",
+          "oklch(72% 0.1492 29.68)",
+          "oklch(84% 0.1492 29.68)",
+          "oklch(95% 0.1492 29.68)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "City Display",
+        "purpose": "Desktop home city heading; responsive overrides are recorded in DESIGN.md."
+      },
+      "headline": {
+        "displayName": "Results Headline",
+        "purpose": "Walk or nearby-places heading."
+      },
+      "title": {
+        "displayName": "Stop Title",
+        "purpose": "Wrapping place identity."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "General interface reading."
+      },
+      "stop-reason": {
+        "displayName": "Stop Reason",
+        "purpose": "Visible server explanation at every width."
+      },
+      "condition-value": {
+        "displayName": "Condition Value",
+        "purpose": "Location, duration and time values; grows on desktop."
+      },
+      "badge": {
+        "displayName": "Factual Badge",
+        "purpose": "Provenance and opening labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "map-caption",
+        "value": "0 3px 12px #20263118",
+        "purpose": "Lift the caption above map tiles."
+      },
+      {
+        "name": "map-stop",
+        "value": "0 3px 8px #20263126",
+        "purpose": "Separate numbered stops from map detail."
+      },
+      {
+        "name": "map-return",
+        "value": "0 3px 10px #20263126",
+        "purpose": "Lift the mobile return action."
+      },
+      {
+        "name": "map-legend",
+        "value": "0 1px 4px rgba(0,0,0,0.2)",
+        "purpose": "Inherited compact map legend elevation."
+      }
+    ],
+    "motion": [
+      {
+        "name": "search-fill",
+        "value": "120ms ease-out",
+        "purpose": "Search fill transition."
+      },
+      {
+        "name": "search-arrow",
+        "value": "160ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Arrow shifts 4px on hover/focus and 6px on active."
+      },
+      {
+        "name": "loading-step",
+        "value": "1.4s infinite; 0.18s stagger",
+        "purpose": "Decorative loading opacity pulse, not progress."
+      },
+      {
+        "name": "route-step",
+        "value": "3.6s infinite",
+        "purpose": "Decorative footsteps on returned geometry."
+      },
+      {
+        "name": "answer-entry",
+        "value": "220ms ease-out",
+        "purpose": "Inherited answer entry with 4px motion."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation:none;transition:none;scroll-behavior:auto",
+        "purpose": "All steps remain visible and static."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow-phone",
+        "value": "max-width: 370px"
+      },
+      {
+        "name": "phone",
+        "value": "max-width: 599px"
+      },
+      {
+        "name": "tablet",
+        "value": "min-width: 600px and max-width: 999px"
+      },
+      {
+        "name": "desktop",
+        "value": "min-width: 1000px"
+      },
+      {
+        "name": "compact-desktop-height",
+        "value": "min-width: 1000px and max-height: 800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Search action",
+      "kind": "button",
+      "refersTo": "button-search",
+      "description": "Yellow start action at the composer base; the arrow responds to interaction.",
+      "html": "<button class=\"ds-search\">Find a walk<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M4 12h15m-6-6 6 6-6 6\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-search{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:54px;padding:13px 16px;border:0;border-radius:8px;color:var(--ink,#202631);background:var(--gold,#f2b705);font:700 17px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;cursor:pointer;transition:background-color 150ms ease-out,border-color 150ms ease-out,transform 100ms ease-out;}.ds-search:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}.ds-search:active:not(:disabled){transform:scale(.97);}.ds-search:disabled{opacity:.65;cursor:wait;}.ds-search{box-sizing:border-box;justify-content:space-between;width:100%;transition:background-color 120ms ease-out;}.ds-search svg{transition:transform 160ms cubic-bezier(.16,1,.3,1);}.ds-search:hover{background:#e7ac00;}.ds-search:hover svg,.ds-search:focus-visible svg{transform:translateX(4px);}.ds-search:active{background:#da9f00;}.ds-search:active svg{transform:translateX(6px);}@media(prefers-reduced-motion:reduce){.ds-search,.ds-search svg{transition:none;transform:none!important;}}"
+    },
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Cobalt action for recovery or supporting form work.",
+      "html": "<button class=\"ds-primary\">Try again</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px 14px;border:1px solid transparent;border-radius:8px;color:#fff;background:var(--accent,#245fc5);font:600 14px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;cursor:pointer;transition:background-color 150ms ease-out,border-color 150ms ease-out,transform 100ms ease-out;}.ds-primary:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}.ds-primary:active:not(:disabled){transform:scale(.97);}.ds-primary:disabled{opacity:.65;cursor:wait;}.ds-primary:hover{background:var(--accent-strong,#194b9f);}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none;transform:none!important;}}"
+    },
+    {
+      "name": "Directions action",
+      "kind": "button",
+      "refersTo": "button-directions",
+      "description": "Outlined external directions action, repeated for the available map providers.",
+      "html": "<button class=\"ds-directions\">2GIS</button>",
+      "css": ".ds-directions{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px 12px;border:1px solid #c5cedb;border-radius:8px;color:var(--ink,#202631);background:#fff;font:600 13px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;cursor:pointer;transition:background-color 150ms ease-out,border-color 150ms ease-out,transform 100ms ease-out;}.ds-directions:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}.ds-directions:active:not(:disabled){transform:scale(.97);}.ds-directions:disabled{opacity:.65;cursor:wait;}.ds-directions:hover{border-color:var(--accent,#245fc5);color:var(--accent-strong,#194b9f);}@media(prefers-reduced-motion:reduce){.ds-directions{transition:none;transform:none!important;}}"
+    },
+    {
+      "name": "Ruled request field",
+      "kind": "input",
+      "refersTo": "query-field",
+      "description": "The phone request field and its enclosing composer outline; the complete form adds ruled condition rows.",
+      "html": "<div class=\"ds-composer\"><textarea class=\"ds-query\" aria-label=\"What would you like to do?\" placeholder=\"A quiet walk by the river\"></textarea></div>",
+      "css": ".ds-composer{border:1px solid var(--line-strong,#9eacbf);border-radius:14px;background:#fff;}.ds-composer:focus-within{border-color:var(--accent,#245fc5);}.ds-query{box-sizing:border-box;display:block;width:100%;min-height:100px;max-height:168px;border:0;border-radius:14px 14px 0 0;padding:17px 16px;background:#fff;color:var(--ink,#202631);font:400 17px/1.4 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;resize:vertical;caret-color:var(--accent,#245fc5);}.ds-query::placeholder{color:#5a6575;opacity:1;}.ds-query:hover{background:#fff;}.ds-query:focus-visible{outline:2px solid var(--accent,#245fc5);outline-offset:-4px;}"
+    },
+    {
+      "name": "Language navigation",
+      "kind": "nav",
+      "refersTo": "language-navigation",
+      "description": "Shared RU/KK/EN controls with a neutral selected fill and 44px targets.",
+      "html": "<div class=\"ds-languages\" role=\"group\" aria-label=\"Interface language\"><button aria-pressed=\"true\">RU</button><button aria-pressed=\"false\">KK</button><button aria-pressed=\"false\">EN</button></div>",
+      "css": ".ds-languages{display:flex;gap:0;background:#fff;}.ds-languages button{min-width:44px;min-height:44px;padding:8px;border:0;border-radius:7px;background:transparent;color:var(--ink-2,#495362);font:600 12px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;cursor:pointer;}.ds-languages button[aria-pressed=\"true\"]{background:#f0f2f5;color:var(--ink,#202631);}.ds-languages button:hover{cursor:pointer;}.ds-languages button:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}"
+    },
+    {
+      "name": "Filter chip",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "Rectangular filter with a pale cobalt selected state.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\">Step free</button>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:8px 10px;border:1px solid #c5cedb;border-radius:7px;background:#fff;color:var(--ink,#202631);font:400 13px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;transition:background-color 150ms ease-out,border-color 150ms ease-out,transform 100ms ease-out;}.ds-chip[aria-pressed=\"true\"]{color:var(--accent-strong,#194b9f);background:var(--accent-soft,#edf3ff);border-color:var(--accent,#245fc5);}.ds-chip:hover{background:var(--accent-soft,#edf3ff);border-color:var(--accent,#245fc5);}.ds-chip:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}.ds-chip:active{transform:scale(.97);}@media(prefers-reduced-motion:reduce){.ds-chip{transition:none;transform:none!important;}}"
+    },
+    {
+      "name": "Itinerary stop",
+      "kind": "card",
+      "refersTo": "itinerary-stop",
+      "description": "Flat numbered stop row; yellow applies only to the first actual routed stop. Text here is a neutral preview label.",
+      "html": "<article class=\"ds-stop\" tabindex=\"-1\"><span class=\"ds-rank\" aria-hidden=\"true\">1</span><h3 class=\"ds-stop-title\">Place name</h3><p class=\"ds-reason\">The server explains why this stop fits.</p></article>",
+      "css": ".ds-stop{position:relative;border:0;border-top:1px solid var(--line,#dfe4eb);border-radius:0;padding:22px 0 22px 52px;background:transparent;color:var(--ink,#202631);font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;box-shadow:none;}.ds-rank{position:absolute;left:0;top:22px;display:grid;place-items:center;width:35px;height:35px;border:1px solid var(--gold,#f2b705);border-radius:50%;background:var(--gold,#f2b705);font-size:17px;font-weight:700;}.ds-stop-title{margin:0 0 8px;font-size:23px;line-height:1.22;font-weight:700;letter-spacing:-.025em;overflow-wrap:anywhere;}.ds-reason{margin:0;font-size:15px;line-height:1.45;font-weight:400;}.ds-stop:hover{box-shadow:none;}.ds-stop:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}"
+    },
+    {
+      "name": "Confirmed opening badge",
+      "kind": "custom",
+      "refersTo": "badge-open",
+      "description": "Green opening badge for open_status open with high confidence only.",
+      "html": "<span class=\"ds-open\">Open</span>",
+      "css": ".ds-open{display:inline-flex;align-items:center;gap:5px;border-radius:5px;padding:3px 5px;background:var(--open-bg,#e2f3e8);color:var(--open-ink,#13633a);font:700 12px/1.4 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;}.ds-open::before{content:\"\";width:7px;height:7px;border-radius:50%;background:currentColor;}"
+    },
+    {
+      "name": "Map stop",
+      "kind": "custom",
+      "refersTo": "map-stop",
+      "description": "Circular map stop; selecting it uses the active cobalt state.",
+      "html": "<button class=\"ds-map-stop\" aria-label=\"Stop 2\">2</button>",
+      "css": ".ds-map-stop{box-sizing:border-box;display:grid;place-items:center;width:34px;height:34px;padding:0;border:2px solid var(--accent,#245fc5);border-radius:50%;background:#fff;color:var(--accent-strong,#194b9f);box-shadow:0 3px 8px #20263126;font:700 16px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,\"Noto Sans\",\"Helvetica Neue\",Arial,sans-serif;cursor:pointer;}.ds-map-stop:hover{cursor:pointer;}.ds-map-stop:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px;}.ds-map-stop:active{background:var(--accent,#245fc5);color:#fff;transform:scale(1.15);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A city guide, step by step",
+    "overview": "Qadam uses a white daylight surface, confident system typography, cobalt wayfinding and a yellow start action. Fine rules and an openly spaced numbered sequence keep a short walk easy to scan. The team mark is two cobalt steps with a gold dot beside the QADAM wordmark.\n\nThis captures the integrated application in `web/index.html`, with `styles.css` followed by the scoped `city-guide.css`. The approved prototype supplies the direction; the current production source supplies these tokens and components. Other prototype screens and its retired hexagon mark are outside this system capture.",
+    "keyCharacteristics": [
+      "White reading surfaces and graphite text.",
+      "Cobalt wayfinding, yellow start, explicit factual status.",
+      "Ruled controls, continuous routed stops and a quiet map.",
+      "System fonts and SVG details with accessible touch controls."
+    ],
+    "rules": [
+      {
+        "name": "The Color Meaning Rule",
+        "body": "Yellow marks the start action and first routed stop. Green means high-confidence open; purple identifies AI provenance.",
+        "section": "colors"
+      },
+      {
+        "name": "The System Type Rule",
+        "body": "Use the existing system stack and preserve Kazakh character coverage.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Reading Rule",
+        "body": "Keep route content flat; use elevation where controls float over the map.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** use the current steps-and-dot mark and QADAM wordmark.",
+      "**Do** preserve the cobalt, yellow and factual-status color meanings.",
+      "**Do** keep route content flat, numbered and visibly connected only when routed.",
+      "**Do** preserve visible focus, 44px touch actions and static reduced-motion states.",
+      "**Do** use real server facts and retain uncertain opening information."
+    ],
+    "donts": [
+      "**Don't** apply the prototype's retired logo or semantic color values to this integration.",
+      "**Don't** give alternatives the route rail or first-stop yellow treatment.",
+      "**Don't** represent direct estimates with the graph path's solid stroke.",
+      "**Don't** use decorative footsteps as live location or progress data.",
+      "**Don't** introduce invented photos, reviews or ratings."
+    ]
+  }
+}
