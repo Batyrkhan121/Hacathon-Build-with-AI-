@@ -208,6 +208,12 @@ textarea {
   .results {
     padding: 4px 16px 28px;
   }
+  /* Скелетон и короткий ответ ниже экрана: без запаса высоты scrollIntoView упирается в низ
+     страницы, и ответ начинается с середины экрана под хвостом формы. */
+  .results:has(.loading, .answer, .error-box) {
+    min-height: 100vh;
+    min-height: 100svh;
+  }
 }
 
 @media (max-width: 420px) {
