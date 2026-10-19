@@ -272,11 +272,15 @@ textarea {
   min-width: 0;
 }
 
+/* «QADAM» заглавными только визуально: в разметке «Qadam», скринридер читает слово, а не буквы.
+   .v2 .brand h1 меняет лишь font-size, поэтому капс и разрядка действуют и с v2, и без него. */
 .brand h1 {
   margin: 0;
   font-size: 20px;
+  font-weight: 700;
   line-height: 1.1;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .tagline {
