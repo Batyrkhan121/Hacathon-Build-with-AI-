@@ -9,7 +9,7 @@
   --ink-2: #48575f;
   --ink-3: #5f6b74; /* ≥4.5:1 и на белом, и на тёплом фоне */
   --line: #e2ddd2;
-  --line-strong: #cfc8ba;
+  --line-strong: #8f8778; /* рамки контролов ≥ 3:1 на --surface и --bg (WCAG 1.4.11) */
 
   --accent: #0a6e87;
   --accent-strong: #08566a;
