@@ -1317,7 +1317,7 @@ class TestRealCore:
         a = recommend(RecommendRequest.model_validate({
             "query": "кофе", "location": {"h3_cell": cell}, "lang": "kk", "at": DAYTIME,
             "use_llm": False}), real_deps)
-        assert a.context.area_label.startswith("сіздің ауданыңыз (≈0,1 км²)")
+        assert a.context.area_label.startswith("сіздің ауданыңыз (≈13 га)")  # r9: 12,56 га
 
     def test_ui_tourist_switch_at_the_airport_is_honest(self, real_deps: Deps) -> None:
         """POLISH: tourist + departure 120 from the UI, text without categories -> 2 cafes are
@@ -1479,3 +1479,30 @@ def test_day_all_places_over_the_limit_keeps_the_route(deps: Deps) -> None:
     assert len(ans.cards) >= 2 and all(c.walk_min > 3 for c in ans.cards)  # 4, 5, 6 min
     assert ans.route is not None
     assert not any("такси" in w for w in ans.warnings)
+
+
+# ------------- area of an H3 cell in kk / en: hectares, exactly as the browser (cellAreaHa)
+
+
+@pytest.mark.parametrize(("res", "lang", "label"), [
+    (10, "kk", "сіздің ауданыңыз (≈1,8 га)"),  # r10: 1,79 га; «≈0,0 км²» before
+    (10, "en", "your area (≈1.8 ha)"),
+    (9, "kk", "сіздің ауданыңыз (≈13 га)"),
+    (9, "en", "your area (≈13 ha)"),
+])
+def test_cell_area_label_in_hectares(res: int, lang: str, label: str) -> None:
+    cell = h3.latlng_to_cell(51.0891, 71.4157, res)  # EXPO
+    assert pipeline_mod._localized_area(lang, None, cell, "ваш район") == label  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("ha", "kk", "en"), [
+    (12.56, "13", "13"),
+    (12.5, "13", "13"),  # half up, as Intl.NumberFormat (Python round() would give 12)
+    (9.96, "10", "10"),  # one decimal under 10 ha, then the trailing zero goes
+    (1.794, "1,8", "1.8"),
+    (2.04, "2", "2"),
+    (3612.3, "3\u00a0612", "3,612"),  # groups of thousands for coarse cells
+])
+def test_hectares_are_formatted_like_the_browser(ha: float, kk: str, en: str) -> None:
+    assert pipeline_mod._format_ha(ha, "kk") == kk
+    assert pipeline_mod._format_ha(ha, "en") == en
