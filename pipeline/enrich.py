@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 WIKIDATA_BATCH = 50
 WIKIDATA_LANGS = ("ru", "kk", "en")
+WIKIDATA_EMPTY_TTL_S = 7 * 86400  # "no description" is asked again after a week
+WIKIDATA_TEXT_TTL_S = 30 * 86400
 # places worth a sentence; cafes, bars, fast food and playgrounds speak for themselves,
 # and for malls a generated line was only "a mall where you can shop" (integrator review)
 NOTABLE_CATEGORIES: frozenset[str] = frozenset(
@@ -182,16 +184,32 @@ def wikidata_step(
     qids: Mapping[str, str],
     cache_path: Path,
     fetch: WikidataFetch = http_wikidata_fetch,
+    refresh: bool = False,
+    now: float | None = None,
 ) -> tuple[list[POI], str]:
-    cache: dict[str, str] = load_json(cache_path)
+    """Wikidata descriptions with a cache {qid: {"text", "at"}}: an empty answer is asked
+    again after 7 days, a found one after 30; `refresh` ignores the cache."""
+    now = now if now is not None else time.time()
+    cache = {
+        qid: entry if isinstance(entry, dict) else {"text": entry, "at": now}  # legacy: str
+        for qid, entry in load_json(cache_path).items()
+    }
     wanted = sorted({qids[p.id] for p in pois if not p.description and p.id in qids})
-    todo = [q for q in wanted if q not in cache]
+
+    def expired(qid: str) -> bool:
+        entry = cache.get(qid)
+        if entry is None or refresh:
+            return True
+        ttl = WIKIDATA_TEXT_TTL_S if entry.get("text") else WIKIDATA_EMPTY_TTL_S
+        return now - float(entry.get("at", 0)) > ttl
+
+    todo = [q for q in wanted if expired(q)]
     try:
         for start in range(0, len(todo), WIKIDATA_BATCH):
             batch = todo[start : start + WIKIDATA_BATCH]
             got = fetch(batch)
             for qid in batch:
-                cache[qid] = got.get(qid, "")  # "" = asked, no description: do not re-ask
+                cache[qid] = {"text": got.get(qid, ""), "at": now}  # "" = asked, none found
     except Exception as exc:  # network: keep what is cached
         note = f"Wikidata недоступна ({type(exc).__name__}), взяты только кэшированные описания."
     else:
@@ -202,7 +220,8 @@ def wikidata_step(
     out: list[POI] = []
     added = weak = 0
     for p in pois:
-        desc = cache.get(qids.get(p.id, ""), "") if not p.description else ""
+        entry = cache.get(qids.get(p.id, "")) or {}
+        desc = entry.get("text", "") if not p.description else ""
         if desc and is_weak_wikidata(desc, p):
             weak += 1  # "музей в Астане, Казахстан": empty for a card
             desc = ""
@@ -358,14 +377,19 @@ def llm_step(
     # a key present with None = the model declined ("not sure"): not asked again
     todo = [] if cache_only else [items[pid] for pid in items if keys[pid] not in cache]
     note = ""
+    unanswered = 0
     try:
         for start in range(0, len(todo), LLM_BATCH):
             batch = todo[start : start + LLM_BATCH]
             sent = {it["poi_id"] for it in batch}
             assert describe is not None  # todo is empty in cache-only mode
+            answered: set[str] = set()
             for d in describe(batch):
                 if d.poi_id in sent:  # never accept text for an id we did not send
                     cache[keys[d.poi_id]] = d.text
+                    answered.add(d.poi_id)
+            # a refusal or an empty answer leaves places uncached: they are asked next run
+            unanswered += len(sent - answered)
             save_json(cache_path, cache)
     except Exception as exc:  # API / network: keep what is done, the demo must not fail
         note = f" Остановлено на ошибке {type(exc).__name__}: часть мест без описаний."
@@ -397,6 +421,8 @@ def llm_step(
         else ""
     )
     dropped = f" Убрано прежних сгенерированных описаний: {removed}." if removed else ""
+    if unanswered:
+        dropped += f" Без ответа модели (отказ, пусто или чужие id): {unanswered}."
     return out, (
         f"Описания Claude ({model}, пометка llm_generated): {added} из {scope} заметных мест "
         f"без описания ({', '.join(sorted(NOTABLE_CATEGORIES))}); кафе, бары, фастфуд, "
@@ -409,7 +435,9 @@ def llm_step(
 # -------------------------------------------------------------------------- run
 
 
-def run(limit: int | None = None, area: str = "astana") -> list[str]:
+def run(
+    limit: int | None = None, area: str = "astana", refresh_wikidata: bool = False
+) -> list[str]:
     """Enrich data/processed/poi.jsonl in place. Returns notes for REPORT.md."""
     settings = get_settings()
     with settings.poi_path.open(encoding="utf-8") as fh:
@@ -420,7 +448,9 @@ def run(limit: int | None = None, area: str = "astana") -> list[str]:
     for lm_id, qid in LANDMARK_WIKIDATA.items():
         if lm_id in LANDMARK_OSM:
             qids.setdefault(f"osm:{LANDMARK_OSM[lm_id]}", qid)
-    pois, wiki_note = wikidata_step(pois, qids, settings.cache_dir / "wikidata.json")
+    pois, wiki_note = wikidata_step(
+        pois, qids, settings.cache_dir / "wikidata.json", refresh=refresh_wikidata
+    )
     pois, llm_note = llm_step(
         pois, limit, settings.cache_dir / "descriptions.json", settings.claude_model,
         skip_ids=no_generated_ids(load_overrides()),
@@ -433,10 +463,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limit", type=int, default=None, help="cap; default: all notable")
     parser.add_argument("--area", choices=["astana", "zones", "fixture"], default="astana")
+    parser.add_argument("--refresh-wikidata", action="store_true", help="ignore the cache")
     args = parser.parse_args(argv)
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    for note in run(args.limit, args.area):
+    for note in run(args.limit, args.area, args.refresh_wikidata):
         print("NOTE", note)
 
 

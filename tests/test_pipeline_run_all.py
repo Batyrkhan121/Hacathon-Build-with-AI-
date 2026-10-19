@@ -30,8 +30,9 @@ def tmp_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     for name in ("QADAM_POI_PATH", "QADAM_INDEX_DIR", "QADAM_LANDMARKS_PATH", "QADAM_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("QADAM_DATA_DIR", str(data))
-    monkeypatch.setenv("GEMINI_API_KEY", "")
+    # conftest already strips every key from .env; here: the no-LLM path and a known provider
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("EMBED_PROVIDER", "gemini")
     get_settings.cache_clear()
     yield data
     get_settings.cache_clear()
@@ -52,3 +53,76 @@ def test_run_all_skip_fetch_builds_poi_and_report(tmp_data: Path) -> None:
     # idempotent: a second run gives the same file
     run("zones", skip_fetch=True, skip_enrich=True)
     assert (tmp_data / "processed" / "poi.jsonl").read_text(encoding="utf-8").splitlines() == rows
+
+
+def test_enrich_gets_the_area(tmp_data: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import pipeline.enrich
+    from pipeline.run_all import run
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(pipeline.enrich, "run",
+                        lambda limit=None, area="astana": calls.append((limit, area)) or [])
+    run("zones", skip_fetch=True)
+    assert calls == [(None, "zones")]
+
+
+def test_missing_third_party_package_is_not_hidden(tmp_data: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    import pipeline.run_all as run_all
+
+    def no_anthropic(name: str):
+        raise ModuleNotFoundError("No module named 'anthropic'", name="anthropic")
+
+    monkeypatch.setattr(run_all.importlib, "import_module", no_anthropic)
+    with pytest.raises(ModuleNotFoundError):
+        run_all.run("zones", skip_fetch=True)
+
+    def no_enrich(name: str):
+        raise ModuleNotFoundError("No module named 'pipeline.enrich'", name="pipeline.enrich")
+
+    monkeypatch.setattr(run_all.importlib, "import_module", no_enrich)
+    notes = run_all.run("zones", skip_fetch=True)
+    assert any("ещё не подключено" in n for n in notes)
+    assert importlib is not None
+
+
+def test_report_lists_normalization_drops(tmp_data: Path) -> None:
+    from pipeline.run_all import run
+
+    notes = run("zones", skip_fetch=True, skip_enrich=True)
+    line = next(n for n in notes if n.startswith("Нормализация не взяла"))
+    assert "без имени (кроме площадок) 0" in line and "склеено дублей 0" in line
+    report = (tmp_data / "processed" / "REPORT.md").read_text(encoding="utf-8")
+    assert "Нормализация не взяла" in report
+
+
+def test_skip_index_flags_a_mismatching_index(tmp_data: Path) -> None:
+    import json as _json
+
+    from pipeline.run_all import run
+
+    index = tmp_data / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(_json.dumps({"status": "ok", "count": 99, "model": "m",
+                                                  "dim": 4}), encoding="utf-8")
+    notes = run("zones", skip_fetch=True, skip_enrich=True, skip_index=True)
+    meta = _json.loads((index / "meta.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "stale" and "--skip-index" in meta["stale_reason"]
+    assert "Индекс не пересобирался (--skip-index)." in notes
+
+
+def test_skip_index_keeps_a_known_stale_reason(tmp_data: Path) -> None:
+    import json as _json
+
+    from pipeline.run_all import run
+
+    index = tmp_data / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(_json.dumps({
+        "status": "stale", "stale_reason": "дневная квота Gemini исчерпана", "count": 99,
+        "model": "m", "dim": 4}), encoding="utf-8")
+    run("zones", skip_fetch=True, skip_enrich=True, skip_index=True)
+    meta = _json.loads((index / "meta.json").read_text(encoding="utf-8"))
+    assert meta["stale_reason"] == "дневная квота Gemini исчерпана"

@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 from typing import get_args
 
 from app import geo
-from app.llm import LLMClient, load_prompt, user_data_block
+from app.llm import LLMClient, LLMUnavailable, load_prompt, user_data_block
 from app.schemas import TAG_VOCAB, Category, Landmark, Lang, QueryIntent, UserOverrides
 
 log = logging.getLogger(__name__)
@@ -137,8 +138,9 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("park", _rx(r"\bпарк(?!ов)\w*|сквер|бульвар|аллея|саябақ|\bparks?\b|garden|ботаническ")),
     ("playground", _rx(r"(?<!смотровая )(?<!смотровую )площадк|playground|ойын алаң|батут")),
     ("viewpoint", _rx(r"смотров\w* площадк|viewpoint|observation deck|lookout")),
-    ("attraction", _rx(r"достопримечат|\bsights?\b|sightseeing|attraction|көрікті"
-                       r"|что (?:можно )?посмотреть|what to see")),
+    # specific words for sights; the general "what is there to see" phrases are _SEE_RE
+    ("attraction", _rx(r"достопримечат|\bsights?\b|sightseeing|attraction|\blandmarks\b"
+                       r"|көрікті")),
     ("monument", _rx(r"памятник|монумент|monument|memorial|мемориал|ескерткіш|статуя|statue")),
     ("religious", _rx(r"мечет|церк|храм|собор|синагог|mosque|church|cathedral|мешіт")),
     ("mall", _rx(r"\bтц\b|\bтрц\b|торгов\w* центр|\bмолл|\bmall\b|сауда орталығ")),
@@ -147,6 +149,13 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
                           r"|bowling|escape room|arcade|ойын-сауық")),
 )
 _FOOD_RE = _rx(r"поесть|перекусить|покушать|где поесть|\beat\b|тамақтан")
+# "What is there to see": sights AND parks (E7 at EXPO: «What's worth seeing nearby?» — the
+# words match no place by name, so without these categories the no-AI answer is restaurants).
+_SEE_RE = _rx(r"что (?:можно |тут |здесь )?посмотреть|что (?:тут |здесь )?интересного"
+              r"|куда сходить посмотреть|what to see|things to see|worth (?:seeing|visiting)"
+              r"|places to visit|what'?s interesting|көретін жер|көруге тұрарлық"
+              r"|не көруге болады")
+SIGHTS_AND_PARKS = [*SIGHTS, "park"]
 
 _GROUP_NUM_RES = (
     re.compile(r"\bнас\s+(\d+)"),
@@ -208,6 +217,8 @@ def parse_rules(text: str, lang_hint: Lang | None, landmarks: dict[str, Landmark
         categories.remove("playground")
     if "attraction" in categories:
         categories = _dedupe(categories + SIGHTS)
+    if _SEE_RE.search(t):
+        categories = _dedupe(categories + SIGHTS_AND_PARKS)
     if _FOOD_RE.search(t):
         categories = _dedupe(categories + FOOD)
 
@@ -240,8 +251,10 @@ def parse_query(
 ) -> QueryIntent:
     """LLM first (if available), rules as fallback and gap filler. Sets intent.parser."""
     rules = parse_rules(text, lang_hint, landmarks)
-    if llm is None or not llm.available:
+    if llm is None:
         return rules
+    # Called even when the client is cooling down or has no key: its disk cache may answer
+    # (preset scenarios), otherwise it fails fast with LLMUnavailable.
     try:
         llm_intent = llm.generate_structured(
             system=_system_prompt(landmarks),
@@ -249,8 +262,14 @@ def parse_query(
             schema=QueryIntent,
             effort="low",
         )
-    except Exception as exc:  # noqa: BLE001 - LLMUnavailable or anything else: rules answer
-        log.info("query parser: LLM unavailable (%s), using rules", type(exc).__name__)
+    except LLMUnavailable:
+        log.info("query parser: LLM unavailable (%s), using rules",
+                 getattr(llm, "last_error", None) or "?")
+        return rules
+    except Exception as exc:  # noqa: BLE001 - a bug: still answer by rules, but loudly
+        frames = "".join(traceback.format_tb(exc.__traceback__)[-3:])
+        log.error("query parser: LLM path failed (%s), using rules\n%s", type(exc).__name__,
+                  frames)
         return rules
     return _merge(rules, llm_intent, lang_hint, landmarks)
 
@@ -272,18 +291,17 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
     """Explicit UI filters always win over the parsed intent.
 
     Mode switches (wave 3): `tourist`, `night` and `departure_in_min` (minutes to departure:
-    tourist mode with that time budget). Read with getattr so this works whether or not the
-    integrator's schema change has landed yet.
+    tourist mode with that time budget).
     """
     if overrides is None:
         return intent
     update: dict[str, object] = {}
     for name in ("time_budget_min", "max_walk_min", "with_kids", "wheelchair", "group_size",
                  "tourist", "night"):
-        value = getattr(overrides, name, None)
+        value = getattr(overrides, name)
         if value is not None:
             update[name] = value
-    departure = getattr(overrides, "departure_in_min", None)
+    departure = overrides.departure_in_min
     if departure is not None:
         update["tourist"] = True
         update["time_budget_min"] = _clamp(int(departure), 5, 600)
@@ -292,6 +310,8 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
     if overrides.indoor_only is True:
         update["indoor"] = "indoor"
     elif overrides.indoor_only is False and intent.indoor == "indoor":
+        # False = "not only indoors": it lifts the indoor limit and nothing else; an explicit
+        # «на улице» from the text stays (the UI never sends False, only True or nothing).
         update["indoor"] = "any"
     if not update:
         return intent
@@ -302,7 +322,8 @@ def apply_overrides(intent: QueryIntent, overrides: UserOverrides | None) -> Que
 
 
 def _normalise(text: str) -> str:
-    t = text.lower().replace("ё", "е").replace("–", "-").replace("—", "-")
+    t = (text.lower().replace("ё", "е").replace("–", "-").replace("—", "-")
+         .replace("’", "'").replace("ʼ", "'"))
     return re.sub(r"\s+", " ", t)
 
 

@@ -48,7 +48,171 @@ def test_health(client: TestClient) -> None:
 def test_health_llm_off(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
     deps.llm = FakeLLM(available=False)
     with TestClient(api.create_app(deps)) as c:
-        assert c.get("/api/health").json()["llm"] == "off"
+        assert c.get("/api/health").json()["llm"] == "off (cooldown)"  # with the reason
+
+
+def test_health_degraded_without_pois(landmarks: dict[str, Landmark], tmp_path: Path) -> None:
+    d = Deps(store=make_store([], landmarks, warnings=["poi.jsonl: 0 valid rows"]),
+             llm=FakeLLM(), settings=make_settings(tmp_path))
+    with TestClient(api.create_app(d)) as c:
+        h = c.get("/api/health")
+        # 503: a hosting platform's HTTP check only sees the code, an empty server must fail it
+        assert h.status_code == 503
+        body_ = h.json()
+        assert body_["status"] == "degraded" and body_["poi_count"] == 0
+        assert body_["index"] == "lexical" and body_["llm"] == "ok"
+        assert body_["schema_version"] == api.SCHEMA_VERSION
+        assert "poi.jsonl: 0 valid rows" in body_["warnings"]
+        assert any("POI" in w for w in body_["warnings"])
+        meta = c.get("/api/meta")  # data description, not a probe: the code stays 200
+        assert meta.status_code == 200
+        assert meta.json()["status"] == "degraded" and meta.json()["warnings"]
+        r = c.post("/api/recommend", json=body())
+        assert r.status_code == 503 and "POI" in r.json()["detail"]
+
+
+def test_health_degraded_without_landmarks(synthetic_pois: list[POI], tmp_path: Path) -> None:
+    d = Deps(store=make_store(synthetic_pois, {}), llm=FakeLLM(),
+             settings=make_settings(tmp_path))
+    with TestClient(api.create_app(d)) as c:
+        r = c.get("/api/health")
+    h = r.json()
+    assert h["status"] == "degraded" and any("ориентир" in w for w in h["warnings"])
+    assert r.status_code == 200  # degraded with POI: the server answers, cards work
+
+
+def test_degraded_with_pois_is_still_200(deps: Deps, tmp_path: Path) -> None:
+    # LLM off + stale index + another model: all degraded, none of them is an empty server
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": "gemini-embedding-001", "dim": 768,
+                                                 "status": "stale"}), encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+    deps.llm = FakeLLM(available=False)
+    with TestClient(api.create_app(deps)) as c:
+        r = c.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "degraded" and r.json()["poi_count"] == 14
+
+
+def test_health_explains_index_and_llm(deps: Deps) -> None:
+    import dataclasses
+
+    import numpy as np
+
+    deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+    deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+    deps.llm = FakeLLM(available=False)
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["index"] == "ready (no key)"
+    assert h["llm"].startswith("off (")
+    deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+    deps.llm = FakeLLM()
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["index"] == "ready" and h["llm"] == "ok" and h["status"] == "ok"
+
+
+def test_missing_prompt_is_loud_at_startup(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                           caplog: pytest.LogCaptureFixture) -> None:
+    from app import generate
+
+    def missing() -> None:
+        raise FileNotFoundError("prompts/generate_cards.md")
+
+    monkeypatch.setattr(generate, "check_prompt", missing)
+    with caplog.at_level(logging.ERROR), TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded"
+    assert any("generate_cards" in w for w in h["warnings"])
+    assert any("prompt" in r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+
+
+def test_stale_index_makes_health_degraded(deps: Deps, tmp_path: Path) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"status": "stale", "stale_reason": "квота"}),
+                                     encoding="utf-8")
+    deps.settings = dataclasses.replace(deps.settings, index_dir=index)
+    deps.store.warnings = ["индекс эмбеддингов устарел (с 2026-10-19): квота; векторы используются"]
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+        m = c.get("/api/meta").json()
+    assert h["status"] == "degraded" and m["status"] == "degraded"
+    assert any("устарел" in w for w in h["warnings"])
+    (index / "meta.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    deps.store.warnings = []
+    with TestClient(api.create_app(deps)) as c:
+        assert c.get("/api/health").json()["status"] == "ok"
+
+
+def test_index_of_another_model_makes_health_degraded(deps: Deps, tmp_path: Path) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": "gemini-embedding-001", "dim": 768}),
+                                     encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+    deps.store.embeddings = None
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded" and h["index"] == "lexical (index mismatch)"
+    assert any("gemini-embedding-001/768" in w and "google/gemini-embedding-001/768" in w
+               for w in h["warnings"])
+
+
+def _stale_index(deps: Deps, tmp_path: Path, model: str) -> None:
+    import dataclasses
+    import json
+
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "meta.json").write_text(json.dumps({"model": model, "dim": 768, "status": "stale",
+                                                 "stale_reason": "квота"}), encoding="utf-8")
+    deps.settings = dataclasses.replace(
+        deps.settings, index_dir=index, embed_provider="openrouter", openrouter_api_key="k",
+        embed_model="google/gemini-embedding-001", embed_dim=768)
+
+
+def test_stale_index_of_another_model_is_not_called_stale(deps: Deps, tmp_path: Path) -> None:
+    # the vectors are not used at all: «устарел» would only confuse, the mismatch is the news
+    _stale_index(deps, tmp_path, model="gemini-embedding-001")
+    deps.store.embeddings = None
+    deps.store.warnings = ["индекс построен для gemini-embedding-001/768, а в настройках "
+                           "google/gemini-embedding-001/768, релевантность считается лексически"]
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+        m = c.get("/api/meta").json()
+    for data in (h, m):
+        assert data["status"] == "degraded" and data["index"] == "lexical (index mismatch)"
+        assert any("индекс построен" in w for w in data["warnings"])
+        assert not any("устарел" in w for w in data["warnings"]), data["warnings"]
+
+
+def test_stale_index_of_the_query_model_is_called_stale(deps: Deps, tmp_path: Path) -> None:
+    import numpy as np
+
+    _stale_index(deps, tmp_path, model="google/gemini-embedding-001")
+    deps.store.embeddings = np.zeros((len(deps.store.pois), 768), dtype=np.float32)
+    deps.store.warnings = []  # api reads the flag from meta.json, not from Store's text
+    with TestClient(api.create_app(deps)) as c:
+        h = c.get("/api/health").json()
+    assert h["status"] == "degraded" and h["index"] == "ready"
+    assert [w for w in h["warnings"] if "устарел" in w] == [
+        "индекс эмбеддингов устарел (meta.json: status=stale)"]
 
 
 def test_landmarks(client: TestClient, landmarks: dict[str, Landmark]) -> None:
@@ -85,7 +249,7 @@ def test_recommend_llm_failure_still_200(deps: Deps, monkeypatch: pytest.MonkeyP
     with TestClient(api.create_app(deps)) as c:
         r = c.post("/api/recommend", json=body())
     assert r.status_code == 200
-    assert "LLM недоступна — показаны карточки по данным." in r.json()["warnings"]
+    assert "LLM недоступна (нет связи) — показаны карточки по данным." in r.json()["warnings"]
 
 
 def test_unknown_landmark_422(client: TestClient) -> None:

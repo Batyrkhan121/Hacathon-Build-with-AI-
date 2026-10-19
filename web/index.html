@@ -6,26 +6,26 @@
   <title>Qadam — прогулки по Астане</title>
   <meta name="description" content="ИИ-помощник для прогулок по Астане: 1–3 места рядом, с честными источниками данных и уверенностью.">
   <meta name="theme-color" content="#0a6e87">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7-12-7V9z' fill='%230a6e87'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f2b705'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cpath d='M6 24L14 8M14 24L22 8' stroke='%230a6e87' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='25' cy='8' r='3' fill='%23f2b705'/%3E%3C/svg%3E">
+  <!-- Leaflet 1.9.4 и h3-js 4.1.0 лежат локально (web/vendor, версии и sha256 — в vendor/README.md):
+       демо работает без CDN, браузер не обращается к unpkg. -->
+  <link rel="stylesheet" href="vendor/leaflet-1.9.4/leaflet.css">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
-  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"
-          integrity="sha384-nKUDlg+fT0U/eEt4KWP9n034kLe/eVj6k7CVjbu6qfRhJdEyinlGajS9+9AU+UZ5" crossorigin="anonymous" defer></script>
+  <script src="vendor/leaflet-1.9.4/leaflet.js" defer></script>
+  <script src="vendor/h3-js-4.1.0/h3-js.umd.js" defer></script>
   <script type="module" src="app.js"></script>
 </head>
-<body>
+<!-- v2: новый внешний вид. Откат — убрать class="v2" (все правила v2 только под body.v2). -->
+<body class="v2">
   <a class="skip" href="#results" data-i18n="skip">К результатам</a>
 
   <div class="app">
     <div class="panel">
       <section class="controls" aria-label="Запрос">
         <header class="brand">
-          <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-            <path d="M16 2l12 7v14l-12 7-12-7V9z" fill="currentColor"/>
-            <circle cx="16" cy="16" r="4" fill="#f2b705"/>
+          <svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M6 24L14 8M14 24L22 8" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/>
+            <circle cx="25.2" cy="7.8" r="2.6" fill="#f2b705"/>
           </svg>
           <div class="brand-text">
             <h1>Qadam</h1>
@@ -39,24 +39,42 @@
           </div>
         </header>
 
-        <section class="block presets" aria-labelledby="presets-title">
-          <h2 id="presets-title" class="label" data-i18n="presets.title">Попробуйте сценарий</h2>
-          <div class="preset-list" id="presets"></div>
-        </section>
+        <!-- v2: заголовок-вопрос и строка ценности; без класса v2 на body скрыт -->
+        <div class="hero v2-only">
+          <h2 class="hero-title" id="hero-title" data-i18n="hero.title">Куда пойдём?</h2>
+          <p class="hero-value" data-i18n="hero.value">1–3 места: почему, сколько идти, открыто ли</p>
+        </div>
 
+        <!-- v2.1: порядок в DOM = порядок на экране (Tab сверху вниз): поле → сценарии → «Рядом с … Изменить»
+             → «Подсказать» → строка о приватности. Без v2 прежний вид восстанавливает CSS (order). -->
         <form id="ask" class="block ask" action="#" novalidate>
-          <label for="query" class="label" data-i18n="query.label">Что хотите?</label>
+          <label for="query" class="label" id="query-label" data-i18n="query.label">Что хотите?</label>
           <div class="query-row">
             <!-- без name: если JS не загрузился, браузер не отправит текст запроса в URL (и в логи) -->
             <textarea id="query" rows="2" maxlength="500" required
                       data-i18n-placeholder="query.placeholder"></textarea>
+          </div>
+
+          <section class="block presets" aria-labelledby="presets-title">
+            <h2 id="presets-title" class="label" data-i18n="presets.title">Попробуйте сценарий</h2>
+            <div class="preset-list" id="presets"></div>
+          </section>
+
+          <p class="ask-near v2-only">
+            <span id="ask-near-text"></span>
+            <button type="button" class="btn-text" id="where-toggle" aria-expanded="false" aria-controls="where" data-i18n="where.change">Изменить</button>
+          </p>
+
+          <div class="submit-row">
             <button type="submit" class="btn btn-primary" id="submit">
               <span data-i18n="submit">Подсказать</span>
             </button>
           </div>
           <p class="form-error" id="form-error" role="alert" hidden></p>
 
-          <fieldset class="where">
+          <p class="privacy-line v2-only" data-i18n="privacy.line">На сервер уходит только ориентир или район — без ваших координат.</p>
+
+          <fieldset class="where" id="where">
             <legend class="label" data-i18n="where.legend">Где я</legend>
             <select id="landmark" data-i18n-aria="where.landmark" aria-label="Ориентир"></select>
             <div class="where-actions">
@@ -71,6 +89,13 @@
             </div>
             <p class="where-note" id="where-note" aria-live="polite"></p>
           </fieldset>
+
+          <!-- Телефон: режим, фильтры и время свёрнуты, чтобы ответ был ближе; на ≥ 900 px блок всегда открыт (app.js). -->
+          <details class="refine" id="refine">
+            <summary>
+              <span data-i18n="refine.title">Уточнить: режим, фильтры, время</span>
+              <span class="refine-count" id="refine-count"></span>
+            </summary>
 
           <fieldset class="modes">
             <legend class="label" data-i18n="mode.legend">Режим</legend>
@@ -97,6 +122,7 @@
             </div>
             <p class="hint" data-i18n="when.hint">Машина времени для демо, время Астаны (UTC+5)</p>
           </fieldset>
+          </details>
         </form>
       </section>
 
@@ -113,6 +139,8 @@
 
     <main class="map-wrap">
       <div id="map" role="region" data-i18n-aria="map.aria" aria-label="Карта Астаны"></div>
+      <!-- Телефон: после «На карте» / «Маршрут» карта наверху, а карточка ниже — короткий путь обратно. -->
+      <button type="button" class="btn btn-primary btn-sm back-to-card" id="back-to-card" hidden></button>
       <p class="map-fallback" id="map-fallback" hidden data-i18n="map.fallback">Карта не загрузилась. Карточки работают и без неё.</p>
     </main>
   </div>

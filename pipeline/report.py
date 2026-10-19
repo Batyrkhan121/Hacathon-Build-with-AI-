@@ -21,9 +21,20 @@ import h3
 from app.config import get_settings
 from app.hours import ASTANA_TZ
 from app.schemas import POI
-from pipeline.fetch_osm import area_chunks
-from pipeline.normalize import fetched_date, haversine_m, load_payloads, osm_base, raw_files
+from pipeline.fetch_osm import area_chunks, is_partial
+from pipeline.landmark_refs import LANDMARK_OSM
+from pipeline.normalize import (
+    fetched_date,
+    haversine_m,
+    load_outlines,
+    load_payloads,
+    osm_base,
+    raw_files,
+)
 
+# a landmark POI = the OSM object of a landmark that our selectors did not fetch, so
+# normalize.finalize added it; "manual" in sources is not a marker (overrides add it too)
+LANDMARK_POI_IDS = frozenset(f"osm:{ref}" for ref in LANDMARK_OSM.values())
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
 LANDMARK_LABEL_M = 2500
@@ -53,6 +64,61 @@ def nearest_landmark(lat: float, lon: float, landmarks: Sequence[Mapping]) -> st
     return best["names"]["ru"] if dist <= LANDMARK_LABEL_M else ""
 
 
+def walk_graph_lines(meta: Mapping) -> list[str]:
+    """The «Пешеходный граф» section, read from data/processed/walk_graph_meta.json."""
+    loaded, total = len(meta.get("tiles_loaded") or []), meta.get("tiles_total") or 0
+    lines = [
+        "",
+        "## Пешеходный граф",
+        "Файл `data/processed/walk_graph.npz` (контракт: docs/ARCHITECTURE.md, раздел 5), "
+        "собирает `python -m pipeline.walk_graph`. Источник — дороги и тропинки OSM, по "
+        "которым можно идти пешком (без motorway/trunk, foot=no и access=private; частная "
+        "дорога остаётся, если foot=yes/designated/permissive разрешает пешехода).",
+        f"- Снимок OSM: {meta.get('osm_snapshot') or '—'}"
+        + (f" (плитки из разных снимков: {', '.join(meta['osm_snapshots'])}; указан самый старый)"
+           if len(meta.get("osm_snapshots") or []) > 1 else "")
+        + f"; собран {meta.get('created_at', '—')}.",
+        f"- Узлов: {meta.get('nodes', 0)}; рёбер: {meta.get('edges', 0)}; длина сети: "
+        f"{meta.get('total_length_km', '—')} км; в крупнейшей связной компоненте "
+        f"{100 * (meta.get('largest_component_share') or 0):.1f}% узлов (остальные отброшены).",
+        f"- Переходов: {meta.get('crossings', 0)} (из них нерегулируемых без разметки "
+        f"{meta.get('unmarked_crossings', 0)}); светофоров: {meta.get('signals', 0)}; "
+        f"понижённых бордюров: {meta.get('kerbs_lowered', 0)}. Тип перехода взят с линии "
+        f"footway=crossing у {meta.get('crossings_from_way_tags', 0)} узлов (из них "
+        f"{meta.get('crossing_nodes_added', 0)} новых, в середине перехода без узла в OSM).",
+        f"- Рёбер с лестницами: {meta.get('steps_edges', 0)}; освещённых: "
+        f"{meta.get('lit_edges', 0)}; рёбер-переходов: {meta.get('crossing_edges', 0)}.",
+        f"- POI привязано к узлу (≤{meta.get('snap_max_m', 150)} м): "
+        f"{meta.get('poi_snapped', 0)} из {meta.get('poi_total', 0)} "
+        f"({100 * (meta.get('poi_snapped_share') or 0):.1f}%)"
+        + (f", медиана {meta['poi_snap_median_m']:.0f} м"
+           if meta.get("poi_snap_median_m") is not None else "")
+        + f"; ориентиров: {meta.get('landmarks_snapped', 0)} из {meta.get('landmarks_total', 0)}.",
+        f"- Размер файла: {(meta.get('file_bytes') or 0) / 1e6:.1f} МБ; лицензия: "
+        f"{meta.get('license') or 'ODbL (производная OSM)'}.",
+    ]
+    if meta.get("nodes_outside_bbox"):
+        lines.append(
+            f"- Узлы за границей bbox: {meta['nodes_outside_bbox']} — дороги, пересекающие "
+            "границу, берутся целиком (окраинные трассы, подъезд к аэропорту); фактический "
+            f"охват узлов {meta.get('nodes_bbox')}."
+        )
+    if meta.get("coverage") == "full":
+        lines.append(f"- Покрытие: весь город, {loaded} из {total} плиток.")
+    else:
+        lines.append(
+            f"- **Покрытие частичное: {loaded} из {total} плиток** "
+            f"({', '.join(meta.get('tiles_loaded') or []) or '—'}); не скачаны: "
+            f"{', '.join(meta.get('tiles_missing') or []) or '—'}"
+            + (f"; неполные ответы Overpass: {', '.join(meta['tiles_partial'])}"
+               if meta.get("tiles_partial") else "")
+            + ". Маршрут вне покрытых плиток граф не построит. Среди POI внутри покрытых "
+            f"плиток ({meta.get('poi_in_coverage', '—')}) привязано "
+            f"{100 * (meta.get('poi_snapped_share_in_coverage') or 0):.1f}%."
+        )
+    return lines
+
+
 def build_report(
     pois: Sequence[POI],
     payloads: Sequence[Mapping],
@@ -61,11 +127,22 @@ def build_report(
     missing_chunks: Sequence[str] | None = None,
     notes: Sequence[str] = (),
     generated_at: datetime | None = None,
+    outlines_meta: Mapping | None = None,
+    walk_meta: Mapping | None = None,
 ) -> str:
-    """`missing_chunks`: city tiles not on disk; None when the build is not the whole city."""
+    """`missing_chunks`: city tiles not on disk; None when the build is not the whole city.
+    `outlines_meta`: the `qadam` block of data/raw/osm_mall_outlines.json, if any.
+    `walk_meta`: data/processed/walk_graph_meta.json, if the graph is built."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
-    when = (generated_at or datetime.now(ASTANA_TZ)).strftime("%Y-%m-%d %H:%M (UTC+5)")
+    now = generated_at or datetime.now(ASTANA_TZ)
+    when = now.strftime("%Y-%m-%d %H:%M (UTC+5)")
+
+    def age(stamp: float) -> str:
+        at = datetime.fromtimestamp(stamp, ASTANA_TZ)
+        hours = int((now - at).total_seconds() // 3600)
+        return f"{at.strftime('%Y-%m-%d %H:%M')} ({hours} ч назад)"
+
     metas = [p.get("qadam", {}) for p in payloads]
     endpoints = Counter(m.get("endpoint", "?") for m in metas)
     stamps = [m["fetched_at_unix"] for m in metas if m.get("fetched_at_unix")]
@@ -84,12 +161,24 @@ def build_report(
         f"- Добавлено вручную: {sum(1 for p in pois if p.id.startswith('manual:'))} "
         "(места из эталона роли A, которых нет в OSM; источник — официальный сайт в `website`).",
         "- Ориентиры, добавленные как места (объект OSM + ручная разметка): "
-        f"{sum(1 for p in pois if p.id.startswith('osm:') and 'manual' in p.sources)}.",
+        f"{sum(1 for p in pois if p.id in LANDMARK_POI_IDS and p.id not in tags_by_id)}.",
     ]
     if stamps:
         lo = datetime.fromtimestamp(min(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
         hi = datetime.fromtimestamp(max(stamps), ASTANA_TZ).strftime("%Y-%m-%d %H:%M")
         lines.append(f"- Время выгрузки: {lo} … {hi} (UTC+5).")
+        oldest = min((m for m in metas if m.get("fetched_at_unix")),
+                     key=lambda m: m["fetched_at_unix"])
+        lines.append(
+            f"- Возраст данных: самый старый кусок {oldest.get('chunk') or oldest.get('area')} "
+            f"скачан {age(oldest['fetched_at_unix'])}; при сбое выгрузки берутся файлы с диска."
+        )
+    outline_stamp = (outlines_meta or {}).get("fetched_at_unix")
+    lines.append(
+        f"- Контуры ТРЦ: скачаны {age(outline_stamp)}."
+        if outline_stamp
+        else "- Контуры ТРЦ: не скачаны — проверка «внутри ТРЦ» (indoor) не работала."
+    )
     lines.append(
         "- Зеркала Overpass: " + ", ".join(f"{u} ({c})" for u, c in endpoints.most_common()) + "."
     )
@@ -106,6 +195,13 @@ def build_report(
         lines.append(
             "- Дата снимка OSM по зеркалам: " + "; ".join(parts) + ". Пересекающиеся куски "
             "берутся из самого свежего снимка; `fetched_at` у записи — дата её снимка."
+        )
+    partial = [m.get("chunk") or m.get("area") or "?" for p, m in zip(payloads, metas, strict=True)
+               if is_partial(p)]
+    if partial:
+        lines.append(
+            f"- **Неполные ответы Overpass (remark): {', '.join(partial)}.** Данные из них "
+            "взяты, но удалёнными по ним ничего не считается; перезапуск выгрузки докачает."
         )
     if missing_chunks is None:
         lines.append(
@@ -197,6 +293,9 @@ def build_report(
     if notes:
         lines += ["", "## Обогащение и индекс", *(f"- {note}" for note in notes)]
 
+    if walk_meta:
+        lines += walk_graph_lines(walk_meta)
+
     examples = sorted(pois, key=lambda p: (-p.data_confidence, -p.popularity, p.id))[:5]
     lines += ["", "## Примеры записей", "```json"]
     lines += [
@@ -223,7 +322,14 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
     missing = missing_astana_chunks(raw_dir) if area == "astana" else None
     all_notes = [*notes, index_status(settings.index_dir, pois)]
     out = out or settings.poi_path.parent / "REPORT.md"
-    text = build_report(pois, payloads, landmarks, missing_chunks=missing, notes=all_notes)
+    outlines = load_outlines(raw_dir) if area != "fixture" else None
+    walk_meta_path = settings.poi_path.parent / "walk_graph_meta.json"
+    walk_meta = (json.loads(walk_meta_path.read_text(encoding="utf-8"))
+                 if area == "astana" and walk_meta_path.exists() else None)
+    text = build_report(
+        pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
+        outlines_meta=(outlines or {}).get("qadam"), walk_meta=walk_meta,
+    )
     out.write_text(text, encoding="utf-8")
     return out
 

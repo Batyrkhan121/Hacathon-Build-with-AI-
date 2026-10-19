@@ -26,21 +26,29 @@ them for fakes.
 
 from __future__ import annotations
 
+import inspect
+import json
 import logging
+import math
+import re
 import time
+import traceback
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 import h3
 import numpy as np
 
-from app import geo, hours, retrieval, route, validate, weather
+from app import geo, hours, retrieval, route, validate, walkgraph, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
 from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
+    TAG_VOCAB,
     Answer,
     Candidate,
     Card,
@@ -75,6 +83,9 @@ DISCLAIMERS: dict[str, str] = {
     ),
 }
 TOP_K = 8
+# No query vector (Gemini quota / failure) but Claude will write the cards: it gets a wider
+# keyword pool and picks 1–3 by meaning (finalize still drops foreign ids, facts stay ours).
+LLM_POOL_K = 16
 SPARSE_MIN = 3  # fewer candidates than this -> "few places nearby" warning
 # Tourist before a flight (wave 3 rule): walk budget = time to departure - transfer - reserve.
 # Applies only when a flight / the airport is mentioned or the UI sent departure_in_min.
@@ -85,6 +96,7 @@ MIN_WALK_LEFT_MIN = 15  # less than this left -> no cards, "leave now"
 TOURIST_MAX_CARDS = 2
 HUB_MAX_WALK_MIN = 15  # at a transport hub and for tourists: short walks, no radius widening
 CAREFUL_MAX_WALK_MIN = 15  # kids / wheelchair / night, unless the user set a limit
+MAX_ONE_WAY_WALK_MIN = 20  # budget-derived walk to one stop, unless the user set a limit
 NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
 GROUP_MIN = 3
 FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
@@ -104,12 +116,27 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "Уже поздно для прогулки с ребёнком — лучше место в помещении рядом.",
         "night_far": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
                      "показаны ближайшие подтверждённые; лучше доехать на такси.",
+        "night_far_open": "Ночью в 15 минутах пешком нет мест, которые точно открыты, — "
+                          "показаны ближайшие подтверждённые.",
+        "night_taxi": "Ночью до этих мест дольше {v} мин пешком — пеший маршрут не строим, "
+                      "туда и обратно лучше на такси; выбирайте освещённые людные места.",
         "group": "Для компании из {n} человек: столик в кафе лучше уточнить заранее.",
         "f_night_clock": "ночь (по времени)",
         "widened": "Рядом мало вариантов — радиус поиска расширен до {r} м.",
         "nothing": "Подходящих мест не нашлось. Попробуйте увеличить время, убрать часть "
                    "фильтров или выбрать другую точку.",
-        "search_error": "Поиск временно дал сбой — попробуйте ещё раз.",
+        "search_error": "Поиск дал сбой на нашей стороне — повтор не поможет. Попробуйте "
+                        "другой запрос или точку.",
+        "llm_down_r": "LLM недоступна ({reason}) — показаны карточки по данным.",
+        "parse_fallback": "Запрос разобран по правилам: ИИ не ответил ({reason}).",
+        "gen_check_failed": "Тексты ИИ не прошли проверку — показаны карточки по данным.",
+        "route_failed": "Маршрут построить не удалось — карточки показаны без маршрута.",
+        "semantic_down": "Смысловой поиск недоступен ({reason}) — поиск только по словам.",
+        "semantic_index_mismatch": "Смысловой поиск недоступен: индекс построен другой "
+                                   "моделью — поиск только по словам.",
+        "semantic_index_missing": "Смысловой поиск недоступен: индекс эмбеддингов не "
+                                  "загружен — поиск только по словам.",
+        "weather_manual": "погода не учтена: время задано вручную",
         "landmark_mismatch": "В запросе упомянут ориентир «{name}», но подборка построена "
                              "от выбранной точки.",
         "wheelchair": "Доступность для коляски подтверждена для {k} из {n} мест — уточните "
@@ -120,6 +147,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Под запрошенный тип мест рядом ничего нет в данных — показано, что есть "
                    "поблизости.",
         "sparse": "Рядом мало мест в открытых данных ({n}) — подборка короткая.",
+        "no_match": "Точного совпадения по запросу нет — показано, что есть рядом.",
+        "graph_over_limit": "По тротуарам до мест дольше {v} мин пешком — показаны "
+                            "ближайшие из найденных.",
         "airport_plan": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
                         "{res} мин — на прогулку {w} мин. Выезжайте в аэропорт не позже {hhmm}.",
         "airport_now": "До вылета {b} мин: дорога до аэропорта ≈{tr} мин (оценка) и запас "
@@ -145,7 +175,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_group": "группа {v}", "f_categories": "категории: {v}", "f_tags": "теги: {v}",
         "f_no_ai": "режим без ИИ",
         "f_search_semantic": "поиск: по смыслу и по словам",
-        "f_search_lexical": "поиск: по словам",
+        "f_search_lexical": "поиск: по словам", "f_search_claude": ", отбор — Claude",
+        "index_stale": "индекс устарел",
+        "f_hours_dropped": "по часам работы отсеяно {n}: {parts}",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -157,12 +189,28 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "Баламен серуендеуге кеш — жақын жердегі жабық орынды таңдаған дұрыс.",
         "night_far": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
                      "орындар көрсетілді; таксимен барған дұрыс.",
+        "night_far_open": "Түнде 15 минуттық жерде нақты ашық орын жоқ — ең жақын расталған "
+                          "орындар көрсетілді.",
+        "night_taxi": "Түнде бұл орындарға жаяу {v} минуттан ұзақ — жаяу маршрут құрмаймыз, "
+                      "барып-қайту үшін такси дұрыс; жарық әрі адамы көп жерлерді таңдаңыз.",
         "group": "{n} адамдық топқа: кафеде үстелді алдын ала нақтылаңыз.",
         "f_night_clock": "түн (уақыт бойынша)",
         "widened": "Жақын жерде нұсқа аз — іздеу радиусы {r} м-ге дейін ұлғайтылды.",
         "nothing": "Сәйкес орын табылмады. Уақытты көбейтіп, кейбір сүзгілерді алып тастап "
                    "немесе басқа нүкте таңдап көріңіз.",
-        "search_error": "Іздеуде уақытша қате шықты — қайталап көріңіз.",
+        "search_error": "Іздеу біздің тарапта ақауға ұшырады — қайталау көмектеспейді. Басқа "
+                        "сұрау немесе нүкте таңдап көріңіз.",
+        "llm_down_r": "LLM қолжетімсіз ({reason}) — деректер бойынша карточкалар көрсетілді.",
+        "parse_fallback": "Сұрау ережелер бойынша талданды: ЖИ жауап бермеді ({reason}).",
+        "gen_check_failed": "ЖИ мәтіндері тексеруден өтпеді — деректер бойынша карточкалар "
+                            "көрсетілді.",
+        "route_failed": "Маршрут құру мүмкін болмады — карточкалар маршрутсыз көрсетілді.",
+        "semantic_down": "Мағыналық іздеу қолжетімсіз ({reason}) — тек сөздер бойынша іздеу.",
+        "semantic_index_mismatch": "Мағыналық іздеу қолжетімсіз: индекс басқа модельмен "
+                                   "құрылған — тек сөздер бойынша іздеу.",
+        "semantic_index_missing": "Мағыналық іздеу қолжетімсіз: эмбеддинг индексі жүктелмеген "
+                                  "— тек сөздер бойынша іздеу.",
+        "weather_manual": "ауа райы ескерілмеді: уақыт қолмен берілген",
         "landmark_mismatch": "Сұрауда «{name}» аталған, бірақ іріктеме таңдалған нүктеден "
                              "жасалды.",
         "wheelchair": "Арбамен кіру {n} орынның {k}-інде ғана расталған — барар алдында "
@@ -173,6 +221,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "relaxed": "Сұралған түрдегі орын жақын жерде деректерде жоқ — маңайдағы бар орындар "
                    "көрсетілді.",
         "sparse": "Ашық деректерде жақын жерде орын аз ({n}) — іріктеме қысқа.",
+        "no_match": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
+        "graph_over_limit": "Тротуарлармен орындарға дейін {v} минуттан ұзақ жаяу — "
+                            "табылғандардың ең жақындары көрсетілді.",
         "airport_plan": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
                         "қор — серуенге {w} мин. Әуежайға {hhmm}-ден кешіктірмей шығыңыз.",
         "airport_now": "Ұшуға {b} мин қалды: әуежайға жол ≈{tr} мин (болжам) және {res} мин "
@@ -196,7 +247,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_night": "түн", "f_tourist": "турист", "f_group": "топ {v}",
         "f_categories": "санаттар: {v}", "f_tags": "тегтер: {v}", "f_no_ai": "ЖИ-сыз режим",
         "f_search_semantic": "іздеу: мағынасы мен сөздері бойынша",
-        "f_search_lexical": "іздеу: сөздері бойынша",
+        "f_search_lexical": "іздеу: сөздері бойынша", "f_search_claude": ", іріктеу — Claude",
+        "index_stale": "индекс ескірген",
+        "f_hours_dropped": "жұмыс уақыты бойынша алынып тасталды {n}: {parts}",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -206,12 +259,27 @@ TEXTS: dict[str, dict[str, str]] = {
         "kids_night": "It is late for a walk with a child — an indoor place nearby is better.",
         "night_far": "No surely-open place within a 15-minute walk tonight — showing the "
                      "nearest confirmed ones; better take a taxi.",
+        "night_far_open": "No surely-open place within a 15-minute walk tonight — showing the "
+                          "nearest confirmed ones.",
+        "night_taxi": "At night these places are over {v} min on foot — no walking route; "
+                      "better take a taxi there and back, and choose well-lit, busy places.",
         "group": "For a group of {n}: check table availability at cafes in advance.",
         "f_night_clock": "night (by the clock)",
         "widened": "Few options nearby — search radius widened to {r} m.",
         "nothing": "No matching places found. Try more time, fewer filters or another "
                    "starting point.",
-        "search_error": "Search failed temporarily — please try again.",
+        "search_error": "Search failed on our side — retrying will not help. Try another "
+                        "request or starting point.",
+        "llm_down_r": "The LLM is unavailable ({reason}) — showing cards built from the data.",
+        "parse_fallback": "The request was parsed by rules: the AI did not answer ({reason}).",
+        "gen_check_failed": "The AI texts failed the check — showing cards built from the data.",
+        "route_failed": "Could not build the route — showing the cards without it.",
+        "semantic_down": "Semantic search is unavailable ({reason}) — keyword search only.",
+        "semantic_index_mismatch": "Semantic search is unavailable: the index was built with "
+                                   "another model — keyword search only.",
+        "semantic_index_missing": "Semantic search is unavailable: the embeddings index is not "
+                                  "loaded — keyword search only.",
+        "weather_manual": "weather not considered: time set manually",
         "landmark_mismatch": "Your message mentions “{name}”, but results are built from the "
                              "selected starting point.",
         "wheelchair": "Wheelchair access is confirmed for {k} of {n} places — check before you go.",
@@ -220,6 +288,9 @@ TEXTS: dict[str, dict[str, str]] = {
                        "make your departure.",
         "relaxed": "Nothing of the requested type nearby in the data — showing what is around.",
         "sparse": "Few places nearby in the open data ({n}) — a short list.",
+        "no_match": "No exact match for your request — showing what is nearby.",
+        "graph_over_limit": "Along the footways the places are over {v} min on foot — "
+                            "the nearest found are shown.",
         "airport_plan": "{b} min to departure: ≈{tr} min to the airport (estimate) plus a "
                         "{res}-min reserve leaves {w} min for a walk. Leave for the airport no "
                         "later than {hhmm}.",
@@ -245,7 +316,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_group": "group of {v}", "f_categories": "categories: {v}", "f_tags": "tags: {v}",
         "f_no_ai": "no-AI mode",
         "f_search_semantic": "search: by meaning and keywords",
-        "f_search_lexical": "search: by keywords",
+        "f_search_lexical": "search: by keywords", "f_search_claude": ", picked by Claude",
+        "index_stale": "index outdated",
+        "f_hours_dropped": "removed by opening hours {n}: {parts}",
     },
 }
 
@@ -304,6 +377,66 @@ TAG_NAMES: dict[str, dict[str, str]] = {
 }
 
 
+# Why the LLM / Gemini did not help (app.llm.last_error / last_embed_status), in the answer
+# language: the warnings say it instead of a bare "unavailable".
+LLM_REASONS: dict[str, dict[str, str]] = {
+    "ru": {"disabled": "отключено в настройках", "no_key": "нет ключа API",
+           "no_credit": "закончились кредиты API", "auth": "ключ не принят",
+           "bad_model": "модель недоступна", "quota": "лимит запросов", "timeout": "таймаут",
+           "network": "нет связи", "server": "сбой сервиса", "refusal": "модель отказалась",
+           "invalid_output": "некорректный ответ модели", "bad_request": "ошибка запроса",
+           "bug": "внутренняя ошибка"},
+    "kk": {"disabled": "баптауларда өшірілген", "no_key": "API кілті жоқ",
+           "no_credit": "API кредиттері таусылды", "auth": "кілт қабылданбады",
+           "bad_model": "модель қолжетімсіз", "quota": "сұраулар лимиті",
+           "timeout": "күту уақыты өтті", "network": "байланыс жоқ", "server": "қызмет ақауы",
+           "refusal": "модель бас тартты", "invalid_output": "модельдің жауабы дұрыс емес",
+           "bad_request": "сұрау қатесі", "bug": "ішкі қате"},
+    "en": {"disabled": "disabled in settings", "no_key": "no API key",
+           "no_credit": "API credits ran out", "auth": "key rejected",
+           "bad_model": "model unavailable", "quota": "rate limit", "timeout": "timeout",
+           "network": "no connection", "server": "service error", "refusal": "model refused",
+           "invalid_output": "invalid model output", "bad_request": "request error",
+           "bug": "internal error"},
+}
+# Reasons in brackets are for failures only. An empty embeddings key (OPENROUTER_API_KEY /
+# GEMINI_API_KEY, by EMBED_PROVIDER) is a deliberate choice
+# (video takes run with it), so "no_key" has no text: plain «поиск: по словам», no warning.
+# {p} = the embeddings provider as the user would name it: Gemini or OpenRouter.
+EMBED_REASONS: dict[str, dict[str, str]] = {
+    "ru": {"quota": "лимит запросов {p}", "minute_quota": "минутный лимит {p}",
+           "daily_quota": "дневная квота {p}", "network": "нет связи с {p}",
+           "error": "ошибка {p}", "bad_vector": "некорректный вектор запроса",
+           "auth": "ключ {p} недействителен", "no_credit": "нет кредитов {p}",
+           "index_mismatch": "индекс не подходит к модели запросов",
+           "index_missing": "индекс не загружен"},
+    "kk": {"quota": "{p} сұраулар лимиті", "minute_quota": "{p} минуттық лимиті",
+           "daily_quota": "{p} күндік квотасы", "network": "{p}-мен байланыс жоқ",
+           "error": "{p} қатесі", "bad_vector": "сұрау векторы дұрыс емес",
+           "auth": "{p} кілті жарамсыз", "no_credit": "{p} кредиттері жоқ",
+           "index_mismatch": "индекс сұрау моделіне сәйкес емес",
+           "index_missing": "индекс жүктелмеген"},
+    "en": {"quota": "{p} rate limit", "minute_quota": "{p} per-minute limit",
+           "daily_quota": "{p} daily quota", "network": "no connection to {p}",
+           "error": "{p} error", "bad_vector": "invalid query vector",
+           "auth": "{p} key rejected", "no_credit": "no {p} credits",
+           "index_mismatch": "index does not match the query model",
+           "index_missing": "index not loaded"},
+}
+EMBED_PROVIDER_NAMES = {"gemini": "Gemini", "openrouter": "OpenRouter"}
+# retrieval.hours_dropped() reasons, in this order, for the "data used" panel
+HOURS_DROP_NAMES: dict[str, dict[str, str]] = {
+    "ru": {"closed": "закрыто", "closed_partial": "сегодня не работает",
+           "closing_soon": "скоро закроется", "night": "ночью не работает"},
+    "kk": {"closed": "жабық", "closed_partial": "бүгін жұмыс істемейді",
+           "closing_soon": "жақында жабылады", "night": "түнде жұмыс істемейді"},
+    "en": {"closed": "closed", "closed_partial": "not open today",
+           "closing_soon": "closing soon", "night": "not open at night"},
+}
+SEMANTIC_DOWN_KINDS = frozenset({"quota", "minute_quota", "daily_quota", "network", "error",
+                                 "bad_vector", "auth", "no_credit"})
+
+
 class InvalidRequest(ValueError):
     """The request cannot be answered as given (the API answers 422 with this message)."""
 
@@ -323,7 +456,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     started = time.perf_counter()
     request_id = uuid.uuid4().hex[:12]
     store = deps.store
-    llm = deps.llm if (req.use_llm and deps.llm is not None and deps.llm.available) else None
+    # The client is asked even while it cools down / has no key: its disk cache may answer
+    # (preset scenarios), otherwise it fails fast. Only an explicit switch-off skips it.
+    llm = deps.llm if (req.use_llm and deps.llm is not None and deps.llm.enabled) else None
     warn: list[str] = []
 
     # 1. origin (invalid input is the only thing that may raise)
@@ -341,10 +476,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 2. intent
     intent = parse_query(req.query, req.lang, llm, store.landmarks)
     parse_model = llm.last_model if (llm is not None and intent.parser == "llm") else None
+    parse_reason = (llm.last_error or "bug") if (llm is not None
+                                                  and intent.parser == "rules") else None
     intent = apply_overrides(intent, req.overrides)
     t = TEXTS[intent.lang]
-    if req.use_llm and (deps.llm is None or not deps.llm.available):
-        warn.append(t["llm_down"])
+    llm_down_said = False
+    if req.use_llm and llm is None:
+        warn.append(_llm_down(t, intent.lang, "disabled" if deps.llm is not None else None))
+        llm_down_said = True
     if intent.landmark_mention and intent.landmark_mention != landmark_id:
         lm = store.landmarks.get(intent.landmark_mention)
         if lm is not None:
@@ -354,7 +493,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # Modes. `plan_intent` is what the search actually uses; `intent` stays what was asked.
     at_airport = landmark_id == AIRPORT_ID
     at_hub = landmark_id is not None and store.landmarks[landmark_id].kind == "transport"
-    departure = getattr(req.overrides, "departure_in_min", None) if req.overrides else None
+    departure = req.overrides.departure_in_min if req.overrides else None
     flight = intent.tourist and not at_airport and (
         departure is not None or mentions_flight(req.query))
     # The budget is "time to departure" only when said so («2 часа перед вылетом») or sent by
@@ -371,7 +510,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                           HUB_MAX_WALK_MIN)
     # Night by the clock (22:00–06:00), unless the UI switched night mode off explicitly:
     # retrieval then keeps late_open / 24_7 / open-now places only.
-    night_switch = getattr(req.overrides, "night", None) if req.overrides else None
+    night_switch = req.overrides.night if req.overrides else None
     night_by_clock = (not intent.night and night_switch is None
                       and (local_time.hour >= NIGHT_FROM_H or local_time.hour < NIGHT_TO_H))
     if night_by_clock:
@@ -380,6 +519,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     careful_cap = careful and intent.max_walk_min is None and "max_walk_min" not in plan_update
     if careful_cap:
         plan_update["max_walk_min"] = CAREFUL_MAX_WALK_MIN
+    # «Nearby» is a walk of at most MAX_ONE_WAY_WALK_MIN to a stop: the budget radius
+    # (ONE_WAY_SHARE × budget = 21 min for 60, 42 min for 120) must not go further. An explicit
+    # limit from the text or the UI always wins.
+    plan_budget = plan_update.get("time_budget_min", intent.time_budget_min)
+    if ("max_walk_min" not in plan_update and intent.max_walk_min is None and plan_budget
+            and geo.ONE_WAY_SHARE * float(plan_budget) > MAX_ONE_WAY_WALK_MIN):
+        plan_update["max_walk_min"] = MAX_ONE_WAY_WALK_MIN
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
@@ -400,8 +546,25 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
     # 4. query vector (Gemini, optional; never in the no-AI mode)
     query_vec = None
+    semantic_reason: str | None = None  # why the search is lexical although an index exists
     if req.use_llm and deps.llm is not None and store.embeddings is not None:
-        query_vec = deps.llm.embed_query(intent.raw_query)
+        raw_vec = deps.llm.embed_query(intent.raw_query)
+        query_vec = _usable_vector(raw_vec, store.embeddings)
+        if query_vec is None:
+            status = getattr(deps.llm, "last_embed_status", None)
+            semantic_reason = "bad_vector" if raw_vec is not None else (status or "error")
+            if semantic_reason in SEMANTIC_DOWN_KINDS:
+                warn.append(t["semantic_down"].format(
+                    reason=_embed_reason(intent.lang, semantic_reason, deps.settings)))
+    elif req.use_llm and deps.llm is not None:
+        # the provider has a key but Store dropped the index (another model / dim, broken,
+        # missing): say so instead of a silent «по словам»
+        semantic_reason = index_problem(deps.settings, store)
+        if semantic_reason is not None:
+            warn.append(t[f"semantic_{semantic_reason}"])
+
+    wide_pool = llm is not None and llm.available and query_vec is None
+    pool_k = LLM_POOL_K if wide_pool else TOP_K
 
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
@@ -409,14 +572,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
         candidates, failed = [], False
     else:
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
     if short_walks:  # "two cards beat a third one 48 minutes away"
         candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
     if not candidates and not failed and not no_time and not short_walks:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
-            candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+            candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     if plan_intent.night and not no_time:
@@ -427,7 +590,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
             far_ctx = ctx.model_copy(update={"radius_m": min(
                 round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
-            more, failed = _retrieve(store, far_intent, far_ctx, query_vec)
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k)
             sure = [c for c in more if _night_sure(c)]
             if sure:
                 search_intent, ctx = far_intent, far_ctx
@@ -436,23 +599,43 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = sure
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
+    dropped = {} if no_time else _hours_dropped(store, search_intent, ctx)
+    if candidates and _query_unmatched(store, search_intent, ctx, candidates):
+        warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
+
+    # T91: the walk graph (loaded once, cached); None -> straight segments as before
+    graph = _walk_graph(deps.settings, request_id)
+    walk_mode = walkgraph.Mode(wheelchair=intent.wheelchair, night=plan_intent.night,
+                               kids=intent.with_kids)
 
     # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
     walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
                  and not intent.tourist and not plan_intent.night)
     gen_candidates = candidates
     if walk_loop and req.want_route and len(candidates) >= 2:
-        picked = route.plan_walk(ctx.origin, candidates, plan_intent.time_budget_min or 0,
-                                 wanted_categories=set(plan_intent.categories))
+        try:
+            budget, wanted_cats = plan_intent.time_budget_min or 0, set(plan_intent.categories)
+            if graph is None:  # without a graph the call is exactly the old one
+                picked = route.plan_walk(ctx.origin, candidates, budget,
+                                         wanted_categories=wanted_cats)
+            else:
+                picked = route.plan_walk(ctx.origin, candidates, budget,
+                                         wanted_categories=wanted_cats, graph=graph,
+                                         mode=walk_mode, origin_landmark=ctx.landmark_id)
+        except Exception as exc:  # noqa: BLE001 - the cards are still useful without it
+            log.error("request %s: plan_walk failed (%s)\n%s", request_id, type(exc).__name__,
+                      _frames(exc))
+            warn.append(t["route_failed"])
+            picked = []
         if len(picked) >= 2:
             gen_candidates = picked
         elif picked:  # one stop fits: it goes first, the rest stay as alternatives
@@ -460,32 +643,59 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             gen_candidates = picked + [c for c in candidates if c not in picked
                                        and route.walk_eligible(c, wanted)]
 
+    # T91: distance and minutes on the cards of the places that may be shown come from the
+    # graph too, both of them (ranking is untouched: it happened with the straight estimate);
+    # the walking limit (max_walk_min, transport hub) is then checked with the graph minutes
+    if graph is not None and gen_candidates:
+        gen_candidates = _graph_minutes(graph, ctx, gen_candidates, search_intent, walk_mode,
+                                        request_id)
+        within = [c for c in gen_candidates
+                  if not plan_intent.max_walk_min or c.walk_min <= plan_intent.max_walk_min]
+        if within:
+            gen_candidates = within
+        else:
+            warn.append(t["graph_over_limit"].format(v=plan_intent.max_walk_min))
+
     # 6. cards
     cards: list[Card] = []
     generation = "template"
     summary: str | None = None
     gen_model: str | None = None
+    llm_summary: str | None = None
     if candidates and llm is not None:
+        draft = None
         try:
             draft = draft_cards(search_intent, ctx, gen_candidates, llm)
-            cards, fin_warnings = validate.finalize(draft, gen_candidates, search_intent, ctx)
-            warn.extend(fin_warnings)
-            draft_ids = {d.poi_id for d in draft.cards}
-            if any(c.poi_id in draft_ids for c in cards):
-                generation, summary, gen_model = "llm", draft.summary, llm.last_model
-        except LLMUnavailable as exc:
-            log.info("request %s: generation fell back to templates (%s)", request_id,
-                     type(exc).__name__)
-            warn.append(t["llm_down"])
-            cards = []
-        except Exception as exc:  # noqa: BLE001 - finalize bug must not kill the answer
-            log.error("request %s: finalize failed (%s)", request_id, type(exc).__name__)
-            cards = []
+        except LLMUnavailable:
+            reason = llm.last_error or "bug"
+            log.info("request %s: generation fell back to templates (%s)", request_id, reason)
+            warn.append(_llm_down(t, intent.lang, reason))
+            llm_down_said = True
+        if draft is not None:
+            try:
+                cards, fin_warnings = validate.finalize(draft, gen_candidates, search_intent,
+                                                        ctx)
+                warn.extend(fin_warnings)
+                draft_ids = {d.poi_id for d in draft.cards}
+                if any(c.poi_id in draft_ids for c in cards):
+                    generation, summary, gen_model = "llm", draft.summary, llm.last_model
+                    llm_summary = draft.summary
+            except Exception as exc:  # noqa: BLE001 - a finalize bug must not kill the answer
+                log.error("request %s: finalize failed (%s)\n%s", request_id,
+                          type(exc).__name__, _frames(exc))
+                warn.append(t["gen_check_failed"])
+                cards = []
+    if generation == "llm":
+        cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id)
+    if parse_reason is not None and not llm_down_said:
+        warn.append(t["parse_fallback"].format(
+            reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
     if candidates and not cards:
         try:
-            cards = validate.template_cards(gen_candidates, search_intent, ctx)
+            cards = validate.template_cards(gen_candidates[:TOP_K], search_intent, ctx)
         except Exception as exc:  # noqa: BLE001
-            log.error("request %s: template_cards failed (%s)", request_id, type(exc).__name__)
+            log.error("request %s: template_cards failed (%s)\n%s", request_id,
+                      type(exc).__name__, _frames(exc))
             failed = True
     cards = cards[: TOURIST_MAX_CARDS if walk_budget is not None else 3]
     cards = _localize_hours(cards, candidates, local_time, intent.lang)
@@ -493,9 +703,22 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # 7. route
     note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
                             wheelchair=intent.wheelchair)
+    graph_note = route.route_note(intent.lang, loop=walk_loop, kids=intent.with_kids,
+                                  wheelchair=intent.wheelchair, graph=True)
     # At a transport hub people pick one place to wait: a tour of three cafes makes no sense.
-    mini_route = _route(ctx, cards, candidates, search_intent, req.want_route and not at_hub,
-                        request_id, loop=walk_loop, note=note)
+    # At night with every place over the walking limit (E2: 02:30, 29 and 33 min away) a long
+    # walking route is bad advice: no route, the cards stay, the taxi is advised once.
+    night_taxi = _night_taxi(plan_intent, cards)
+    if night_taxi:
+        over = t["graph_over_limit"].format(v=plan_intent.max_walk_min)
+        warn[:] = [t["night_far_open"] if w == t["night_far"] else w
+                   for w in warn if w != over]
+    mini_route, route_broke = _route(ctx, cards, candidates, search_intent,
+                                     req.want_route and not at_hub and not night_taxi,
+                                     request_id, loop=walk_loop, note=note, graph=graph,
+                                     mode=walk_mode, graph_note=graph_note)
+    if route_broke:
+        warn.append(t["route_failed"])
 
     # 8. warnings, data used, answer
     if failed and not cards:
@@ -506,7 +729,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         # first: the deadline matters more than any other warning (POLISH request)
         warn.insert(0, _airport_warning(t, intent.time_budget_min or 0, walk_budget, local_time))
     warn.extend(_context_warnings(t, plan_intent, cards, candidates, mini_route, at_hub=at_hub,
-                                  flight=flight, deadline_given=walk_budget is not None))
+                                  flight=flight, deadline_given=walk_budget is not None,
+                                  night_taxi=night_taxi))
     if summary is None:
         summary = _template_summary(t, len(cards))
     if no_time:
@@ -515,7 +739,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         # E11 / UI "tourist + departure": NQZ has a few cafes and nothing to see — say so,
         # whatever categories were asked (the UI sends no text categories at all)
         summary = _airport_summary(t, intent, has_cards=bool(cards))
-    summary = validate.sanitize_summary(summary, cards)  # "open now" never leaks via summary
+    by_llm = generation == "llm" and summary == llm_summary
+    if by_llm and _tag_leak(summary, intent.lang, [c.title for c in cards]):
+        # S5 live: «…все с тегом night…» — an internal id is no text for a person
+        log.info("request %s: model summary names a raw tag: template summary", request_id)
+        summary, by_llm = _template_summary(t, len(cards)), False
+    # "open now" never leaks via the summary; model text is checked as model text
+    summary = _sanitize_summary(summary, cards, by_llm=by_llm)
 
     answer = Answer(
         request_id=request_id,
@@ -528,10 +758,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         data_used=DataUsed(
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
-            weather=(weather.summary_for(wx, intent.lang) if wx is not None
-                     else t["weather_unknown"]),
+            weather=_weather_label(t, wx, intent.lang, local_time, manual=req.at is not None),
             filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
                              semantic=query_vec is not None,
+                             claude_picked=wide_pool and generation == "llm",
+                             semantic_reason=_embed_reason(intent.lang, semantic_reason,
+                                                           deps.settings),
+                             index_stale=index_status(deps.settings) == "stale",
+                             hours_dropped=dropped,
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None),
@@ -556,6 +790,181 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 # -------------------------------------------------------------------- helpers
 
 
+def _embed_reason(lang: Lang, kind: str | None, settings: Settings) -> str | None:
+    """«дневная квота Gemini» / «ключ OpenRouter недействителен»; None for no reason / no key."""
+    template = EMBED_REASONS[lang].get(kind or "")
+    if template is None:
+        return None
+    return template.format(p=EMBED_PROVIDER_NAMES.get(settings.embed_provider, "Gemini"))
+
+
+def _frames(exc: BaseException) -> str:
+    """Last stack frames only: an exception message may echo the user's query."""
+    return "".join(traceback.format_tb(exc.__traceback__)[-4:])
+
+
+def _llm_down(t: dict[str, str], lang: Lang, reason: str | None) -> str:
+    text = LLM_REASONS[lang].get(reason or "")
+    return t["llm_down_r"].format(reason=text) if text else t["llm_down"]
+
+
+def _weather_label(t: dict[str, str], wx: object, lang: Lang, local_time: datetime, *,
+                   manual: bool) -> str:
+    if wx is not None:
+        return weather.summary_for(wx, lang)  # type: ignore[arg-type]
+    if manual and weather.is_time_machine(local_time):
+        return t["weather_manual"]  # not asked on purpose, not a failure
+    return t["weather_unknown"]
+
+
+def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarray | None:
+    """The query vector only if retrieval will really use it (same checks as
+    retrieval._semantic_scores); otherwise None, so the panel honestly says «по словам»."""
+    if vec is None or index is None or index.ndim != 2:
+        return None
+    q = np.asarray(vec, dtype=np.float32).ravel()
+    if q.shape[0] != index.shape[1]:
+        log.warning("query vector dim %d does not match the index: lexical search", q.shape[0])
+        return None
+    norm = float(np.linalg.norm(q))
+    if not np.isfinite(norm) or norm == 0.0:
+        log.warning("query vector is zero or not finite: lexical search")
+        return None
+    return q
+
+
+_META_CACHE: dict[str, tuple[tuple[int, int], dict[str, object] | None]] = {}
+
+
+def index_meta(settings: Settings) -> dict[str, object] | None:
+    """data/index/meta.json as a dict (None: no file / unreadable), re-read when the file
+    changes. The structured source: Store only keeps human warning texts about it."""
+    path = settings.index_dir / "meta.json"
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    hit = _META_CACHE.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    try:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = None
+    meta = meta if isinstance(meta, dict) else None
+    _META_CACHE[str(path)] = (stamp, meta)
+    return meta
+
+
+def index_status(settings: Settings) -> str | None:
+    """status from meta.json: "ok" | "stale" | None."""
+    status = (index_meta(settings) or {}).get("status")
+    return status if isinstance(status, str) else None
+
+
+def index_problem(settings: Settings, store: Store) -> str | None:
+    """Why the vectors are not used although the embeddings provider has a key:
+    "index_mismatch" (meta.json model / dim differ from the settings, e.g. EMBED_PROVIDER=
+    openrouter over a gemini-embedding-001 index) or "index_missing" (no / broken index).
+    None when the index is in use or the key is deliberately empty."""
+    if store.embeddings is not None or not settings.has_embeddings:
+        return None
+    meta = index_meta(settings) or {}
+    model, dim = meta.get("model"), meta.get("dim")
+    if model is not None or dim is not None:
+        if str(model) != settings.embed_model or str(dim) != str(settings.embed_dim):
+            return "index_mismatch"
+    return "index_missing"
+
+
+def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
+    """retrieval.hours_dropped (QUALITY) for the panel; absent or broken -> {}."""
+    fn = getattr(retrieval, "hours_dropped", None)
+    if fn is None:
+        return {}
+    try:
+        return {str(k): int(v) for k, v in dict(fn(store, intent, ctx)).items()}
+    except Exception as exc:  # noqa: BLE001 - a panel line never kills the answer
+        log.error("hours_dropped failed (%s)\n%s", type(exc).__name__, _frames(exc))
+        return {}
+
+
+def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
+                     candidates: list[Candidate]) -> bool:
+    """QUALITY decides (retrieval.query_unmatched): the query has meaningful words and none of
+    them matches any candidate, so the cards are just what is nearby. Absent (older main) or
+    broken -> no warning, never a failed answer."""
+    check = getattr(retrieval, "query_unmatched", None)
+    if check is None:
+        return False
+    try:
+        return bool(check(store, intent, ctx, candidates))
+    except Exception as exc:  # noqa: BLE001 - a missing hint never kills the answer
+        log.error("query_unmatched failed (%s)\n%s", type(exc).__name__, _frames(exc))
+        return False
+
+
+# Raw TAG_VOCAB ids must not reach a person. Ids with "_" / digits are never words (any
+# language); a bare id (night, kids, wifi) is a tag in ru / kk text, in en only next to
+# "tag(s/ged)" («a quiet night walk» is English). Card titles are skipped: «Kids Park».
+_ID_ALT = "|".join(re.escape(x) for x in sorted(TAG_VOCAB, key=len, reverse=True))
+_STRUCT_ALT = "|".join(re.escape(x) for x in sorted(TAG_VOCAB)
+                       if "_" in x or any(ch.isdigit() for ch in x))
+_STRUCT_TAG_RE = re.compile(rf"(?<![\w-])(?:{_STRUCT_ALT})(?![\w-])")
+_BARE_TAG_RE = re.compile(rf"(?<![\w-])(?:{_ID_ALT})(?![\w-])")
+_TAG_WORD_RE = re.compile(r"(?<!\w)(?:тег(?:а|у|ом|е|и|ов|ам|ами|ах|і|тер|тері)?)(?!\w)",
+                          re.IGNORECASE)
+_EN_TAG_NEAR_RE = re.compile(
+    rf"\btag(?:s|ged)?\W+(?:\w+\W+){{0,2}}?(?:{_ID_ALT})\b"
+    rf"|\b(?:{_ID_ALT})\W+(?:\w+\W+){{0,2}}?tag(?:s|ged)?\b", re.IGNORECASE)
+
+
+def _tag_leak(text: str, lang: str, titles: Iterable[str]) -> bool:
+    for title in titles:
+        if title.strip():
+            text = re.sub(re.escape(title), " ", text, flags=re.IGNORECASE)
+    if _STRUCT_TAG_RE.search(text) or _TAG_WORD_RE.search(text):
+        return True
+    if lang == "en":
+        return _EN_TAG_NEAR_RE.search(text) is not None
+    return _BARE_TAG_RE.search(text) is not None
+
+
+def _untag_whys(cards: list[Card], candidates: list[Candidate], intent: QueryIntent,
+                ctx: SearchContext, request_id: str) -> list[Card]:
+    """A model-written why naming a raw tag («есть кофе и wifi», «отмечена тегом …») gets the
+    template why of the same candidate (validate.template_cards); nothing else changes."""
+    by_id = {c.poi.id: c for c in candidates}
+    out: list[Card] = []
+    for card in cards:
+        cand = by_id.get(card.poi_id)
+        if cand is not None and _tag_leak(card.why, intent.lang, [card.title]):
+            try:
+                why = validate.template_cards([cand], intent, ctx, n=1)[0].why
+            except Exception as exc:  # noqa: BLE001 - keep the card as it is
+                log.error("request %s: template why for card %d failed (%s)\n%s", request_id,
+                          card.rank, type(exc).__name__, _frames(exc))
+                why = ""
+            if why.strip():
+                log.info("request %s: card %d why names a raw tag: template why", request_id,
+                         card.rank)
+                card = card.model_copy(update={"why": why})
+        out.append(card)
+    return out
+
+
+def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool) -> str:
+    """validate.sanitize_summary(summary, cards, llm=...) when QUALITY's version takes `llm`
+    (stricter for model text); the older two-argument version otherwise."""
+    fn = validate.sanitize_summary
+    try:
+        takes_llm = "llm" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        takes_llm = False
+    return fn(summary, cards, llm=by_llm) if takes_llm else fn(summary, cards)
+
+
 def _sights(candidates: list[Candidate]) -> int:
     return sum(1 for c in candidates if c.poi.category in SIGHT_CATEGORIES)
 
@@ -571,16 +980,31 @@ def _night_sure(c: Candidate) -> bool:
 
 
 def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:
-    """CORE builds the Russian label («у EXPO», «ваш район (≈0,1 км²) у …»); kk / en here."""
+    """geo builds the Russian label («у EXPO», «ваш район (≈13 га) у …»); kk / en here.
+    The cell area is in hectares, as the browser shows it: an r10 cell is ≈1,8 га, and
+    «≈0,0 км²» said nothing."""
     if lang == "ru":
         return ru_label
     if landmark is not None:
         name = landmark.names.get(lang) or landmark.names.get("ru") or landmark.id
         return f"near {name}" if lang == "en" else f"{name} маңында"
-    area = f"{h3.cell_area(cell, unit='km^2'):.1f}"
+    area = _format_ha(h3.cell_area(cell, unit="km^2") * 100, lang)
     if lang == "en":
-        return f"your area (≈{area} km²)"
-    return f"сіздің ауданыңыз (≈{area.replace('.', ',')} км²)"
+        return f"your area (≈{area} ha)"
+    return f"сіздің ауданыңыз (≈{area} га)"
+
+
+def _format_ha(ha: float, lang: Lang) -> str:
+    """Hectares like web/app.js cellAreaHa (Intl.NumberFormat, maximumFractionDigits 0 from
+    10 ha, else 1): half up, no trailing «,0», groups of thousands; kk «1,8», en «1.8»."""
+    step = Decimal(1) if ha >= 10 else Decimal("0.1")
+    value = Decimal(repr(ha)).quantize(step, rounding=ROUND_HALF_UP)
+    if value == value.to_integral_value():
+        value = value.quantize(Decimal(1))
+    text = f"{value:,}"  # «3,612.5»
+    if lang == "en":
+        return text
+    return text.replace(",", "\u00a0").replace(".", ",")  # 3 612,5 (no-break space)
 
 
 def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime, lang: Lang
@@ -593,12 +1017,12 @@ def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime
     out: list[Card] = []
     for card in cards:
         cand = by_id.get(card.poi_id)
-        if cand is None:
-            out.append(card)
+        if cand is None:  # never leave a Russian note in a kk / en answer
+            out.append(card.model_copy(update={"open_note": hours.check_note(lang)}))
             continue
         verdict = hours.evaluate_hours(cand.poi.opening_hours, at, lang=lang)
         if (verdict.status, verdict.confidence) != (card.open_status, card.open_confidence):
-            out.append(card)
+            out.append(card.model_copy(update={"open_note": hours.check_note(lang)}))
             continue
         raw = (cand.poi.opening_hours or "").strip()
         note = hours.unknown_note(lang) if verdict.status == "unknown" and not raw else verdict.note
@@ -636,13 +1060,64 @@ def _safe_radius(intent: QueryIntent) -> int:
 
 
 def _retrieve(
-    store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None
+    store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None,
+    k: int = TOP_K,
 ) -> tuple[list[Candidate], bool]:
     try:
-        return retrieval.retrieve(store, intent, ctx, query_vec, k=TOP_K), False
+        return retrieval.retrieve(store, intent, ctx, query_vec, k=k), False
     except Exception as exc:  # noqa: BLE001 - an empty answer beats a 500
-        log.error("retrieve failed (%s)", type(exc).__name__)
+        # data problem (bad index / record) vs a bug in the code: both need a fix, not a retry
+        kind = "data" if isinstance(exc, (ValueError, KeyError, IndexError)) else "bug"
+        log.error("retrieve failed (%s, %s)\n%s", kind, type(exc).__name__, _frames(exc))
         return [], True
+
+
+def _night_taxi(intent: QueryIntent, cards: list[Card]) -> bool:
+    """Night and every card over the walking limit (graph or straight minutes, as shown)."""
+    limit = intent.max_walk_min
+    return bool(intent.night and limit and cards and all(c.walk_min > limit for c in cards))
+
+
+def _walk_graph(settings: Settings, request_id: str) -> walkgraph.WalkGraph | None:
+    """The walk graph when WALK_GRAPH is on and the file is there; None on any problem."""
+    if not settings.walk_graph_ready:
+        return None
+    try:
+        return walkgraph.load_graph(settings.walk_graph_path, settings.walk_graph_meta_path)
+    except Exception as exc:  # noqa: BLE001 - the straight route is always available
+        log.error("request %s: walk graph failed (%s)", request_id, type(exc).__name__)
+        return None
+
+
+def _graph_minutes(
+    graph: walkgraph.WalkGraph,
+    ctx: SearchContext,
+    candidates: list[Candidate],
+    intent: QueryIntent,
+    mode: walkgraph.Mode,
+    request_id: str,
+) -> list[Candidate]:
+    """distance_m and walk_min of these candidates along the graph (one search from the
+    start), their reasons («≈N мин пешком») rebuilt to match. A card shows both values from
+    the same source: where the graph is not usable for a place (lengths_from leaves it out)
+    both stay straight. Any problem -> the straight values."""
+    try:
+        lengths = graph.lengths_from(ctx.origin, {c.poi.id: c.poi.geo for c in candidates},
+                                     mode, origin_landmark=ctx.landmark_id)
+        out: list[Candidate] = []
+        for cand in candidates:
+            metres = lengths.get(cand.poi.id)
+            if metres is None:
+                out.append(cand)
+                continue
+            minutes = max(1, math.ceil(metres / walkgraph.WALK_M_PER_MIN - 1e-9))
+            moved = cand.model_copy(update={"walk_min": minutes, "distance_m": round(metres)})
+            moved.matched = retrieval.explain(moved, intent, ctx)
+            out.append(moved)
+        return out
+    except Exception as exc:  # noqa: BLE001 - straight minutes are still right enough
+        log.error("request %s: graph minutes failed (%s)", request_id, type(exc).__name__)
+        return candidates
 
 
 def _route(
@@ -655,19 +1130,29 @@ def _route(
     *,
     loop: bool = False,
     note: str | None = None,
-) -> MiniRoute | None:
+    graph: walkgraph.WalkGraph | None = None,
+    mode: walkgraph.Mode = walkgraph.WALK,
+    graph_note: str | None = None,
+) -> tuple[MiniRoute | None, bool]:
+    """(route, failed): a crash in plan_route is reported, not swallowed."""
     if not want_route or len(cards) < 2:
-        return None
+        return None, False
     by_id = {c.poi.id: c for c in candidates}
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
     try:
+        visits = {c.poi_id: c.visit_min_low for c in cards}
+        if graph is None:  # without a graph the call is exactly the old one
+            return route.plan_route(ctx.origin, stops, intent.time_budget_min, visits,
+                                    loop=loop, note=note), False
         return route.plan_route(
-            ctx.origin, stops, intent.time_budget_min, {c.poi_id: c.visit_min_low for c in cards},
-            loop=loop, note=note,
-        )
+            ctx.origin, stops, intent.time_budget_min, visits, loop=loop, note=note,
+            graph=graph, mode=mode, origin_landmark=ctx.landmark_id, graph_note=graph_note,
+            lang=intent.lang,
+        ), False
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
-        log.error("request %s: plan_route failed (%s)", request_id, type(exc).__name__)
-        return None
+        log.error("request %s: plan_route failed (%s)\n%s", request_id, type(exc).__name__,
+                  _frames(exc))
+        return None, True
 
 
 def _context_warnings(
@@ -680,6 +1165,7 @@ def _context_warnings(
     at_hub: bool = False,
     flight: bool = False,
     deadline_given: bool = False,
+    night_taxi: bool = False,
 ) -> list[str]:
     out: list[str] = []
     unknown = sum(1 for c in cards if c.open_status == "unknown")
@@ -688,7 +1174,7 @@ def _context_warnings(
     elif unknown > 1:
         out.append(t["hours_unknown_n"].format(n=unknown))
     if intent.night:
-        out.append(t["night"])
+        out.append(t["night_taxi"].format(v=intent.max_walk_min) if night_taxi else t["night"])
         if intent.with_kids:
             out.append(t["kids_night"])
     if intent.wheelchair and cards:
@@ -760,7 +1246,10 @@ def _time_label(t: dict[str, str], local_time: datetime, *, manual: bool) -> str
 
 def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm: bool,
              *, lang: Lang = "ru", airport: int | None = None,
-             night_by_clock: bool = False, semantic: bool = False) -> list[str]:
+             night_by_clock: bool = False, semantic: bool = False,
+             semantic_reason: str | None = None, claude_picked: bool = False,
+             index_stale: bool = False, hours_dropped: dict[str, int] | None = None
+             ) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran."""
     """`airport` = minutes to departure when the flight rule shaped the time budget."""
@@ -786,7 +1275,18 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if intent.must_tags:
         tags = TAG_NAMES[lang]
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
-    out.append(t["f_search_semantic" if semantic else "f_search_lexical"])
+    if semantic:
+        out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
+    else:
+        line = t["f_search_lexical"]
+        if semantic_reason:  # already worded: failures only (an empty key is not one)
+            line += f" ({semantic_reason})"
+        out.append(line + (t["f_search_claude"] if claude_picked else ""))
+    names = HOURS_DROP_NAMES[lang]
+    parts = [f"{names[k]} {hours_dropped[k]}" for k in names if (hours_dropped or {}).get(k)]
+    if parts:
+        total = sum(hours_dropped.get(k, 0) for k in names)  # type: ignore[union-attr]
+        out.append(t["f_hours_dropped"].format(n=total, parts=", ".join(parts)))
     if not use_llm:
         out.append(t["f_no_ai"])
     return out

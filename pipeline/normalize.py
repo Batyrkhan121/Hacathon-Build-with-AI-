@@ -278,11 +278,20 @@ def popularity(tags: Mapping[str, str], category: Category) -> float:
 # ------------------------------------------------------------------- normalize
 
 
-def normalize_element(el: Mapping, fetched_at: str) -> POI | None:
+def normalize_element(
+    el: Mapping, fetched_at: str, stats: dict | None = None
+) -> POI | None:
+    """One OSM element -> POI, or None. `stats` (optional) counts why elements are dropped:
+    no_category, no_point, unnamed; and wheelchair values outside yes/limited/no."""
+    counts = stats if stats is not None else {}
     tags: Mapping[str, str] = el.get("tags") or {}
     kind = osm_kind(tags)
     point = element_point(el)
-    if kind is None or point is None:
+    if kind is None:
+        counts["no_category"] = counts.get("no_category", 0) + 1
+        return None
+    if point is None:
+        counts["no_point"] = counts.get("no_point", 0) + 1
         return None
     category, value = kind
 
@@ -290,6 +299,7 @@ def normalize_element(el: Mapping, fetched_at: str) -> POI | None:
     unnamed_playground = False
     if not name:
         if value != "playground":
+            counts["unnamed"] = counts.get("unnamed", 0) + 1
             return None
         name, unnamed_playground = PLAYGROUND_NAME, True
     name_i18n = {
@@ -314,6 +324,9 @@ def normalize_element(el: Mapping, fetched_at: str) -> POI | None:
         confidence = min(confidence, PLAYGROUND_MAX_CONFIDENCE)
 
     wheelchair = tags.get("wheelchair")
+    if wheelchair and wheelchair not in {"yes", "limited", "no"}:  # e.g. "designated"
+        other = counts.setdefault("wheelchair_other", {})
+        other[wheelchair] = other.get(wheelchair, 0) + 1
     kids = value in KIDS_VALUES or tags.get("kids_area") == "yes"
     lat, lon = point
     return POI(
@@ -417,20 +430,27 @@ def covers(filters: Sequence[str], lat: float, lon: float) -> bool:
 
 
 def normalize_payloads(
-    payloads: Iterable[Mapping], stats: dict[str, int] | None = None
+    payloads: Iterable[Mapping], stats: dict | None = None
 ) -> list[POI]:
     """Several raw chunks -> one POI list. Elements repeated across overlapping chunks are
     taken once, from the freshest OSM snapshot (mirrors lag: kumi served a June database
-    in October). An element found only in an older snapshot whose point a fresher chunk
-    also covers is stale (deleted or retagged since) and is dropped. Then near-duplicates
-    are merged by `dedupe`. `stats["stale"]` counts the dropped ones."""
+    in October). An element found only in an older snapshot whose point a fresher *complete*
+    chunk also covers is stale (deleted or retagged since) and is dropped; a partial chunk
+    (Overpass `remark`) never proves absence. Then near-duplicates are merged by `dedupe`.
+    `stats["stale"]` counts dropped elements, `stats["stale_pois"]` the names of former POIs."""
+    from pipeline.fetch_osm import is_partial
+
     ordered = sorted(payloads, key=osm_base, reverse=True)  # stable for equal stamps
     seen: set[str] = set()
     pois: list[POI] = []
     stale = 0
+    stale_pois: list[str] = []
+    drops: dict = {"no_category": 0, "no_point": 0, "unnamed": 0, "wheelchair_other": {}}
     for i, payload in enumerate(ordered):
         date, base = fetched_date(payload), osm_base(payload)
-        fresher = [coverage(q) for q in ordered[:i] if osm_base(q) > base]
+        fresher = [
+            coverage(q) for q in ordered[:i] if osm_base(q) > base and not is_partial(q)
+        ]
         for el in payload.get("elements", []):
             key = f"{el.get('type')}/{el.get('id')}"
             if key in seen:
@@ -439,12 +459,18 @@ def normalize_payloads(
             point = element_point(el)
             if fresher and point and any(covers(f, *point) for f in fresher):
                 stale += 1
+                if gone := normalize_element(el, date):
+                    stale_pois.append(f"{gone.name} ({gone.id})")
                 continue
-            if poi := normalize_element(el, date):
+            if poi := normalize_element(el, date, drops):
                 pois.append(poi)
+    merged = dedupe(pois)
     if stats is not None:
+        stats.update(drops)
         stats["stale"] = stale
-    return dedupe(pois)
+        stats["stale_pois"] = stale_pois
+        stats["duplicates"] = len(pois) - len(merged)
+    return merged
 
 
 def normalize_payload(payload: Mapping) -> list[POI]:

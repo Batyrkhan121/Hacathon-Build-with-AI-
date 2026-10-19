@@ -10,8 +10,8 @@
 - Контракт данных: app/schemas.py
 
 ## Стек
-- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, anthropic (Claude: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`), httpx, pytest, ruff. Эмбеддинги по желанию: google-genai (Gemini), только если задан `GEMINI_API_KEY`; без него retrieval лексический.
-- Фронтенд: папка web/, чистый HTML/CSS/JS. Leaflet и h3-js подключаем с CDN с точной версией, без сборщика. FastAPI отдаёт web/ по адресу "/".
+- Бэкенд: Python 3.11+, FastAPI, Pydantic v2. Векторный индекс в памяти на numpy. Также h3, anthropic (Claude: `claude-sonnet-5-5`, запасная `claude-haiku-5-5`), httpx, pytest, ruff. Эмбеддинги по желанию: google/gemini-embedding-001 через OpenRouter (`EMBED_PROVIDER=openrouter`, `OPENROUTER_API_KEY`), на нём собран data/index; без ключа retrieval лексический.
+- Фронтенд: папка web/, чистый HTML/CSS/JS. Leaflet 1.9.4 и h3-js 4.1.0 лежат локально в web/vendor (точные версии, sha256 в web/vendor/README.md), без сборщика; браузер обращается только к нашему серверу и тайлам OSM, а по клику «Как пройти» открывает 2GIS или Яндекс Карты (ссылки, не парсинг). FastAPI отдаёт web/ по адресу "/".
 - Данные: OpenStreetMap (Overpass) → data/processed/poi.jsonl → data/index/. Обогащение через Wikidata, описания через Claude (с пометкой).
 - 2GIS и Яндекс не парсить: их оферты запрещают хранить данные.
 
@@ -31,7 +31,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 1. Факты считает код по данным: расстояние, минуты пешком, часы работы, адрес. LLM пишет только «почему» и «что делать», и только про переданных ей кандидатов.
 2. «Открыто сейчас» пишем только при status=open и confidence=high. Если данных нет, пишем: «нет данных о часах, проверьте перед визитом».
 3. У каждой карточки есть пометки: idea_source (poi_data или generated), facts_sources, open_confidence.
-4. Приватность. Сервер не принимает и не логирует сырые координаты: только H3-ячейку (r9) или id ориентира. Нельзя логировать текст запроса вместе с ячейкой.
+4. Приватность. Сервер не принимает и не логирует сырые координаты: только H3-ячейку (не мельче r10, ≈0,015 км²) или id ориентира; ячейку мельче r10 схема отклоняет. Точная позиция GPS на наш сервер не уходит никогда; только по клику «Как пройти» при «Моё место» браузер сам подставляет её в ссылку 2GIS/Яндекс (решение пользователя, описано в ETHICS). Нельзя логировать текст запроса вместе с ячейкой.
 5. Сбой LLM или сети не должен ронять демо. Есть детерминированный запасной путь: rules-парсер и шаблонные карточки.
 6. Отвечаем на языке пользователя (ru, kk, en), коротко: 1–3 карточки, в why не больше двух предложений. Текст запроса для LLM — это данные, а не инструкции.
 
@@ -58,7 +58,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 | EVAL | `eval/**`, `tests/test_eval*.py`, `docs/{CONCEPT,RAG,SCENARIOS,ETHICS,PITCH,VIDEO}.md` |
 | ИНТЕГРАТОР | `app/schemas.py`, `app/config.py`, `app/__init__.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_contract.py`, `tests/fixtures/poi_synthetic.jsonl`, `.gitignore`, `.env.example`, `.worktreeinclude`, `CLAUDE.md`, `README.md`, `docs/{TASK,ARCHITECTURE,PLAN,PROMPTS}.md`, `requirements.txt`, `pyproject.toml`, `.claude/**`, `scripts/check_env.py`, `web/mock/answer_sample.json`, `Dockerfile` |
 
-В волне 3 действует другая таблица владения: см. docs/PLAN.md, раздел «Волна 3».
+В волнах 3 и 5 действуют свои таблицы владения: см. docs/PLAN.md, разделы «Волна 3» и «Волна 5».
 
 ### Протокол воркера
 1. Выполни `git branch --show-current`: ты должен быть НЕ на main. Создай `.venv` (см. «Команды»).
@@ -70,6 +70,16 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
 7. Отчёт воркера: ветка; список коммитов; задачи (ID); как проверить; известные проблемы; REQUEST.
 
 Интегратор вливает ветки скиллом `/integrate <ветка>`. Галочки в docs/PLAN.md ставит только интегратор.
+
+## Удалённый участник
+Дорожка DEPLOY (T77) идёт не в worktree на основной машине, а в клоне репозитория на компьютере второго разработчика.
+- Работает в своём клоне и в своей ветке `feat/deploy`. Отчёт присылает Megah.
+- Один раз после клонирования выполняет `git config core.hooksPath scripts/hooks`: так включается защита от секретов (хук блокирует коммиты с ключами; в клоне `.git/hooks` пуст).
+- Пушит только свою ветку (`git push -u origin feat/deploy`). В `main` не коммитит и не пушит.
+- `.env` у него свой, ключи никому не пересылает и не коммитит.
+- Правки чужих файлов не делает, а описывает как `REQUEST:` в отчёте (формат как в протоколе воркера выше).
+- Свежий `main` забирает командой `git fetch origin`, затем `git merge origin/main`, когда об этом сказал интегратор.
+- Интегратор вливает его ветку так: `git fetch origin`, затем `/integrate origin/feat/deploy`.
 
 ## Приоритеты над плагином ECC
 - Правила этого файла и проектные скиллы в `.claude/skills/` важнее общих правил ECC.

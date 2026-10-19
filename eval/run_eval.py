@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import statistics
 import sys
@@ -33,12 +34,12 @@ import yaml
 from pydantic import ValidationError
 
 from app.schemas import Answer, RecommendRequest
+from app.validate import has_open_claim
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIOS_PATH = Path(__file__).resolve().parent / "scenarios.yaml"
 MOCK_PATH = ROOT / "web" / "mock" / "answer_sample.json"
 
-OPEN_CLAIMS = ("открыто сейчас", "сейчас открыт", "open now", "қазір ашық")
 NIGHT_TAGS = {"late_open", "24_7"}
 ACCESS_MARKERS = ("коляск", "доступн", "не подтвержд", "wheelchair", "accessib", "кедергісіз")
 HOURS_MARKERS = ("нет данных", "не подтвержд", "проверьте", "no data", "not confirmed", "check",
@@ -72,6 +73,8 @@ class Result:
     cards: int = 0
     generation: str | None = None
     search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
+    search_line: str | None = None  # the «поиск: …» line from data_used.filters, verbatim
+    route_source: str | None = None  # MiniRoute.path_source: "graph" | "straight"; None = no route
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -137,6 +140,70 @@ def check_invariants(ans: Answer) -> list[str]:
             fails.append(f"{c.poi_id}: visit_min_low > visit_min_high")
     if ans.route is not None and not set(ans.route.stop_ids) <= set(ids):
         fails.append("маршрут ведёт в места не из карточек")
+    fails += check_graph_route(ans)
+    return fails
+
+
+# ------------------------------------------------------------- walking route (1.1.0)
+
+ROUTE_END_TOLERANCE_M = 50  # path ends vs start / last place; graph nodes are not the POI point
+WALK_M_PER_MIN = 75.0  # 4.5 km/h, the same speed as app.geo
+STRAIGHT_TOLERANCE_M = 3.0  # the route may measure length with a flat approximation, eval with
+# haversine: near a multiple of 75 m a nearly straight leg would fail by a rounding hair
+
+
+def min_walk_minutes(straight_m: float) -> int:
+    """Lower bound for a graph leg: walking the straight line, minus the tolerance."""
+    return math.ceil(max(0.0, straight_m - STRAIGHT_TOLERANCE_M) / WALK_M_PER_MIN - 1e-9)
+CROSSING_KINDS = {"signals", "marked", "unmarked"}
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(h)))
+
+
+def check_graph_route(ans: Answer) -> list[str]:
+    """Checks for a route along the OSM walk graph (path_source="graph"); straight routes and
+    answers without a route are not checked here (WALK_GRAPH=false keeps the old behaviour)."""
+    route = ans.route
+    if route is None or route.path_source != "graph":
+        return []
+    fails: list[str] = []
+    origin = ans.context.origin
+    points = {"origin": (origin.lat, origin.lon)}
+    points.update({c.poi_id: (c.geo.lat, c.geo.lon) for c in ans.cards})
+    if len(route.path) < 2:
+        return ["граф: в path меньше двух точек"]
+    first, last = route.path[0], route.path[-1]
+    d_start = haversine_m(first.lat, first.lon, *points["origin"])
+    if d_start > ROUTE_END_TOLERANCE_M:
+        fails.append(f"граф: path начинается в {d_start:.0f} м от старта")
+    end_id = route.legs[-1].to_id if route.legs else route.stop_ids[-1]
+    if end_id in points:  # the last leg may lead back to the start (loop walk)
+        d_end = haversine_m(last.lat, last.lon, *points[end_id])
+        if d_end > ROUTE_END_TOLERANCE_M:
+            fails.append(f"граф: path заканчивается в {d_end:.0f} м от {end_id}")
+    legs_m = sum(leg.distance_m for leg in route.legs)
+    if abs(legs_m - route.total_walk_m) > max(1, len(route.legs)):  # rounding per leg
+        fails.append(f"граф: сумма legs {legs_m} м ≠ total_walk_m {route.total_walk_m} м")
+    for leg in route.legs:
+        if leg.from_id not in points or leg.to_id not in points:
+            fails.append(f"граф: leg {leg.from_id}→{leg.to_id} ведёт не в карточку и не к старту")
+            continue
+        straight = haversine_m(*points[leg.from_id], *points[leg.to_id])
+        floor_min = min_walk_minutes(straight)
+        if leg.walk_min < floor_min:
+            fails.append(f"граф: leg {leg.from_id}→{leg.to_id} {leg.walk_min} мин "
+                         f"< по прямой {floor_min} мин")
+    if len(route.crossings) > 50:
+        fails.append(f"граф: переходов {len(route.crossings)} > 50")
+    bad_kinds = {x.kind for x in route.crossings} - CROSSING_KINDS
+    if bad_kinds:
+        fails.append(f"граф: неизвестный kind перехода {sorted(bad_kinds)}")
     return fails
 
 
@@ -151,7 +218,7 @@ def _check_lang(ans: Answer, want: str) -> list[str]:
     return fails
 
 
-def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
+def check_expect(ans: Answer, exp: dict[str, Any], graph_on: bool = True) -> list[str]:
     """Scenario-specific checks; keys are documented in eval/scenarios.yaml."""
     fails: list[str] = []
     n = len(ans.cards)
@@ -179,6 +246,11 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
         fails.append("нет маршрута")
     if route == "none" and ans.route is not None:
         fails.append("маршрут не ожидался")
+    if "route_source" in exp and (graph_on or exp["route_source"] != "graph"):
+        # graph: the route must follow the walk graph (1.1.0); skipped when the run has no graph
+        got = ans.route.path_source if ans.route is not None else None
+        if got != exp["route_source"]:
+            fails.append(f"маршрут {got or 'нет'}, ожидали {exp['route_source']}")
     if exp.get("route_fits_budget") and ans.route is not None and not ans.route.fits_budget:
         fails.append(f"маршрут не укладывается в бюджет ({ans.route.total_min} мин)")
 
@@ -187,12 +259,19 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
             if not c.facts_sources or not c.open_note.strip():
                 fails.append(f"{c.poi_id}: нет меток источника или пометки о часах")
     if exp.get("forbid_open_claim_without_high"):
+        # the same guard validate uses (ru/kk/en roots + markers, NFKC, homoglyphs)
         for c in ans.cards:
             if c.open_status == "open" and c.open_confidence == "high":
                 continue
-            text = f"{_card_text(c)} {c.open_note}".lower()
-            if any(p in text for p in OPEN_CLAIMS):
+            all_day = "24_7" in c.tags  # «круглосуточно» from the data is not a claim
+            texts = (c.why, c.what_to_do, c.open_note)
+            if any(has_open_claim(t, all_day_ok=all_day) for t in texts):
                 fails.append(f"{c.poi_id}: «открыто сейчас» без open/high")
+        all_open = bool(ans.cards) and all(
+            c.open_status == "open" and c.open_confidence == "high" for c in ans.cards
+        )
+        if not all_open and has_open_claim(ans.summary):
+            fails.append("summary: «открыто сейчас», хотя не все места open/high")
     if exp.get("warnings_required") and not ans.warnings:
         fails.append("нет предупреждений")
     if "warnings_any" in exp:
@@ -241,6 +320,14 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
             got = detect_script(c.open_note)
             if c.open_status == "unknown" and got != exp["unknown_note_lang"]:
                 fails.append(f"{c.poi_id}: пометка о часах на {got}: «{c.open_note[:40]}»")
+    if "intent_categories_include" in exp:
+        lacking = [c for c in exp["intent_categories_include"] if c not in ans.intent.categories]
+        if lacking:
+            fails.append(f"intent.categories без {lacking}: {ans.intent.categories}")
+    if "intent_categories_exclude" in exp:
+        extra = [c for c in exp["intent_categories_exclude"] if c in ans.intent.categories]
+        if extra:
+            fails.append(f"intent.categories содержит {extra}: {ans.intent.categories}")
     for key, want in (exp.get("intent") or {}).items():
         got = getattr(ans.intent, key, None)
         if got != want:
@@ -252,7 +339,7 @@ def check_expect(ans: Answer, exp: dict[str, Any]) -> list[str]:
     return fails
 
 
-def grade(scn: dict[str, Any], out: Outcome) -> Result:
+def grade(scn: dict[str, Any], out: Outcome, graph_on: bool = True) -> Result:
     exp = scn.get("expect") or {}
     res = Result(
         id=scn["id"],
@@ -261,6 +348,7 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
         passed=False,
         latency_ms=out.latency_ms,
         search=search_mode(out),
+        search_line=search_line(out),
     )
     if out.error:
         res.failures.append(f"ошибка: {out.error}")
@@ -274,12 +362,13 @@ def grade(scn: dict[str, Any], out: Outcome) -> Result:
     assert ans is not None
     res.cards = len(ans.cards)
     res.generation = ans.data_used.generation
+    res.route_source = ans.route.path_source if ans.route is not None else None
     if exp.get("reject_ok"):
         if ans.cards or not ans.warnings:
             res.failures.append("ожидали 422 или 0 карточек с понятным предупреждением")
     else:
         res.failures += check_invariants(ans)
-        res.failures += check_expect(ans, exp)
+        res.failures += check_expect(ans, exp, graph_on)
     res.passed = not res.failures
     return res
 
@@ -362,6 +451,15 @@ def url_runner(
     base = base_url.rstrip("/")
     try:
         health = http.get(f"{base}/api/health")
+        if health.status_code == 503:  # server is up but has no data (poi_count 0)
+            try:
+                info = health.json()
+            except ValueError:
+                info = {}
+            return None, [
+                f"API {base} без данных: status={info.get('status')}, "
+                f"POI={info.get('poi_count')}, warnings={info.get('warnings', [])}"
+            ]
         health.raise_for_status()
         info = health.json()
     except (httpx.HTTPError, ValueError) as exc:
@@ -370,7 +468,7 @@ def url_runner(
         f"API: status={info.get('status')}, POI={info.get('poi_count')}, "
         f"index={info.get('index')}, llm={info.get('llm')}"
     ]
-    if info.get("llm") == "off" and not no_llm:
+    if str(info.get("llm", "")).startswith("off") and not no_llm:  # "off" / "off (disabled)"
         notes.append("LLM на сервере выключена: ответы шаблонные")
 
     def run(req: RecommendRequest) -> Outcome:
@@ -401,7 +499,7 @@ def _ms(t0: float) -> int:
 
 
 def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = False) -> list[Result]:
-    results = []
+    outcomes: list[Outcome] = []
     for scn in scenarios:
         data = dict(scn["request"])
         if no_llm:
@@ -409,15 +507,34 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
         try:
             req = RecommendRequest.model_validate(data)
         except ValidationError as exc:
-            results.append(grade(scn, Outcome(error=f"сценарий не по схеме: {exc}")))
+            outcomes.append(Outcome(error=f"сценарий не по схеме: {exc}"))
             continue
-        results.append(grade(scn, runner(req)))
-    return results
+        outcomes.append(runner(req))
+    graph_on = graph_used(outcomes)
+    return [grade(scn, out, graph_on) for scn, out in zip(scenarios, outcomes, strict=True)]
+
+
+def graph_used(outcomes: list[Outcome]) -> bool:
+    """Is the walk graph live in this run? The API does not report it, so: at least one answer
+    has a graph route. With WALK_GRAPH=false or no graph file, route_source=graph is skipped."""
+    return any(
+        o.answer is not None and o.answer.route is not None
+        and o.answer.route.path_source == "graph"
+        for o in outcomes
+    )
 
 
 SEARCH_LABEL = {"vector": "по смыслу", "words": "по словам"}
 _SEMANTIC_MARKERS = ("смысл", "мағына", "meaning", "semantic")
 _SEARCH_PREFIXES = ("поиск", "іздеу", "search")
+
+
+def search_line(out: Outcome) -> str | None:
+    if out.answer is None:
+        return None
+    return next(
+        (f for f in out.answer.data_used.filters if f.lower().startswith(_SEARCH_PREFIXES)), None
+    )
 
 
 def search_mode(out: Outcome) -> str | None:
@@ -433,6 +550,16 @@ def search_mode(out: Outcome) -> str | None:
         if low.startswith(_SEARCH_PREFIXES):
             return "vector" if any(m in low for m in _SEMANTIC_MARKERS) else "words"
     return None
+
+
+ROUTE_LABEL = {"graph": "по графу", "straight": "прямые"}
+
+
+def route_summary(results: list[Result]) -> str:
+    graph = sum(r.route_source == "graph" for r in results)
+    straight = sum(r.route_source == "straight" for r in results)
+    none = sum(r.route_source is None for r in results)
+    return f"по графу тротуаров {graph}, прямыми отрезками {straight}, без маршрута {none}"
 
 
 def search_summary(results: list[Result]) -> str:
@@ -451,24 +578,82 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
         f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
         f"- **Итог: {passed}/{len(results)}**",
         f"- Поиск: {search_summary(results)}",
+        f"- Маршруты: {route_summary(results)}",
     ]
     lines += [f"- {n}" for n in notes]
     lines += [
         "",
-        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | latency, мс |",
-        "|---|---|---|---|---:|---|---|---:|",
+        "| id | сценарий | итог | что не прошло | карточек | генерация | поиск | маршрут "
+        "| latency, мс |",
+        "|---|---|---|---|---:|---|---|---|---:|",
     ]
     for r in results:
         why = "; ".join(r.failures).replace("|", "/") or "—"
         lines.append(
             f"| {r.id} | {r.title} | {'pass' if r.passed else 'FAIL'} | {why} | {r.cards} "
-            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} | {r.latency_ms} |"
+            f"| {r.generation or '—'} | {SEARCH_LABEL.get(r.search or '', '—')} "
+            f"| {ROUTE_LABEL.get(r.route_source or '', '—')} | {r.latency_ms} |"
         )
     return "\n".join(lines) + "\n"
 
 
-def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[str]) -> None:
+# ------------------------------------------------------------ privacy probes (1.2.0)
+
+# Bodies sent as is (not through RecommendRequest): the server itself must reject them with 422.
+PRIVACY_PROBES: list[tuple[str, str, dict[str, Any]]] = [
+    ("r11", "ячейка H3 r11 (мельче r10)",
+     {"query": "кофе рядом", "location": {"h3_cell": "8b2153806d12fff"}}),
+    ("raw_coords", "сырые координаты lat/lon",
+     {"query": "кофе рядом", "location": {"lat": 51.0894, "lon": 71.4161}}),
+]
+PostFn = Callable[[dict[str, Any]], int]  # sends one body, returns the HTTP status (-1 = no answer)
+
+
+def run_privacy_probes(post: PostFn | None) -> list[dict[str, Any]]:
+    """Each probe must be rejected with 422. post=None: check the request schema in-process
+    (the API validates with the same model, so a schema rejection is a 422 there)."""
+    out = []
+    for pid, title, body in PRIVACY_PROBES:
+        if post is None:
+            try:
+                RecommendRequest.model_validate(body)
+                got = "принят схемой"
+            except ValidationError:
+                got = "422"
+        else:
+            status = post(body)
+            got = "нет ответа" if status < 0 else str(status)
+        out.append({"id": pid, "title": title, "got": got, "passed": got == "422"})
+    return out
+
+
+def url_post(base_url: str, timeout_s: float = 30.0) -> PostFn:
+    import httpx
+
+    endpoint = base_url.rstrip("/") + "/api/recommend"
+
+    def post(body: dict[str, Any]) -> int:
+        try:
+            return httpx.post(endpoint, json=body, timeout=timeout_s).status_code
+        except httpx.HTTPError:
+            return -1
+
+    return post
+
+
+def privacy_summary(probes: list[dict[str, Any]]) -> str:
+    ok = sum(p["passed"] for p in probes)
+    parts = "; ".join(f"{p['title']} → {p['got']}" for p in probes)
+    return f"{ok}/{len(probes)} отклонены с 422 ({parts})"
+
+
+def write_report(
+    out_dir: Path, mode: str, results: list[Result], notes: list[str],
+    privacy: list[dict[str, Any]] | None = None,
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if privacy is not None:
+        notes = [*notes, f"Приватность: {privacy_summary(privacy)}"]
     (out_dir / "report.md").write_text(render_md(mode, results, notes), encoding="utf-8")
     payload = {
         "mode": mode,
@@ -476,6 +661,8 @@ def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[st
         "total": len(results),
         "notes": notes,
         "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
+        "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
+        "privacy": privacy or [],
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
@@ -750,12 +937,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         results = run_all(scenarios, runner, no_llm=args.no_llm)
 
-    write_report(args.out, mode, results, notes)
+    wants_graph = [
+        s["id"] for s in scenarios if (s.get("expect") or {}).get("route_source") == "graph"
+    ]
+    if wants_graph and not any(r.route_source == "graph" for r in results):
+        notes.append("граф тротуаров в этом прогоне не используется (WALK_GRAPH=false или "
+                     "нет файла графа): ожидание route_source=graph пропущено для "
+                     + ", ".join(wants_graph))
+    privacy = run_privacy_probes(url_post(args.url) if args.url else None)
+    write_report(args.out, mode, results, notes, privacy)
     passed = sum(r.passed for r in results)
     for r in results:
         print(f"{r.id:<4} {'pass' if r.passed else 'FAIL'}  {'; '.join(r.failures)[:160]}")
     for n in notes:
         print(f"note: {n}")
+    print(f"PRIVACY: {privacy_summary(privacy)}")
     print(f"EVAL {mode}: {passed}/{len(results)} -> {args.out / 'report.md'}")
     return 0
 

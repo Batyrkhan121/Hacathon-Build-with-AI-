@@ -313,6 +313,7 @@ def test_search_mode_from_filters(mock_answer: Answer, line: str, mode: str) -> 
     ans = mock_answer.model_copy(deep=True)
     ans.data_used.filters = ["пешком ≤ 15 мин", line]
     assert run_eval.search_mode(Outcome(answer=ans)) == mode
+    assert run_eval.search_line(Outcome(answer=ans)) == line
     assert run_eval.search_mode(Outcome(answer=mock_answer)) is None  # no such line -> unknown
 
 
@@ -350,3 +351,197 @@ def test_inprocess_counts_query_vectors(
     assert [r.search for r in results] == ["vector", "words"]
     summary = run_eval.search_summary(results)
     assert "вектор запроса (embed_query) у 1, только по словам 1" in summary
+
+
+# ---------------------------------------- RAG review R4: eval uses the validate guard
+
+
+@pytest.mark.parametrize(
+    "claim", ["Все места открыты сейчас.", "В данный момент работает.", "Қазір ашық.", "Open 24/7."]
+)
+def test_open_claim_check_uses_shared_guard(mock_answer: Answer, claim: str) -> None:
+    bad = mock_answer.model_copy(deep=True)
+    unknown = next(c for c in bad.cards if c.open_status == "unknown")
+    unknown.why = claim
+    assert check_expect(bad, {"forbid_open_claim_without_high": True})
+
+
+def test_open_claim_in_summary_is_caught(mock_answer: Answer) -> None:
+    bad = mock_answer.model_copy(deep=True)
+    bad.summary = "Все места открыты сейчас."
+    assert any("summary" in f for f in check_expect(bad, {"forbid_open_claim_without_high": True}))
+    all_open = bad.model_copy(deep=True)
+    for c in all_open.cards:
+        c.open_status, c.open_confidence = "open", "high"
+    assert check_expect(all_open, {"forbid_open_claim_without_high": True}) == []
+
+
+def test_24_7_template_reason_is_not_a_failed_claim(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    card = next(c for c in ans.cards if c.open_status == "unknown")
+    card.why = "≈20 мин пешком, круглосуточно."
+    card.tags = [*card.tags, "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True}) == []
+    card.tags = [t for t in card.tags if t != "24_7"]
+    assert check_expect(ans, {"forbid_open_claim_without_high": True})
+
+
+def test_url_runner_notes_llm_off_with_reason() -> None:
+    """Health now says "off (reason)": the note about template answers must still appear."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok", "poi_count": 1222,
+                                         "index": "ready", "llm": "off (disabled)"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    runner, notes = run_eval.url_runner("http://test", client=client)
+    assert runner is not None
+    assert any("LLM на сервере выключена" in n for n in notes)
+
+
+def test_url_runner_503_without_data_stops_with_reason() -> None:
+    """Health 503 with a JSON body (0 POI): stop the run and say why, not 'unreachable'."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"status": "degraded", "poi_count": 0,
+                                         "warnings": ["poi.jsonl не найден"]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    runner, notes = run_eval.url_runner("http://test", client=client)
+    assert runner is None
+    assert "без данных" in notes[0]
+    assert "status=degraded" in notes[0] and "POI=0" in notes[0]
+    assert "poi.jsonl не найден" in notes[0]
+
+
+def test_intent_categories_include_exclude(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.intent.categories = ["attraction", "park"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]}) == []
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]})
+    ans.intent.categories = ["attraction"]
+    assert check_expect(ans, {"intent_categories_include": ["park"]})
+    assert check_expect(ans, {"intent_categories_exclude": ["park"]}) == []
+
+
+# ------------------------------------------------------- walking route on the graph (1.1.0)
+
+
+def graph_answer(mock_answer: Answer) -> Answer:
+    """The mock route marked as graph: its path already goes origin -> stops."""
+    data = mock_answer.model_dump()
+    data["route"]["path_source"] = "graph"
+    data["route"]["crossings"] = [{"lat": 51.09, "lon": 71.413, "kind": "signals"}]
+    return Answer.model_validate(data)
+
+
+def test_graph_route_consistent_passes(mock_answer: Answer) -> None:
+    assert run_eval.check_graph_route(graph_answer(mock_answer)) == []
+
+
+def test_straight_route_is_not_graph_checked(mock_answer: Answer) -> None:
+    ans = mock_answer.model_copy(deep=True)
+    ans.route.total_walk_m = 1  # would fail the graph checks
+    assert run_eval.check_graph_route(ans) == []
+
+
+def test_graph_route_far_start_and_wrong_total(mock_answer: Answer) -> None:
+    ans = graph_answer(mock_answer)
+    ans.route.path[0].lat += 0.002  # ≈220 m north of the start
+    ans.route.total_walk_m += 100
+    fails = run_eval.check_graph_route(ans)
+    assert any("начинается" in f for f in fails)
+    assert any("total_walk_m" in f for f in fails)
+
+
+def test_graph_route_minutes_not_below_straight(mock_answer: Answer) -> None:
+    ans = graph_answer(mock_answer)
+    ans.route.legs[1].walk_min = 1  # 380 m straight needs at least 6 min at 75 m/min
+    assert any("по прямой" in f for f in run_eval.check_graph_route(ans))
+
+
+def test_graph_loop_route_ends_at_start(mock_answer: Answer) -> None:
+    from app.schemas import RouteLeg
+
+    ans = graph_answer(mock_answer)
+    back = RouteLeg(from_id="mock:poi/mega_silk_way", to_id="origin", distance_m=157, walk_min=3)
+    ans.route.legs.append(back)
+    ans.route.total_walk_m += back.distance_m
+    ans.route.path.append(ans.context.origin.model_copy())
+    assert run_eval.check_graph_route(ans) == []
+
+
+def test_report_counts_graph_routes(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["routes"] == {"graph": 0, "straight": 16}
+    assert "Маршруты: по графу тротуаров 0" in (tmp_path / "report.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("straight_m", "minutes"), [(0, 0), (226, 3), (227, 3), (229, 4), (300, 4)]
+)
+def test_min_walk_minutes_has_tolerance(straight_m: float, minutes: int) -> None:
+    """226 m straight is 3.01 min: within the 3 m tolerance a 3-minute graph leg is fine."""
+    assert run_eval.min_walk_minutes(straight_m) == minutes
+
+
+def test_route_source_expectation(mock_answer: Answer) -> None:
+    assert check_expect(mock_answer, {"route_source": "straight"}) == []
+    assert any("ожидали graph" in f for f in check_expect(mock_answer, {"route_source": "graph"}))
+    no_route = mock_answer.model_copy(deep=True)
+    no_route.route = None
+    assert any("маршрут нет" in f for f in check_expect(no_route, {"route_source": "graph"}))
+
+
+def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) -> None:
+    """WALK_GRAPH=false: no answer in the run is a graph route -> route_source=graph is skipped;
+    once any answer is a graph route, a straight one in a graph-expecting scenario fails."""
+    base = run_eval.load_scenarios()[0]
+    scns = [{**base, "id": "X1", "expect": {"route_source": "graph"}},
+            {**base, "id": "X2", "expect": {}}]
+    straight = run_eval.mock_runner()
+    assert all(r.passed for r in run_eval.run_all(scns, straight))
+
+    graph = graph_answer(mock_answer)
+    answers = iter([mock_answer, graph])  # X1 straight, X2 graph
+
+    def mixed(req: RecommendRequest) -> Outcome:
+        return Outcome(answer=next(answers))
+
+    results = {r.id: r for r in run_eval.run_all(scns, mixed)}
+    assert not results["X1"].passed and results["X2"].passed
+
+
+# ------------------------------------------------------------- privacy probes (1.2.0)
+
+
+def test_privacy_probes_schema_rejects_r11_and_raw_coords() -> None:
+    probes = run_eval.run_privacy_probes(None)
+    assert {p["id"] for p in probes} == {"r11", "raw_coords"}
+    assert all(p["passed"] and p["got"] == "422" for p in probes), probes
+
+
+def test_privacy_probes_over_http() -> None:
+    """The server answer decides: 422 passes, 200 (cell coarsened / coords taken) fails."""
+    sent: list[dict] = []
+
+    def post(body: dict) -> int:
+        sent.append(body)
+        return 422 if "lat" in body["location"] else 200
+
+    probes = {p["id"]: p for p in run_eval.run_privacy_probes(post)}
+    assert not probes["r11"]["passed"] and probes["r11"]["got"] == "200"
+    assert probes["raw_coords"]["passed"]
+    assert len(sent) == 2
+    assert "1/2 отклонены" in run_eval.privacy_summary(list(probes.values()))
+
+
+def test_report_has_privacy_block(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert [p["id"] for p in report["privacy"]] == ["r11", "raw_coords"]
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Приватность: 2/2 отклонены с 422" in md

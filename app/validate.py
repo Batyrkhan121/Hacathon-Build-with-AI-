@@ -6,11 +6,13 @@ Owner: CORE lane (task T24). Pure functions, no network.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
+from dataclasses import dataclass
 from typing import Literal
 
 from app.hours import unknown_note
-from app.retrieval import explain, generic_key
+from app.retrieval import explain, generic_key, poi_text, text_stems
 from app.schemas import (
     POI,
     Candidate,
@@ -38,21 +40,47 @@ FORBIDDEN_OPEN_CLAIMS: tuple[str, ...] = (
     "уже открыт",
     "open right now",
     "қазір жұмыс істейді",
-    # hours claims the code did not confirm
+    # hours claims the code did not confirm («открыто до 22», «open until …» are caught by
+    # root + time marker in has_open_claim; plain substrings would hit «работает допоздна»)
     "now open",
     "already open",
-    "open until",
-    "open till",
-    "открыто до",
-    "открыт до",
-    "открыта до",
-    "работает до",
     "уже работает",
 )
 MAX_WHY_CHARS = 280
 MAX_TODO_CHARS = 360
 MAX_WHY_SENTENCES = 2
 MAX_CARDS = 3
+MAX_SUMMARY_CHARS = 200
+# finalize() warnings are shown to the user, so they follow intent.lang (product rule 6)
+FINALIZE_WARNINGS: dict[str, dict[str, str]] = {
+    "ru": {
+        "no_candidates": "Рядом не нашлось подходящих мест по заданным условиям",
+        "foreign": "Отброшено карточек ИИ с местами не из списка кандидатов: {n}",
+        "duplicates": "Отброшено повторных карточек ИИ: {n}",
+        "claims": "Убрано утверждение о текущей работе места: часы не подтверждены",
+        "facts": "Убраны непроверяемые детали из текста ИИ: "
+        "цены, телефоны, адреса или числа не из данных",
+        "fallback": "ИИ не дал подходящих карточек, показаны карточки по данным",
+    },
+    "kk": {
+        "no_candidates": "Берілген шарттар бойынша жақын жерде лайықты орын табылмады",
+        "foreign": "Тізімде жоқ орындары бар ЖИ карточкалары алынып тасталды: {n}",
+        "duplicates": "Қайталанған ЖИ карточкалары алынып тасталды: {n}",
+        "claims": "Жұмыс уақыты туралы расталмаған тұжырым алынып тасталды",
+        "facts": "ЖИ мәтінінен тексерілмейтін мәліметтер алынып тасталды: "
+        "бағалар, телефондар, мекенжайлар немесе деректерде жоқ сандар",
+        "fallback": "ЖИ лайықты карточка бермеді, деректер бойынша карточкалар көрсетілді",
+    },
+    "en": {
+        "no_candidates": "No suitable places nearby for these conditions",
+        "foreign": "Dropped AI cards with places outside the candidate list: {n}",
+        "duplicates": "Dropped repeated AI cards: {n}",
+        "claims": "Removed an unconfirmed statement about opening hours",
+        "facts": "Removed unverifiable details from the AI text: "
+        "prices, phones, addresses or numbers not in the data",
+        "fallback": "The AI gave no usable cards, showing cards built from the data",
+    },
+}
 UNKNOWN_HOURS_NOTE = unknown_note("ru")  # texts in ru/kk/en live in app.hours
 
 _CLAIM_RE = re.compile(
@@ -164,14 +192,223 @@ TODO_TEMPLATES: dict[str, dict[str, str]] = {
 }
 
 
+# ------------------------------------------------------------- claim / fact guards
+# RAG review (integrator, wave 3): the phrase list above is easy to bypass (plural forms,
+# «в данный момент», «круглосуточно», kk «ашық», zero-width chars, Latin homoglyphs).
+# A sentence is an "open now / hours" claim when an hours root meets a time marker, or when
+# it is one of the standalone forms. Text is NFKC-normalised, zero-width characters are
+# removed and mixed-script words are folded to one alphabet before matching.
+
+_ZERO_WIDTH = dict.fromkeys(
+    map(ord, "\u00ad\u200b\u200c\u200d\u200e\u200f\u2060\ufeff")  # soft hyphen, ZW*, BOM
+)
+_LAT_TO_CYR = str.maketrans("aceopxykmtABCEHKMOPTXY", "асеорхукмтАВСЕНКМОРТХУ")
+_CYR_TO_LAT = str.maketrans("асеорхукмтАВСЕНКМОРТХУ", "aceopxykmtABCEHKMOPTXY")
+_HAS_CYR = re.compile(r"[а-яёәіңғүұқөһ]", re.IGNORECASE)
+_HAS_LAT = re.compile(r"[a-z]", re.IGNORECASE)
+_WORDS = re.compile(r"\w+")
+
+# «открытые данные / ашық деректер / open data» is about the data, not about the hours
+_RU_ROOT = re.compile(r"\b(открыт\w*+(?!\s+данн)|работа(ет|ют|ть|ющ\w*))")
+_RU_MARK = re.compile(
+    r"(сейчас|в данный момент|в настоящее время|\bещ[её]\b|\bуже\b|сегодня|"
+    r"\bдо\s+\d|до\s+(полуночи|утра|ночи|вечера)|24\s*/\s*7|24\s*час|"
+    r"\bс\s+\d{1,2}(?:[:.]\d{2})?\s*(?:до|-|–|—)\s*\d)"  # «с 9 до 22», not «с 3 людьми»
+)
+# «открыто до закрытия / до позднего вечера», «работает до последнего посетителя»
+_RU_UNTIL = re.compile(r"\b(открыт\w*+(?!\s+данн)|работа(ет|ют))\s+(\w+\s+)?до\b")
+_RU_ALONE = re.compile(r"(круглосуточн\w*|24\s*/\s*7|без выходных)")
+_KK_ROOT = re.compile(r"(ашық(?!\s+дерек)|жұмыс\s+істе\w*)")
+_KK_MARK = re.compile(r"(қазір|\bәлі\b|бүгін|дейін|\d{1,2}\s*[:.]\s*\d{2}|тәулік)")
+_KK_ALONE = re.compile(r"(жұмыс\s+істеп\s+тұр\w*|тәулік\s+бойы|ашық\s*[.!…]*\s*$)")
+_EN_ROOT = re.compile(r"\b(open\w*+(?!\s+data)|operat\w*)\b")
+_EN_MARK = re.compile(
+    r"(\bnow\b|\bcurrently\b|\btoday\b|\btonight\b|\bstill\b|\balready\b|\buntil\b|\btill\b|"
+    r"24\s*/\s*7|24 hours|at the moment)"
+)
+_EN_ALONE = re.compile(
+    r"(\b(we[’']?re|we are|it[’']?s|it is|is|are|stays?)\s+open\b(?![-\s]air)|\bopen\s+24|"
+    r"24\s*/\s*7|around the clock)"
+)
+# «круглосуточно / 24/7» is fine when the data says so (tag 24_7): checked with all_day_ok
+_ALL_DAY = re.compile(
+    r"(круглосуточн\w*|24\s*/\s*7|24\s*час\w*|тәулік\s+бойы|around the clock|24 hours)"
+)
+
+
+def _fold(text: str, to_cyrillic: bool) -> str:
+    """NFKC, no zero-width chars, mixed-script words folded to one alphabet, lower case.
+
+    Only for matching: the text shown to the user keeps its own typography («…», «№»).
+    """
+    text = unicodedata.normalize("NFKC", text).translate(_ZERO_WIDTH)
+    table, probe = (_LAT_TO_CYR, _HAS_CYR) if to_cyrillic else (_CYR_TO_LAT, _HAS_LAT)
+    text = _WORDS.sub(lambda m: m[0].translate(table) if probe.search(m[0]) else m[0], text)
+    return text.lower().replace("ё", "е")
+
+
+def _sentence_claims_open(sentence: str, all_day_ok: bool = False) -> bool:
+    cyr, lat = _fold(sentence, True), _fold(sentence, False)
+    if all_day_ok:  # the data says 24/7: «круглосуточно» is a fact, not a claim
+        cyr, lat = _ALL_DAY.sub(" ", cyr), _ALL_DAY.sub(" ", lat)
+    return bool(
+        _CLAIM_RE.search(cyr)
+        or _CLAIM_RE.search(lat)
+        or (_RU_ROOT.search(cyr) and _RU_MARK.search(cyr))
+        or _RU_UNTIL.search(cyr)
+        or _RU_ALONE.search(cyr)
+        or (_KK_ROOT.search(cyr) and _KK_MARK.search(cyr))
+        or _KK_ALONE.search(cyr.strip())
+        or (_EN_ROOT.search(lat) and _EN_MARK.search(lat))
+        or _EN_ALONE.search(lat)
+    )
+
+
+def _sentences(text: str) -> list[str]:
+    """Sentences as written (only invisible zero-width characters are removed)."""
+    clean = text.translate(_ZERO_WIDTH)
+    return [s for s in _SENTENCE_SPLIT.split(clean.strip()) if s]
+
+
+def has_open_claim(text: str, *, all_day_ok: bool = False) -> bool:
+    """True when any sentence claims a place is open now / states hours (ru, kk, en).
+
+    all_day_ok=True when the place has the 24_7 tag: «круглосуточно» is then data.
+    Shared with eval/run_eval.py so the eval checks exactly what the guard removes.
+    """
+    return any(_sentence_claims_open(s, all_day_ok) for s in _sentences(text))
+
+
+_MONEY = re.compile(r"(тенге|теңге|₸|\$|€|₽|\bруб|\btenge\b|\bkzt\b|\busd\b)", re.IGNORECASE)
+_PHONE = re.compile(
+    r"(\+\s?7[\d\s()-]{6,}|\b8\s?\(?7\d{2}\)?[\d\s-]{6,}|\b\d{3}[\s-]\d{2}[\s-]\d{2}\b)"
+)
+_URL = re.compile(r"(https?://|www\.|\b[\w-]+\.(kz|com|ru|org|net|info)\b)", re.IGNORECASE)
+_ADDRESS = re.compile(
+    r"(\b(ул|пр|просп|мкр|пер|бул)\.\s*\w|\b(street|avenue)\s+\w|\bд\.\s*\d)",
+    re.IGNORECASE,
+)
+# «на улице Абая», «по проспекту Мангилик Ел» — but not «на улице холодно»
+_STREET = re.compile(
+    r"\b(?:[Уу]лиц[аеуыи]|[Пп]роспект\w?|[Пп]ереул\w+|[Бб]ульвар\w?|[Мм]икрорайон\w?|"
+    r"көшесі\w*|даңғыл\w*)\s+[А-ЯЁӘІҢҒҮҰҚӨҺA-Z0-9«\"]"
+)
+_TIME = re.compile(r"\b([01]?\d|2[0-4])[:.]([0-5]\d)\b(?!\s*(?:км|km|м\b|m\b))")
+# «круглосуточно / 24/7» needs the 24_7 tag or the hours note; «закрывается поздно /
+# открывается рано» needs known hours. «открывается вид на город» is about the view.
+_HOURS_VERB = re.compile(
+    r"(закрыва\w*+|открыва\w*+(?!\s+(вид|панорам))|\bcloses?\b|\bclosing\b|"
+    r"\bopens?\b(?!\s+(onto|up|to))|жабыл\w*|ашыл\w*)"
+)
+_HOURS_HINT = re.compile(
+    r"(\d|рано|поздно|утр\w*|вечер\w*|ноч\w*|полноч\w*|\bearly\b|\blate\b|morning|"
+    r"evening|night|midnight|ерте|\bкеш\b|таң)"
+)
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+@dataclass(frozen=True)
+class _Facts:
+    """Numbers and clock times a text may mention: they come from the data or the code."""
+
+    numbers: frozenset[float]
+    times: frozenset[str]
+    distances: tuple[int, ...]
+    all_day_ok: bool = False  # the data says 24/7 (tag 24_7 or the hours note)
+    hours_known: bool = True  # hours status is not unknown
+
+    def merge(self, other: _Facts) -> _Facts:
+        return _Facts(self.numbers | other.numbers, self.times | other.times,
+                      self.distances + other.distances,
+                      self.all_day_ok and other.all_day_ok,
+                      self.hours_known and other.hours_known)
+
+
+def _clock(hours: str, minutes: str) -> str:
+    return f"{int(hours):02d}:{minutes}"
+
+
+def _numbers_in(text: str | None) -> set[float]:
+    return {float(n.replace(",", ".")) for n in _NUMBER.findall(text or "")}
+
+
+def _facts_for(cand: Candidate, visit: tuple[int, int], intent: QueryIntent | None,
+               title: str = "") -> _Facts:
+    poi, hours = cand.poi, cand.hours
+    numbers = {float(x) for x in (cand.distance_m, cand.walk_min, cand.walk_min + 1,
+                                  max(1, cand.walk_min - 1), *visit)}
+    numbers.add(round(cand.distance_m / 1000, 1))
+    for value in (hours.closes_in_min, hours.opens_in_min):
+        if value is not None:
+            numbers.add(float(value))
+    if intent is not None:
+        for value in (intent.time_budget_min, intent.max_walk_min, intent.group_size):
+            if value:
+                numbers.add(float(value))
+        if intent.time_budget_min and intent.time_budget_min >= 60:
+            numbers.update({float(intent.time_budget_min // 60), intent.time_budget_min / 60})
+    if "24_7" in poi.tags:
+        numbers.update({24.0, 7.0})
+    for text in (poi.name, title, poi.address, hours.note):
+        numbers |= _numbers_in(text)
+    times = frozenset(_clock(h, m) for h, m in _TIME.findall(hours.note))
+    all_day = "24_7" in poi.tags or bool(_ALL_DAY.search(_fold(hours.note, True)))
+    return _Facts(frozenset(numbers), times, (cand.distance_m,), all_day,
+                  hours.status != "unknown")
+
+
+def _sentence_unverified(sentence: str, facts: _Facts) -> bool:
+    """Prices, phones, links, street addresses or numbers / times not found in the data."""
+    folded = unicodedata.normalize("NFKC", sentence)
+    if _MONEY.search(folded) or _PHONE.search(folded) or _URL.search(folded):
+        return True
+    variants = (_fold(sentence, True), _fold(sentence, False))
+    if not facts.all_day_ok and any(_ALL_DAY.search(v) for v in variants):
+        return True
+    if not facts.hours_known and any(
+        _HOURS_VERB.search(v) and _HOURS_HINT.search(v) for v in variants
+    ):
+        return True
+    if _ADDRESS.search(folded) or _STREET.search(folded):
+        return True
+    for h, m in _TIME.findall(folded):
+        if _clock(h, m) not in facts.times:
+            return True
+    rest = _TIME.sub(" ", folded)
+    for token in _NUMBER.findall(rest):
+        value = float(token.replace(",", "."))
+        if value in facts.numbers:
+            continue
+        if any(abs(value - d) <= max(50, 0.1 * d) for d in facts.distances):
+            continue  # «около 500 м» for 509 m
+        return True
+    return False
+
+
+def _guard_text(text: str, facts: _Facts, allow_open: bool) -> tuple[str, bool, bool]:
+    """(kept text, open claims removed?, unverifiable facts removed?) — whole sentences."""
+    kept: list[str] = []
+    claims = facts_cut = False
+    for sentence in _sentences(text):
+        if not allow_open and _sentence_claims_open(sentence, facts.all_day_ok):
+            claims = True
+            continue
+        if _sentence_unverified(sentence, facts):
+            facts_cut = True
+            continue
+        kept.append(sentence)
+    return " ".join(kept), claims, facts_cut
+
+
+# idea_source="poi_data" must be backed by the record: a description, or the text mentions
+# the name / category / tags of the place (hypothesis from the review; tune on eval with Claude)
+def _backed_by_data(text: str, poi: POI) -> bool:
+    if (poi.description or "").strip():
+        return True
+    return bool(text_stems(text) & text_stems(poi_text(poi)))
+
+
 # ------------------------------------------------------------------ helpers
-
-
-def _strip_open_claims(text: str) -> tuple[str, bool]:
-    """Drop whole sentences that claim the place is open now."""
-    sentences = [s for s in _SENTENCE_SPLIT.split(text.strip()) if s]
-    kept = [s for s in sentences if not _CLAIM_RE.search(s)]
-    return " ".join(kept), len(kept) != len(sentences)
 
 
 def _first_sentences(text: str, n: int) -> str:
@@ -335,17 +572,41 @@ def _distinct_titles(cards: list[Card], cands: list[Candidate], lang: Lang) -> l
     return out
 
 
+def _facts_from_card(card: Card) -> _Facts:
+    numbers = {float(x) for x in (card.distance_m, card.walk_min, card.visit_min_low,
+                                  card.visit_min_high)}
+    numbers.add(round(card.distance_m / 1000, 1))
+    for text in (card.title, card.address, card.open_note):
+        numbers |= _numbers_in(text)
+    times = frozenset(_clock(h, m) for h, m in _TIME.findall(card.open_note))
+    all_day = "24_7" in card.tags or bool(_ALL_DAY.search(_fold(card.open_note, True)))
+    return _Facts(frozenset(numbers), times, (card.distance_m,), all_day,
+                  card.open_status != "unknown")
+
+
 # ------------------------------------------------------------------ public
 
 
-def sanitize_summary(summary: str, cards: list[Card]) -> str:
-    """Remove "open now" style sentences from the LLM summary unless every card is open/high.
+def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> str:
+    """Remove "open now" style sentences unless every card is open/high.
 
     finalize() never sees DraftResponse.summary; the pipeline calls this on it.
+    llm=True (the summary was written by the model): also drop sentences with prices, phones,
+    links, addresses or numbers / times not found on the cards, and keep one short sentence.
+    The pipeline's own template summaries (counts, airport times) use the default llm=False.
     """
-    if cards and all(c.open_status == "open" and c.open_confidence == "high" for c in cards):
-        return summary.strip()
-    return _strip_open_claims(summary)[0]
+    all_open = bool(cards) and all(
+        c.open_status == "open" and c.open_confidence == "high" for c in cards
+    )
+    if not llm:
+        sentences = _sentences(summary)
+        kept = [s for s in sentences if all_open or not _sentence_claims_open(s)]
+        return summary if len(kept) == len(sentences) else " ".join(kept)
+    facts = _Facts(frozenset({float(len(cards))}), frozenset(), (), True, True)
+    for card in cards:
+        facts = facts.merge(_facts_from_card(card))
+    text = _guard_text(summary, facts, allow_open=all_open)[0]
+    return _trim(_first_sentences(text, 1), MAX_SUMMARY_CHARS)
 
 
 def finalize(
@@ -360,40 +621,48 @@ def finalize(
     - facts (title, category, geo, distance, walk, hours, sources, confidence, address)
       come from the Candidate, never from the draft;
     - strip FORBIDDEN_OPEN_CLAIMS unless hours.status == "open" and confidence == "high";
+      (has_open_claim: roots + time markers, ru/kk/en, NFKC / zero-width / homoglyphs);
+    - strip sentences with prices, phones, links, addresses, numbers or times not in data;
+    - idea_source=poi_data only when the text is backed by the record, else generated;
     - clamp visit minutes (low <= high), trim texts to limits, rank 1..3;
     - card titles are distinct: unnamed / same-named places get the distance;
     - if fewer than 1 valid card remains -> return template_cards(...) and a warning.
     """
     if not candidates:
-        return [], ["Рядом не нашлось подходящих мест по заданным условиям"]
+        return [], [FINALIZE_WARNINGS.get(intent.lang, FINALIZE_WARNINGS["ru"])["no_candidates"]]
 
     by_id = {c.poi.id: c for c in candidates}
     cards: list[Card] = []
     seen: set[str] = set()  # poi ids and generic names ("playground:детская площадка")
-    foreign = duplicates = stripped = 0
+    foreign = duplicates = stripped = facts_cut = 0
     for item in draft.cards:
-        if item.poi_id not in by_id:
+        poi_id = item.poi_id.strip()
+        if poi_id not in by_id:
             foreign += 1
             continue
-        cand = by_id[item.poi_id]
+        cand = by_id[poi_id]
         generic = generic_key(cand.poi)
-        if item.poi_id in seen or (generic is not None and generic in seen):
+        if poi_id in seen or (generic is not None and generic in seen):
             duplicates += 1
             continue
         if len(cards) >= MAX_CARDS:
             break
-        seen.add(item.poi_id)
+        seen.add(poi_id)
         if generic is not None:
             seen.add(generic)
 
-        why, todo = item.why, item.what_to_do
-        if not (cand.hours.status == "open" and cand.hours.confidence == "high"):
-            why, why_cut = _strip_open_claims(why)
-            todo, todo_cut = _strip_open_claims(todo)
-            stripped += why_cut or todo_cut
+        low, high = sorted((item.visit_min_low, item.visit_min_high))
+        facts = _facts_for(cand, (low, high), intent, _title(cand.poi, intent.lang))
+        allow_open = cand.hours.status == "open" and cand.hours.confidence == "high"
+        why, why_claim, why_facts = _guard_text(item.why, facts, allow_open)
+        todo, todo_claim, todo_facts = _guard_text(item.what_to_do, facts, allow_open)
+        stripped += why_claim or todo_claim
+        facts_cut += why_facts or todo_facts
         why = _trim(_first_sentences(why, MAX_WHY_SENTENCES), MAX_WHY_CHARS)
         todo = _trim(todo, MAX_TODO_CHARS)
-        low, high = sorted((item.visit_min_low, item.visit_min_high))
+        idea_source = item.idea_source
+        if idea_source == "poi_data" and not _backed_by_data(f"{why} {todo}", cand.poi):
+            idea_source = "generated"  # the model called its own idea "data"
         cards.append(
             _card(
                 rank=len(cards) + 1,
@@ -402,19 +671,22 @@ def finalize(
                 why=why or _template_why(cand, intent, ctx),
                 todo=todo or _template_todo(cand.poi, intent.lang),
                 visit=(low, high),
-                idea_source=item.idea_source,
+                idea_source=idea_source,
             )
         )
 
+    text = FINALIZE_WARNINGS.get(intent.lang, FINALIZE_WARNINGS["ru"])
     warnings: list[str] = []
     if foreign:
-        warnings.append(f"Отброшено карточек ИИ с местами не из списка кандидатов: {foreign}")
+        warnings.append(text["foreign"].format(n=foreign))
     if duplicates:
-        warnings.append(f"Отброшено повторных карточек ИИ: {duplicates}")
+        warnings.append(text["duplicates"].format(n=duplicates))
     if stripped:
-        warnings.append("Убрано утверждение «открыто сейчас»: часы работы не подтверждены")
+        warnings.append(text["claims"])
+    if facts_cut:
+        warnings.append(text["facts"])
     if not cards:
-        warnings.append("ИИ не дал подходящих карточек, показаны карточки по данным")
+        warnings.append(text["fallback"])
         return template_cards(candidates, intent, ctx), warnings
     return _distinct_titles(cards, [by_id[c.poi_id] for c in cards], intent.lang), warnings
 

@@ -83,9 +83,12 @@ function safeUrl(url) {
 }
 
 // Для какого момента считались часы: время из `at` и «завтра» ли это.
-function whenOf(request) {
-  if (!request?.at) return { time: null, tomorrow: false };
-  return { time: request.at.slice(11, 16), tomorrow: dayOffsetOf(request.at) === 1 };
+// Время в бейдже — то, на которое сервер считал часы (context.local_time), а не то, что ушло в запросе:
+// на живом API они совпадают, а мок отвечает своим фиксированным временем.
+function whenOf(request, answer) {
+  if (!request?.at) return { time: null, tomorrow: false }; // «сейчас» — без времени в бейдже
+  const at = answer?.context?.local_time || request.at;
+  return { time: at.slice(11, 16), tomorrow: dayOffsetOf(at) === 1 };
 }
 
 // «Открыто» — только при open + high (правило продукта 2).
@@ -117,7 +120,7 @@ export function renderIntro(root, { onExample } = {}) {
 }
 
 // Скелетон повторяет форму карточек, чтобы ничего не прыгало, когда придёт ответ.
-export function renderLoading(root, { onCancel } = {}) {
+export function renderLoading(root, { onCancel, context = [] } = {}) {
   const skel = () =>
     h(
       'li',
@@ -133,6 +136,15 @@ export function renderLoading(root, { onCancel } = {}) {
       { class: 'loading', 'aria-label': t('loading.label') },
       onCancel
         ? h('button', { type: 'button', class: 'btn btn-link btn-sm loading-cancel', onclick: onCancel }, t('loading.cancel'))
+        : null,
+      // v2.1: что учтено в запросе — чипами; без v2 скрыто
+      context.length
+        ? h(
+            'p',
+            { class: 'loading-context v2-only' },
+            h('span', { class: 'loading-context-label', text: t('loading.context') }),
+            context.map((c) => h('span', { class: 'loading-chip', text: c })),
+          )
         : null,
       h('span', { class: 'sk sk-summary', 'aria-hidden': 'true' }),
       h('ol', { class: 'cards', 'aria-hidden': 'true' }, skel(), skel(), skel()),
@@ -192,7 +204,7 @@ export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onS
 // ------------------------------------------------------------------ answer
 
 export function renderAnswer(root, answer, ctx) {
-  const when = whenOf(ctx.request);
+  const when = whenOf(ctx.request, answer);
   const byId = new Map(answer.cards.map((c) => [c.poi_id, c]));
   const noAi = answer.data_used?.generation === 'template';
 
@@ -217,7 +229,7 @@ export function renderAnswer(root, answer, ctx) {
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, when, ctx)),
+          answer.cards.map((c) => renderCard(c, when, { ...ctx, origin: answer.context?.origin })),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -242,10 +254,53 @@ function renderEmpty(ctx) {
     { class: 'empty' },
     h('p', { class: 'empty-title', text: t('empty.title') }),
     h('p', { class: 'empty-hint', text: t('empty.hint') }),
-    hasFilters
-      ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
-      : null,
+    h(
+      'div',
+      { class: 'empty-actions' },
+      hasFilters
+        ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
+        : null,
+      ctx.onEditQuery
+        ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onEditQuery }, t('empty.edit'))
+        : null,
+    ),
   );
+}
+
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked']; // schemas 1.1.0 CrossingKind
+
+// Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
+// + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
+function renderGraphSummary(route, ctx) {
+  const walkMin = route.legs.reduce((sum, leg) => sum + (leg.walk_min || 0), 0);
+  // Считаем те же переходы, что рисует карта: только виды из контракта.
+  const crossings = (route.crossings || []).filter((c) => CROSSING_KINDS.includes(c.kind));
+  const signals = crossings.filter((c) => c.kind === 'signals').length;
+  const base = crossings.length
+    ? t('route.graphSummary', {
+        dist: formatDistance(route.total_walk_m),
+        min: walkMin,
+        n: crossings.length,
+        s: signals,
+      })
+    : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
+  const steps = route.steps_count || 0;
+  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
+  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
+  const stepsText = steps
+    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
+    : t('route.noSteps');
+  // line — в заголовке свёрнутого маршрута (итог виден без раскрытия), caveat — внутри
+  return {
+    line: h(
+      'span',
+      { class: 'route-graph-line' },
+      base,
+      ' · ',
+      h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
+    ),
+    caveat: h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
+  };
 }
 
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
@@ -289,20 +344,25 @@ function renderRoute(route, byId, ctx, originName) {
       );
     }
   }
+  // Телефон: маршрут свёрнут до итога (время, метры, переходы, лестницы, превышение бюджета),
+  // чтобы «Почему» первой карточки попало на первый экран ответа; таймлайн — по касанию. ≥ 900 px — открыт.
+  const graph = route.path_source === 'graph' ? renderGraphSummary(route, ctx) : null;
   return h(
-    'section',
-    { class: 'route', 'aria-label': t('route.title') },
+    'details',
+    { class: 'route', open: window.matchMedia('(min-width: 900px)').matches },
     h(
-      'div',
+      'summary',
       { class: 'route-head' },
       h('strong', { text: t('route.title') }),
       h('span', {
         class: 'route-total',
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
+      graph ? graph.line : null,
+      route.fits_budget === false ? h('span', { class: 'route-over', text: t('route.overBudget') }) : null,
     ),
     h('ol', { class: 'timeline' }, items),
-    route.fits_budget === false ? h('p', { class: 'route-over', text: t('route.overBudget') }) : null,
+    graph ? graph.caveat : null,
     h(
       'div',
       { class: 'route-foot' },
@@ -349,8 +409,10 @@ function renderCard(card, when, ctx) {
     h(
       'p',
       { class: 'card-facts' },
-      h('span', { text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
-      h('span', { text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
+      h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
+      h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
+      // v2.1: статус часов — в строке фактов (тот же текст и та же логика, что у бейджа; бейдж скрыт в v2)
+      h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
     ),
     card.address ? h('p', { class: 'card-address', text: card.address }) : null,
     h(
@@ -380,6 +442,8 @@ function renderCard(card, when, ctx) {
           card.tags.slice(0, 6).map((tag) => h('li', { text: tagLabel(tag) })),
         )
       : null,
+    // Главное действие критического пути — «Как пройти»: сразу после «почему / что делать».
+    renderDirections(card, ctx.origin, ctx.preciseStart, poi),
     h(
       'div',
       { class: 'card-meta' },
@@ -406,8 +470,8 @@ function renderCard(card, when, ctx) {
     h(
       'div',
       { class: 'card-actions' },
-      h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
-      h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')),
+      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
+      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')),
       site
         ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
         : null,
@@ -416,6 +480,66 @@ function renderCard(card, when, ctx) {
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
   return li;
+}
+
+// «Как пройти»: пешеходный маршрут в 2GIS и Яндекс Картах, в новой вкладке.
+// Без начальной точки оба сервиса маршрут не строят (ждут геопозицию), поэтому старт — центр поиска
+// из ответа (context.origin: ориентир или центр H3-ячейки), от него же посчитаны минуты в карточке.
+// Наша страница к этим сервисам не обращается: уходит только переход по ссылке по клику.
+const coord = (x) => Number(x).toFixed(6);
+
+export function directionsUrls(dest, origin) {
+  const d = { lat: coord(dest.lat), lon: coord(dest.lon) };
+  const o = origin ? { lat: coord(origin.lat), lon: coord(origin.lon) } : null;
+  // Яндекс: rtext=широта,долгота~широта,долгота; rtt=pd — пешком.
+  const yandex = `https://yandex.kz/maps/?rtext=${o ? `${o.lat},${o.lon}` : ''}~${d.lat},${d.lon}&rtt=pd`;
+  // 2GIS: точки «долгота,широта» через «|», пешеходный режим — вкладка tab/pedestrian.
+  const twogis =
+    'https://2gis.kz/astana/directions/tab/pedestrian/points/' +
+    `${o ? `${o.lon}%2C${o.lat}` : ''}%7C${d.lon}%2C${d.lat}`;
+  return { yandex, twogis };
+}
+
+// preciseStart() отдаёт точную GPS-точку (только в памяти страницы) или null.
+// В href всегда лежит старт context.origin; точную точку подставляем лишь в момент клика —
+// сами открываем навигатор, ссылка в DOM не меняется (точки нет в разметке и в предпросмотре).
+function renderDirections(card, origin, preciseStart, poi = false) {
+  const { yandex, twogis } = directionsUrls(card.geo, origin);
+  const title = cardTitle(card);
+  const fromHere = Boolean(preciseStart?.());
+  const link = (href, app, key) => {
+    const a = h(
+      'a',
+      {
+        class: 'btn btn-ghost btn-sm directions-btn',
+        href,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        'aria-label': t(fromHere ? 'dir.ariaHere' : 'dir.aria', { title, app }),
+      },
+      app,
+    );
+    const open = (e) => {
+      const p = preciseStart?.();
+      if (!p) return; // нет точной точки — обычная ссылка от context.origin
+      e.preventDefault();
+      window.open(directionsUrls(card.geo, p)[key], '_blank', 'noopener,noreferrer');
+    };
+    a.addEventListener('click', open);
+    a.addEventListener('auxclick', (e) => {
+      if (e.button === 1) open(e); // средняя кнопка тоже открывает от вашей точки
+    });
+    return a;
+  };
+  return h(
+    'div',
+    { class: 'directions' },
+    h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
+    // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
+    poi ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
+    link(twogis, t('dir.2gis'), 'twogis'),
+    link(yandex, t('dir.yandex'), 'yandex'),
+  );
 }
 
 export function popupFor(card) {

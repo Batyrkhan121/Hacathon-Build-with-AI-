@@ -15,7 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.2.0"  # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10
+MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
 
@@ -168,6 +169,9 @@ class LocationInput(BaseModel):
     def _exactly_one(self) -> LocationInput:
         if (self.h3_cell is None) == (self.landmark_id is None):
             raise ValueError("provide exactly one of h3_cell or landmark_id")
+        if self.h3_cell is not None and (int(self.h3_cell, 16) >> 52) & 0xF > MAX_H3_RES:
+            # resolution bits of the H3 index; a finer cell is effectively a raw coordinate
+            raise ValueError(f"H3 cell finer than r{MAX_H3_RES} is not accepted")
         return self
 
 
@@ -227,7 +231,7 @@ class SearchContext(BaseModel):
     origin: GeoPoint  # centre of the H3 cell or the landmark, never the raw user point
     h3_cell: str
     h3_res: int
-    area_label: str  # e.g. "у EXPO", "ваш район (≈0,1 км²)"
+    area_label: str  # e.g. "у EXPO", "ваш район (≈1,8 га)"
     landmark_id: str | None = None
     local_time: datetime  # tz-aware, UTC+5
     weather: WeatherInfo | None = None
@@ -303,14 +307,31 @@ class RouteLeg(BaseModel):
     walk_min: int = Field(ge=0)
 
 
+CrossingKind = Literal["signals", "marked", "unmarked"]  # traffic lights / zebra / no markings
+
+
+class RouteCrossing(BaseModel):
+    """A street crossing on the walking route: public OSM infrastructure, not a user position."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    kind: CrossingKind
+
+
 class MiniRoute(BaseModel):
     stop_ids: list[str] = Field(min_length=1, max_length=3)
-    legs: list[RouteLeg]
+    legs: list[RouteLeg]  # distance and minutes along the walk graph when path_source="graph"
     total_walk_m: int = Field(ge=0)
     total_min: int = Field(ge=0)  # walking + visiting (low estimate)
     fits_budget: bool
-    path: list[GeoPoint]  # straight segments origin -> stops (approximate)
+    path: list[GeoPoint]  # origin -> stops: along the walk graph, or straight segments
     note: str  # e.g. "Маршрут приблизительный: прямые отрезки × 1,3"
+    # 1.1.0, all optional with defaults (old answers stay valid):
+    path_source: Literal["graph", "straight"] = "straight"
+    crossings: list[RouteCrossing] = Field(default_factory=list, max_length=50)  # graph only
+    steps_count: int = Field(default=0, ge=0)  # stair segments on the graph path
 
 
 class DataUsed(BaseModel):

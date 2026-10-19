@@ -24,7 +24,10 @@ const DEFAULT_DEPARTURE = 120;
 const GROUP_SIZE = 4; // «нас 3–5»
 const TIMES = [null, '10:00', '19:00', '23:30'];
 const DEFAULT_LANDMARK = 'expo';
-const H3_RES = 9;
+const H3_RES = 10; // контракт 1.2.0: сервер принимает ячейки до r10 (≈0,015 км²), мельче — 422
+const GEO_GOOD_M = 76; // ≈ ребро ячейки r10: точнее этого — дальше не уточняем
+const GEO_MAX_WAIT_MS = 20000; // дольше не ждём: берём лучшую полученную точку
+const GEO_LOW_M = 500; // хуже — обычно Wi-Fi или сотовая сеть без GPS: подсказываем, но ячейку не блокируем
 const ASTANA_CENTER = { lat: 51.128, lon: 71.43 };
 const FAR_KM = 40;
 
@@ -36,6 +39,8 @@ const state = {
   flags: Object.fromEntries(FLAGS.map((f) => [f, false])),
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
+  backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
+  hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
@@ -58,6 +63,8 @@ const els = {
   whereNote: $('where-note'),
   presets: $('presets'),
   budgetChips: $('budget-chips'),
+  refine: $('refine'),
+  refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
   modeChips: $('mode-chips'),
   departure: $('departure'),
@@ -73,6 +80,10 @@ const els = {
   stale: $('stale'),
   staleBtn: $('stale-btn'),
   mapFallback: $('map-fallback'),
+  backToCard: $('back-to-card'),
+  askNearText: $('ask-near-text'),
+  whereToggle: $('where-toggle'),
+  whereBox: $('where'),
 };
 
 // ------------------------------------------------------------------ helpers
@@ -86,11 +97,24 @@ function landmarkName(lm) {
   return lm.names?.[getLang()] || lm.names?.ru || lm.id;
 }
 
-function cellAreaKm2(cell) {
+// Площадь района в гектарах по реальной площади этой ячейки — тот же формат, что у сервера
+// («ваш район (≈1,8 га)»): r10 у EXPO ≈ 1,8 га, r9 ≈ 13 га. От 10 га — целое, иначе один знак.
+function cellAreaHa(cell) {
+  let ha;
   try {
-    return formatNumber(h3.cellArea(cell, 'km2'), 1);
+    ha = h3.cellArea(cell, 'km2') * 100;
   } catch {
-    return formatNumber(0.1, 1);
+    ha = 1.8;
+  }
+  return formatNumber(ha, ha >= 10 ? 0 : 1);
+}
+
+// Разрешение берём из самой ячейки, а не пишем «r9» в тексте: подпись не соврёт и для r10.
+function cellRes(cell) {
+  try {
+    return h3.getResolution(cell);
+  } catch {
+    return H3_RES;
   }
 }
 
@@ -101,6 +125,24 @@ function haversineKm(a, b) {
   const dLon = (b.lon - a.lon) * rad;
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// Подписи легенды карты: тип линии (по графу OSM или по прямой) и виды переходов.
+function legendLabels() {
+  return {
+    straight: t('map.lineCaption'),
+    graph: t('map.graphCaption'),
+    crossings: {
+      signals: t('crossing.signals'),
+      marked: t('crossing.marked'),
+      unmarked: t('crossing.unmarked'),
+    },
+    crossingsShort: {
+      signals: t('crossing.signalsShort'),
+      marked: t('crossing.markedShort'),
+      unmarked: t('crossing.unmarkedShort'),
+    },
+  };
 }
 
 // Название старта того запроса, на который пришёл ответ (форма к этому времени могла измениться).
@@ -160,8 +202,9 @@ async function submit({ useLlm = true } = {}) {
   setBusy(true);
   setStale(false);
   mapView.clearAnswer();
-  view.renderLoading(els.answer, { onCancel: cancelRequest });
-  setStatus(t('status.loading', { where: whereLabel() }));
+  showBackToCard(null);
+  view.renderLoading(els.answer, { onCancel: cancelRequest, context: loadingContext() });
+  setStatus(t('status.loading', { where: whereLabel() }), 'loading');
   revealResults(); // скелетон должен быть виден сразу, а не после ответа
   const started = performance.now();
 
@@ -174,6 +217,7 @@ async function submit({ useLlm = true } = {}) {
     renderAnswer();
     setStatus(
       t('status.done', { sec: formatNumber((performance.now() - started) / 1000, 1), n: answer.cards.length }),
+      'done',
     );
   } catch (err) {
     if (err.kind === 'aborted' || state.inflight !== ctrl) return;
@@ -203,7 +247,18 @@ function cancelRequest() {
   ctrl.abort();
   setBusy(false);
   restoreResults();
-  setStatus(t('status.cancelled'));
+  setStatus(t('status.cancelled'), 'cancelled');
+}
+
+// v2.1, ожидание: «Учитываю: …» — только то, что реально ушло в запрос (день и время, бюджет, режимы;
+// место уже названо в заголовке «Ищу места: …»).
+// Никаких выдуманных этапов и чисел: API отвечает одним запросом.
+function loadingContext() {
+  const when = `${t(state.day ? 'when.tomorrow' : 'when.today')}, ${state.time || astanaClock()}`;
+  const out = [when];
+  if (state.budget) out.push(t(`budget.${state.budget}`));
+  FLAGS.forEach((f) => state.flags[f] && out.push(t(`flag.${f}`)));
+  return out;
 }
 
 function restoreResults() {
@@ -228,8 +283,9 @@ function setBusy(busy) {
   els.submit.querySelector('span').textContent = busy ? t('submit.busy') : t('submit');
 }
 
-function setStatus(text) {
+function setStatus(text, kind = '') {
   els.status.textContent = text;
+  els.status.dataset.kind = kind; // v2: на экране прячем только «Готово за …», остальное видно
 }
 
 function showFormError(text) {
@@ -254,6 +310,7 @@ function renderAnswer({ redrawMap = true } = {}) {
     request: state.lastRequest,
     meta: state.meta,
     originName: requestOriginName(),
+    preciseStart, // функция: точку отдаёт только в момент клика по «Как пройти»
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
@@ -261,6 +318,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       clearFilters();
       submit();
     },
+    onEditQuery: () => focusQuery(),
   });
   if (!redrawMap) return;
   const route = answer.route;
@@ -276,6 +334,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       : '',
     markerLabel: (card) =>
       `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
+    legend: legendLabels(),
   });
 }
 
@@ -284,28 +343,41 @@ function renderError() {
     canRetryNoAi: state.lastRequest?.use_llm !== false,
     onRetry: () => submit({ useLlm: state.lastRequest?.use_llm !== false }),
     onRetryNoAi: () => submit({ useLlm: false }),
-    onShorten: () => {
-      els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
-      els.query.focus();
-      els.query.select();
-    },
+    onShorten: () => focusQuery({ select: true }),
   });
+}
+
+function focusQuery({ select = false } = {}) {
+  els.query.scrollIntoView({ block: 'center', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+  els.query.focus();
+  if (select) els.query.select();
 }
 
 function focusOnMap(rank) {
   mapView.focusStop(rank);
-  scrollMapIntoView();
+  scrollMapIntoView(rank);
 }
 
 function showRoute(rank) {
-  mapView.showRoute(rank, t('route.direct'));
-  scrollMapIntoView();
+  mapView.showRoute(rank, legendLabels());
+  scrollMapIntoView(rank);
 }
 
-function scrollMapIntoView() {
+function scrollMapIntoView(rank) {
   if (window.matchMedia('(max-width: 899px)').matches) {
     document.querySelector('.map-wrap').scrollIntoView({ behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    showBackToCard(rank);
   }
+}
+
+function showBackToCard(rank) {
+  state.backRank = rank ?? null;
+  els.backToCard.hidden = state.backRank === null;
+  if (state.backRank === null) return;
+  // стрелка — только визуальная подсказка направления, скринридер читает лишь текст
+  const arrow = Object.assign(document.createElement('span'), { textContent: '↓' });
+  arrow.setAttribute('aria-hidden', 'true');
+  els.backToCard.replaceChildren(arrow, t('map.backToCard', { n: state.backRank }));
 }
 
 function renderPresets() {
@@ -393,6 +465,30 @@ function renderChips() {
   if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
   els.filterHint.hidden = !hints.length;
   els.filterHint.textContent = hints.join(' ');
+  // Новая подсказка (турист, доступная среда) и «Вылет через» не должны прятаться в свёрнутом «Уточнить»:
+  // раскрываем блок один раз, когда подсказка появилась; если пользователь свернёт — не навязываем.
+  const hintKey = hints.join('|');
+  if (hintKey && hintKey !== state.hintKey) els.refine.open = true;
+  state.hintKey = hintKey;
+  // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
+  const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
+  // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
+  els.refineCount.replaceChildren();
+  if (picked) {
+    const dot = Object.assign(document.createElement('span'), { textContent: `· ${picked}` });
+    dot.setAttribute('aria-hidden', 'true');
+    const sr = Object.assign(document.createElement('span'), {
+      className: 'visually-hidden',
+      textContent: `(${t('refine.picked', { n: picked })})`,
+    });
+    els.refineCount.append(dot, sr);
+  }
+}
+
+function syncRefineOpen() {
+  // v2: «Уточнить» сворачивается и на широком экране (машина времени и фильтры — не на основном экране)
+  if (document.body.classList.contains('v2')) return;
+  if (window.matchMedia('(min-width: 900px)').matches) els.refine.open = true;
 }
 
 function filtersChanged() {
@@ -432,16 +528,40 @@ function renderLandmarkSelect() {
 }
 
 function renderWhereNote() {
+  // v2.1: «Рядом с: {место}» у кнопки — видно, откуда ищем, даже когда «Где я» свёрнуто
+  els.askNearText.textContent = t('query.near', { where: whereLabel() });
   const note = els.whereNote;
   note.className = 'where-note';
   if (state.whereMsg) {
     note.textContent = t(state.whereMsg.key);
     note.classList.add(`is-${state.whereMsg.kind}`);
+    if (state.whereMsg.offerPick && window.h3) {
+      // Без GPS остаётся «Указать на карте» — предлагаем прямо в сообщении.
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'btn btn-link btn-sm where-pick';
+      pick.textContent = t('pick.btn');
+      pick.addEventListener('click', onPickClick);
+      note.append(' ', pick);
+    }
     return;
   }
   if (state.location.type === 'cell') {
-    note.textContent = t('where.noteCell', { cell: state.location.cell, area: cellAreaKm2(state.location.cell) });
+    const { cell, accuracy } = state.location;
+    note.textContent = t('where.noteCell', { cell, area: cellAreaHa(cell), res: cellRes(cell) });
     note.classList.add('is-privacy');
+    if (accuracy) {
+      // Точность GPS — число, а не место: её можно показать. Хуже размера ячейки — говорим честно.
+      note.append(document.createElement('br'));
+      if (accuracy > GEO_LOW_M) {
+        note.append(t('geo.lowAccuracy', { m: formatNumber(accuracy) }));
+        note.classList.add('is-warn');
+      } else {
+        note.append(t('geo.accuracy', { m: formatNumber(accuracy) }));
+        if (accuracy > GEO_GOOD_M) note.append(' ', t('geo.coarse'));
+      }
+      if (geoWatch !== null) note.append(' ', t('geo.refining'));
+    }
     if (state.location.far) {
       note.append(document.createElement('br'), t('geo.far'));
       note.classList.add('is-warn');
@@ -453,7 +573,7 @@ function renderWhereNote() {
 
 function renderLocationOnMap() {
   if (state.location.type === 'cell') {
-    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
   } else {
     const lm = landmarkById(state.location.id);
     mapView.showLandmark(lm, t('map.origin', { name: landmarkName(lm) }));
@@ -463,10 +583,17 @@ function renderLocationOnMap() {
 // ------------------------------------------------------------------ location
 
 function setLocation(loc) {
+  // Любой выбор, кроме GPS, останавливает уточнение и убирает «вы здесь».
+  if (loc.source !== 'gps') {
+    stopGeoWatch();
+    mapView.clearHere();
+    gpsPoint = null; // ориентир или точка с карты: старт «Как пройти» снова context.origin
+  }
   state.location = loc;
   state.whereMsg = null;
   state.activePreset = null;
   mapView.clearAnswer();
+  showBackToCard(null);
   renderLandmarkSelect();
   renderWhereNote();
   renderLocationOnMap();
@@ -474,40 +601,118 @@ function setLocation(loc) {
   setStale(true);
 }
 
-function setCellFromPoint(lat, lng) {
-  // Координаты живут только внутри этой функции: дальше идёт лишь ячейка H3 r9.
+function cellFromPoint(lat, lng) {
   const cell = h3.latLngToCell(lat, lng, H3_RES);
   const [cLat, cLon] = h3.cellToLatLng(cell);
-  const far = haversineKm(ASTANA_CENTER, { lat: cLat, lon: cLon }) > FAR_KM;
-  setLocation({ type: 'cell', cell, far });
+  return { cell, far: haversineKm(ASTANA_CENTER, { lat: cLat, lon: cLon }) > FAR_KM };
+}
+
+// «Указать на карте»: координаты клика живут только здесь, дальше идёт лишь ячейка r10.
+function setCellFromPoint(lat, lng) {
+  const { cell, far } = cellFromPoint(lat, lng);
+  setLocation({ type: 'cell', cell, far, source: 'pick' });
+}
+
+// ------------------------------------------------------------------ geolocation (T102)
+// Точная точка GPS не уходит на наш сервер: в запрос уходит только ячейка r10, в localStorage
+// и консоль ничего не пишем. Ссылки «Как пройти» берут точную точку только по клику (см. preciseStart),
+// href в DOM строится от context.origin (центр ячейки).
+let geoWatch = null;
+let geoTimer = null;
+// Точная точка GPS — только в памяти страницы. Нужна для отметки «вы здесь» и, по решению пользователя,
+// как старт в «Как пройти» (по клику, прямо в 2GIS/Яндекс, мимо нашего сервера). Не в API, не в DOM,
+// не в localStorage, не в консоль.
+let gpsPoint = null; // { cell, lat, lon }
+
+// Старт «Как пройти» от точной точки — только если ответ получен для той же ячейки, что и GPS-точка.
+function preciseStart() {
+  if (!gpsPoint || state.lastRequest?.location?.h3_cell !== gpsPoint.cell) return null;
+  return { lat: gpsPoint.lat, lon: gpsPoint.lon };
+}
+
+function stopGeoWatch() {
+  if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
+  geoWatch = null;
+  clearTimeout(geoTimer);
+  geoTimer = null;
+  els.geoBtn.disabled = false;
+}
+
+function applyGpsFix(lat, lng, accuracyM) {
+  const { cell, far } = cellFromPoint(lat, lng);
+  const accuracy = Math.max(1, Math.round(accuracyM));
+  const same = state.location.type === 'cell' && state.location.source === 'gps' && state.location.cell === cell;
+  if (same) {
+    state.location.accuracy = accuracy; // та же ячейка — запрос не меняется, обновляем только точность
+    renderWhereNote();
+  } else {
+    setLocation({ type: 'cell', cell, far, accuracy, source: 'gps' });
+  }
+  gpsPoint = { cell, lat, lon: lng }; // последняя фиксация
+  mapView.showHere(lat, lng, accuracyM, t('map.here'));
 }
 
 function onGeoClick() {
   stopPicking();
+  stopGeoWatch();
   if (!window.h3) return setWhereMsg('h3.missing', 'error');
-  if (!navigator.geolocation) return setWhereMsg('geo.unsupported', 'error');
+  // Геолокация работает только в защищённом контексте (https; localhost браузер тоже считает таким).
+  if (!window.isSecureContext) return setWhereMsg('geo.insecure', 'error', { offerPick: true });
+  if (!navigator.geolocation) return setWhereMsg('geo.unsupported', 'error', { offerPick: true });
   els.geoBtn.disabled = true;
   setWhereMsg('geo.locating', 'info');
-  navigator.geolocation.getCurrentPosition(
+  let gotFix = false;
+  // watchPosition до первой фиксации не хуже размера ячейки, потом стоп; максимум 20 с.
+  geoWatch = navigator.geolocation.watchPosition(
     (pos) => {
-      els.geoBtn.disabled = false;
-      setCellFromPoint(pos.coords.latitude, pos.coords.longitude);
+      gotFix = true;
+      const { latitude, longitude, accuracy } = pos.coords;
+      if (accuracy <= GEO_GOOD_M) stopGeoWatch();
+      applyGpsFix(latitude, longitude, accuracy);
     },
     (err) => {
-      els.geoBtn.disabled = false;
-      setWhereMsg(err.code === 1 ? 'geo.denied' : 'geo.unavailable', 'error');
+      stopGeoWatch();
+      if (gotFix && err.code !== 1) return renderWhereNote(); // есть точка — оставляем лучшую
+      showGeoFailure(err.code);
     },
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
   );
+  geoTimer = setTimeout(() => {
+    stopGeoWatch();
+    if (gotFix) renderWhereNote();
+    else showGeoFailure(3); // как TIMEOUT
+  }, GEO_MAX_WAIT_MS);
 }
 
-function setWhereMsg(key, kind) {
-  state.whereMsg = { key, kind };
+// Разрешение сайту на геопозицию: 'granted' | 'denied' | 'prompt', или null, если браузер не говорит.
+async function geoPermission() {
+  try {
+    return (await navigator.permissions?.query({ name: 'geolocation' }))?.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Включён ли GPS на телефоне, браузер не скажет. Поэтому косвенно: разрешение сайту дано, а точки нет
+// (POSITION_UNAVAILABLE, TIMEOUT или отказ при уже выданном разрешении) — просим проверить настройки телефона.
+// Без Permissions API различаем по коду ошибки: 1 — запрещено, 2 и 3 — не определяется.
+async function showGeoFailure(code) {
+  const { whereMsg, location } = state;
+  const perm = await geoPermission();
+  // Пока ждали ответ, человек мог выбрать ориентир, точку на карте или снова нажать «Моё место».
+  if (state.whereMsg !== whereMsg || state.location !== location || geoWatch !== null) return;
+  const denied = perm === 'denied' || (perm !== 'granted' && code === 1);
+  setWhereMsg(denied ? 'geo.denied' : 'geo.unavailable', 'error', { offerPick: true });
+}
+
+function setWhereMsg(key, kind, { offerPick = false } = {}) {
+  state.whereMsg = { key, kind, offerPick };
   renderWhereNote();
 }
 
 function onPickClick() {
   if (state.picking) return stopPicking();
+  stopGeoWatch(); // точка с карты заменяет GPS: уточнение больше не нужно
   if (!window.h3) return setWhereMsg('h3.missing', 'error');
   const ok = mapView.startPick(
     (lat, lng) => {
@@ -602,10 +807,12 @@ function bindEvents() {
     else if (state.lastError) renderError();
     else if (!state.inflight) renderIntro();
     if (state.picking) mapView.setPickLabel(t('pick.banner'), t('pick.cancel'));
+    mapView.setLegendLabels(legendLabels());
     autoGrow();
     if (state.location.type === 'cell') {
-      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
     }
+    mapView.setHereLabel(t('map.here'));
     setBusy(Boolean(state.inflight));
   });
   // Часы на чипе «Сейчас» обновляем раз в минуту.
@@ -627,6 +834,7 @@ function renderAll() {
   renderChips();
   renderLandmarkSelect();
   renderWhereNote();
+  showBackToCard(state.backRank);
 }
 
 async function init() {
@@ -640,6 +848,29 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  // v2.1: «Где я» свёрнуто за «Изменить»; поле подписано заголовком «Куда пойдём?»
+  els.whereToggle.addEventListener('click', () => {
+    const open = !els.whereBox.classList.contains('is-open');
+    els.whereBox.classList.toggle('is-open', open);
+    els.whereToggle.setAttribute('aria-expanded', String(open));
+    if (open) els.landmark?.focus();
+  });
+  if (document.body.classList.contains('v2')) els.query.setAttribute('aria-labelledby', 'hero-title');
+  els.backToCard.addEventListener('click', () => {
+    const rank = state.backRank;
+    showBackToCard(null);
+    if (rank === null) return;
+    // начало карточки к верху экрана: при «nearest» длинная карточка осталась бы с середины
+    view.highlightCard(rank); // подсветка; её прокрутку «nearest» перебивает следующая строка
+    const card = document.getElementById(`card-${rank}`);
+    if (!card) return;
+    card.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    // кнопка прячется вместе с фокусом — переводим его на карточку, а не на body (клавиатура, скринридер)
+    card.setAttribute('tabindex', '-1');
+    card.focus({ preventScroll: true });
+  });
+  syncRefineOpen();
+  window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
   renderAll();
   renderIntro();
 

@@ -327,4 +327,26 @@ def test_element_only_in_an_older_snapshot_is_dropped_where_fresh_data_covers_it
     pois = normalize_payloads([june, fresh], stats)
     names = sorted(p.name for p in pois)
     assert names == ["25-ти летие Независимости", "Вне свежего куска"]
-    assert stats == {"stale": 1}
+    assert stats["stale"] == 1
+    assert stats["stale_pois"] == ["25-ти летие Независемости (osm:node/13041707198)"]
+
+    # a truncated fresher answer (Overpass remark) proves nothing: the June node stays
+    cut = fresh | {"remark": "runtime error: Query timed out in \"query\" at line 3"}
+    stats2: dict = {}
+    kept = {p.name for p in normalize_payloads([june, cut], stats2)}
+    assert "25-ти летие Независемости" in kept and stats2["stale"] == 0
+
+
+def test_normalize_counts_what_it_drops() -> None:
+    payload = {"elements": [
+        node(200, {"amenity": "cafe", "name": "Кофе", "wheelchair": "designated"}),
+        node(201, {"amenity": "cafe"}),  # unnamed
+        {"type": "way", "id": 202, "tags": {"amenity": "cafe", "name": "Без центра"}},
+        node(203, {"amenity": "parking", "name": "Парковка"}),  # outside our categories
+        node(204, {"amenity": "cafe", "name": "Кофе"}, lat=51.08941),  # duplicate of 200
+    ]}
+    stats: dict = {}
+    pois = normalize_payloads([payload], stats)
+    assert [p.id for p in pois] == ["osm:node/200"] and pois[0].wheelchair == "unknown"
+    assert stats["unnamed"] == 1 and stats["no_point"] == 1 and stats["no_category"] == 1
+    assert stats["duplicates"] == 1 and stats["wheelchair_other"] == {"designated": 1}

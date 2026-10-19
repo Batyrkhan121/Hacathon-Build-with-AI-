@@ -9,7 +9,7 @@
   --ink-2: #48575f;
   --ink-3: #5f6b74; /* ≥4.5:1 и на белом, и на тёплом фоне */
   --line: #e2ddd2;
-  --line-strong: #cfc8ba;
+  --line-strong: #8f8778; /* рамки контролов ≥ 3:1 на --surface и --bg (WCAG 1.4.11) */
 
   --accent: #0a6e87;
   --accent-strong: #08566a;
@@ -96,7 +96,7 @@ textarea {
 .skip {
   position: absolute;
   left: 8px;
-  top: -40px;
+  top: -60px; /* при min-height 44 px ссылка не должна выглядывать сверху */
   z-index: 2000;
   background: var(--ink);
   color: #fff;
@@ -145,6 +145,20 @@ textarea {
   position: absolute;
   inset: 0;
   background: #e8e4da;
+}
+
+.map-wrap .back-to-card {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+  width: auto; /* не наследует width:100% кнопки «Подсказать» на ≤ 420 px и не закрывает зум справа */
+  max-width: calc(100% - 80px);
+  box-shadow: var(--shadow);
+}
+
+.back-to-card[hidden] {
+  display: none;
 }
 
 .map-fallback {
@@ -208,6 +222,12 @@ textarea {
   .results {
     padding: 4px 16px 28px;
   }
+  /* Скелетон и короткий ответ ниже экрана: без запаса высоты scrollIntoView упирается в низ
+     страницы, и ответ начинается с середины экрана под хвостом формы. */
+  .results:has(.loading, .answer, .error-box) {
+    min-height: 100vh;
+    min-height: 100svh;
+  }
 }
 
 @media (max-width: 420px) {
@@ -252,11 +272,15 @@ textarea {
   min-width: 0;
 }
 
+/* «QADAM» заглавными только визуально: в разметке «Qadam», скринридер читает слово, а не буквы.
+   .v2 .brand h1 меняет лишь font-size, поэтому капс и разрядка действуют и с v2, и без него. */
 .brand h1 {
   margin: 0;
   font-size: 20px;
+  font-weight: 700;
   line-height: 1.1;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .tagline {
@@ -300,6 +324,22 @@ textarea {
 .lang button[aria-pressed="true"] {
   background: var(--ink);
   color: #fff;
+}
+
+/* Мок-режим на узком экране: рядом с «QADAM» плашка «Мок-данные» (kk «Мок-деректер») не помещается
+   в строку 360 px, и вниз уезжал переключатель языков. Плашка уходит под надпись, а знак, QADAM
+   и языки остаются в одной строке. Без плашки (живой API) шапка прежняя, на flex. */
+@media (max-width: 420px) {
+  .brand:has(> .mock-pill:not([hidden])) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: 4px;
+  }
+  .brand:has(> .mock-pill:not([hidden])) > .mock-pill {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
 }
 
 /* ------------------------------------------------------------------ blocks */
@@ -376,10 +416,12 @@ fieldset {
   font-weight: 800;
 }
 
+/* Выбранное состояние одно для пресетов, чипов, языка и «Указать на карте»: тёмная заливка --ink.
+   Бирюзовая заливка остаётся только у главной кнопки «Подсказать». */
 .preset[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 /* ------------------------------------------------------------------ form */
@@ -426,7 +468,9 @@ input:focus-visible {
   border: 1px solid transparent;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal; /* длинные kk-подписи переносятся, а не вылезают за край на 360 px */
+  text-align: center;
+  text-wrap: balance;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
@@ -463,10 +507,11 @@ input:focus-visible {
   color: var(--accent-strong);
 }
 
-.btn-ghost[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.btn-ghost[aria-pressed="true"],
+.btn-ghost[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
 }
 
 .form-error {
@@ -508,6 +553,14 @@ select {
 
 .where-note.is-error {
   color: var(--error-ink);
+}
+
+/* «Указать на карте» прямо в сообщении, когда GPS недоступен (нет https, запрет, нет фиксации). */
+.where-note .where-pick {
+  display: inline-flex;
+  vertical-align: baseline;
+  padding: 0 4px;
+  min-height: 28px;
 }
 
 .where-note.is-warn {
@@ -642,9 +695,10 @@ input[type="time"] {
   position: relative;
 }
 
-.loading-cancel {
+/* .loading внутри — иначе .btn-link { position: relative } из блока polish сбивает кнопку под статус. */
+.loading .loading-cancel {
   position: absolute;
-  top: -6px;
+  top: -9px;
   right: 0;
 }
 
@@ -730,6 +784,47 @@ input[type="time"] {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 10px;
+}
+
+/* Маршрут — details: итог в summary, таймлайн по касанию (handoff Claude Design, строка 2, вариант б). */
+.route > summary {
+  position: relative;
+  min-height: 44px;
+  padding-right: 28px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.route > summary::-webkit-details-marker {
+  display: none;
+}
+
+.route > summary::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border: solid var(--accent-strong);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.route[open] > summary::after {
+  top: 10px;
+  transform: rotate(-135deg);
+}
+
+.route > summary .route-graph-line,
+.route > summary .route-over {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.route[open] > summary {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(10, 86, 106, 0.18);
 }
 
 .route-total {
@@ -1016,8 +1111,10 @@ input[type="time"] {
 }
 
 .card-text {
-  margin: 10px 0 0;
-  font-size: 14px;
+  margin: 12px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
 }
 
 .card-text dt {
@@ -1054,10 +1151,24 @@ input[type="time"] {
   background: var(--surface-2);
 }
 
+/* Служебное (полнота и источники фактов) — одна приглушённая группа под текстом, метки остаются видны. */
 .card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.card-meta .sources {
+  margin: 0;
+}
+
+/* в flex-ряду .confidence сжимается по содержимому — полосе нужна своя ширина */
+.card-meta .bar {
+  flex: 0 0 72px;
 }
 
 .confidence {
@@ -1105,8 +1216,190 @@ input[type="time"] {
 .card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 6px 8px;
+  margin-top: 12px;
+}
+
+/* «Как пройти»: внешние навигаторы, отдельной строкой под действиями карточки. */
+.directions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.directions-label {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* «Как пройти»: подпись своей строкой, ссылки под ней от одного края — длинная kk-подпись
+   («Қалай жетуге болады (сіздің нүктеңізден):») не рвёт ряд ссылок. */
+.directions .directions-label {
+  flex-basis: 100%;
+}
+
+/* «Как пройти» — главное действие карточки: кнопки с бирюзовой рамкой (один компонент .btn-ghost). */
+.directions {
+  gap: 6px 8px;
+  margin-top: 12px;
+}
+
+.directions .directions-btn {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-size: 15px;
+  text-decoration: none;
+}
+
+/* «На карте» / «Маршрут» / «Сайт» и «Показать на карте» в маршруте — ссылки от края текста, без отступа */
+.card-actions .btn-link,
+.route-foot .btn-link {
+  padding-inline: 0;
+  margin-right: 12px;
+}
+
+/* Легенда к пунктиру на карте. */
+.line-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, 70vw);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  font: 12px/1.35 var(--font);
+  color: var(--ink);
+}
+
+.line-legend {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.line-swatch {
+  flex: none;
+  width: 26px;
+  height: 0;
+  border-top: 3px dotted var(--accent);
+}
+
+.legend-kinds {
+  display: grid;
+  gap: 4px;
+}
+
+.legend-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kind-short {
+  display: none;
+}
+
+/* Телефон: карта всего 42vh — виды переходов одной строкой с короткими подписями. */
+@media (max-width: 899px) {
+  .line-legend {
+    font-size: 11px;
+    line-height: 1.25;
+    padding: 4px 8px;
+    max-width: min(360px, calc(100vw - 32px));
+  }
+  /* над строкой атрибуции OSM, а не поверх неё: атрибуцию закрывать нельзя */
+  .leaflet-bottom.leaflet-left .line-legend {
+    margin-bottom: 24px;
+    margin-left: 8px;
+  }
+  .legend-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .legend-kind {
+    gap: 4px;
+  }
+  .legend-kind .crossing-glyph {
+    width: 16px;
+    height: 16px;
+    font-size: 9px;
+  }
+  .kind-full {
+    display: none;
+  }
+  .kind-short {
+    display: inline;
+  }
+}
+
+.line-swatch.is-solid {
+  border-top: 4px solid var(--accent);
+  border-radius: 2px;
+}
+
+/* Переходы на пути: светофор (эмодзи), зебра (полосы), без разметки (пунктирный круг с «!»).
+   Один и тот же значок на карте и в легенде. */
+.crossing-glyph {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--closed-ink);
+}
+
+.crossing-glyph.is-signals {
+  font-size: 12px;
+}
+
+.crossing-glyph.is-marked {
+  border-radius: 4px;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 3px, #fff 3px 6px);
+}
+
+.crossing-glyph.is-unmarked {
+  border: 2px dashed var(--closed-ink);
+}
+
+/* Блок «По тротуарам…» под таймлайном маршрута. */
+
+.route-graph-line {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-steps.is-warn {
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.route-caveat {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--accent-strong);
 }
 
 /* --- loading */
@@ -1197,6 +1490,17 @@ input[type="time"] {
   font-weight: 700;
 }
 
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.empty-actions:empty {
+  display: none;
+}
+
 .empty-hint {
   margin: 4px 0 10px;
   color: var(--ink-2);
@@ -1204,6 +1508,78 @@ input[type="time"] {
 }
 
 /* --- data used */
+
+/* «Уточнить» на телефоне: свёрнутый блок с режимом, фильтрами и временем. */
+.refine {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.refine > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.refine > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* шеврон справа: ▾ свёрнуто, ▴ открыто */
+.refine > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+
+.refine[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.refine-count {
+  color: var(--accent-strong);
+}
+
+.refine[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.refine > fieldset {
+  margin: 12px 14px 0;
+}
+
+.refine > fieldset:last-child {
+  margin-bottom: 12px;
+}
+
+/* Широкий экран: блок всегда открыт, заголовок-переключатель не нужен. */
+@media (min-width: 900px) {
+  .refine {
+    margin-top: 0;
+    border: 0;
+    background: none;
+  }
+  .refine > summary {
+    display: none;
+  }
+  .refine > fieldset {
+    margin: 12px 0 0;
+  }
+}
 
 .data-used {
   margin-top: 14px;
@@ -1412,12 +1788,13 @@ input[type="time"] {
 
 /* ------------------------------------------------------------------ polish (T75/T76) */
 
-/* Зона клика ≥ 40 px без изменения вида: псевдоэлемент на 3 px сверху и снизу
-   (ровно половина зазора 6 px между рядами, так что зоны соседей не пересекаются). */
+/* Зона нажатия ≥ 44 px. Чипы и маленькие кнопки видны на 38 px, а псевдоэлемент добавляет
+   по 3 px сверху и снизу (ровно половина зазора 6 px между рядами, зоны соседей не пересекаются). */
 .chip,
 .btn-sm,
 .btn-link {
   position: relative;
+  min-height: 38px;
 }
 
 .chip::after,
@@ -1428,15 +1805,31 @@ input[type="time"] {
   inset: -3px 0;
 }
 
-.lang button {
-  min-height: 36px;
+.btn,
+select,
+input[type="time"],
+.preset,
+.lang button,
+.pick-cancel,
+.skip {
+  min-height: 44px;
+}
+
+.btn-sm,
+.btn-link {
+  min-height: 38px;
+}
+
+/* «Указать на карте» внутри текста заметки: вид прежний, зона нажатия 44 px. */
+.where-note .where-pick::after {
+  inset: -8px 0;
 }
 
 .leaflet-bar a,
 .leaflet-touch .leaflet-bar a {
-  width: 36px;
-  height: 36px;
-  line-height: 36px;
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
 }
 
 /* Атрибуция OSM: ссылка была 3,9:1 на полупрозрачном фоне — делаем ≥ 4,5:1. */
@@ -1501,4 +1894,805 @@ input[type="time"] {
     animation: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ================================================================== v2
+   Новый внешний вид поверх текущей вёрстки. Всё — только под body.v2: без класса сайт прежний,
+   откат — убрать class="v2" у <body> в index.html. Палитра — существующие токены; вариант из style.md
+   подставляется переопределением переменных в блоке «.v2 { … }» ниже. */
+
+.v2-only {
+  display: none;
+}
+
+.v2 {
+  /* шкала v2: кегли 13 / 15 / 17 / 21 / 28, отступы 4 / 8 / 12 / 16 / 24 / 32, радиусы 20 / 14 / капсула */
+  --v2-fs-s: 13px;
+  --v2-fs-m: 15px;
+  --v2-fs-l: 17px;
+  --v2-fs-xl: 21px;
+  --v2-fs-hero: 28px;
+  --v2-r-panel: 20px;
+  --v2-r-btn: 14px;
+  --v2-shadow-1: 0 1px 2px rgba(21, 34, 44, 0.06), 0 2px 8px rgba(21, 34, 44, 0.05);
+  --v2-shadow-2: 0 -4px 16px rgba(21, 34, 44, 0.1);
+}
+
+.v2 .v2-only {
+  display: block;
+}
+
+/* --- первый экран: заголовок-вопрос, одна строка ценности, поле и кнопка в одной белой панели */
+.v2 .tagline {
+  display: none; /* ценность говорит строка под заголовком */
+}
+
+.v2 .brand {
+  margin-bottom: 12px;
+}
+
+.v2 .brand h1 {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .hero {
+  margin: 0 0 16px;
+}
+
+.v2 .hero-title {
+  margin: 0;
+  font-size: var(--v2-fs-hero);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.v2 .hero-value {
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-m);
+  line-height: 1.4;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* Подписи блоков без капса */
+.v2 .label,
+.v2 legend.label {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+/* «Что хотите?» — визуально заголовок-вопрос; подпись поля остаётся для скринридера */
+.v2 .ask > .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* v2.1, первый экран: заголовок → строка ценности → поле → сценарии → «Рядом с … Изменить» → «Подсказать»
+   → строка о приватности. Порядок задан разметкой (Tab сверху вниз), здесь только вид. */
+.v2 .query-row {
+  display: block;
+}
+
+.v2 .query-row textarea {
+  width: 100%;
+  min-height: 52px;
+  padding: 13px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--v2-r-btn);
+  background: var(--surface);
+  font-size: 16px; /* меньше 16 px — iPhone увеличивает страницу при фокусе */
+  line-height: 1.4;
+}
+
+/* Сценарии — одна прокручиваемая строка чипов-капсул (прокрутка внутри ряда, не страницы) */
+.v2 .presets {
+  margin: 12px 0 0;
+}
+
+.v2 .presets > .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.v2 .preset-list {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  margin: 0 -16px;
+  padding: 2px 16px 4px; /* место под кольцо фокуса */
+  scrollbar-width: none;
+}
+
+.v2 .preset-list::-webkit-scrollbar {
+  display: none;
+}
+
+.v2 .preset {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .preset .preset-tag {
+  display: none; /* S1–S5 — служебная нумерация, на экране лишняя */
+}
+
+/* «Рядом с: {место}» и «Изменить» */
+.v2 .ask-near {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-m);
+  color: var(--ink-2);
+}
+
+.v2 .btn-text {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.v2 .btn-text:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* «Подсказать» — последней, во всю ширину, 52 px */
+.v2 .submit-row {
+  margin-top: 8px;
+}
+
+.v2 .submit-row .btn-primary {
+  width: 100%;
+  min-height: 52px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-l);
+}
+
+/* Строка о приватности с замком (встроенный SVG) */
+.v2 .privacy-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: var(--v2-fs-s);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.v2 .privacy-line::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5V3.8a3 3 0 0 1 6 0V5h.5A1.5 1.5 0 0 1 11 6.5v4A1.5 1.5 0 0 1 9.5 12h-7A1.5 1.5 0 0 1 1 10.5v-4A1.5 1.5 0 0 1 2.5 5zm1.5 0h3V3.8a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5V3.8a3 3 0 0 1 6 0V5h.5A1.5 1.5 0 0 1 11 6.5v4A1.5 1.5 0 0 1 9.5 12h-7A1.5 1.5 0 0 1 1 10.5v-4A1.5 1.5 0 0 1 2.5 5zm1.5 0h3V3.8a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* «Где я» свёрнуто за «Изменить» */
+.v2 .where:not(.is-open) {
+  display: none;
+}
+
+/* Телефон: карта на первом экране — не больше 30 % высоты */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    height: 30vh;
+    height: 30svh;
+    min-height: 180px;
+  }
+}
+
+/* --- ответ как в картах: панель-лист наезжает на карту на 16 px, скругление 20 сверху, тень вверх */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    z-index: 0; /* панели Leaflet (z 400+) остаются внутри карты и не перекрывают лист */
+  }
+  .v2 .panel {
+    position: relative;
+    z-index: 1;
+    margin-top: -16px;
+    border-radius: var(--v2-r-panel) var(--v2-r-panel) 0 0;
+    box-shadow: var(--v2-shadow-2);
+  }
+  /* атрибуция OSM и легенда — над краем листа, видимы */
+  .v2 .leaflet-bottom {
+    bottom: 16px;
+  }
+}
+
+/* --- первое место — главная карточка, остальные — спокойный список с тонкими разделителями */
+.v2 .cards {
+  gap: 0;
+}
+
+.v2 .cards > .card:first-child {
+  margin-bottom: 8px;
+  padding: 16px;
+  border-radius: var(--v2-r-btn);
+  box-shadow: var(--v2-shadow-1);
+}
+
+.v2 .cards > .card + .card {
+  padding: 16px 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.v2 .cards > .card + .card:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+/* --- карточка: название 21 → «Почему» 16 основным цветом сразу под ним → факты «иконка + значение» 13 →
+   маленькие бейджи (форма + цвет) → «Как пройти» двумя кнопками 44. Порядок — через order, DOM прежний
+   (скринридер читает метки источника и часов до текста, как раньше). */
+.v2 .card:not(.skeleton) {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2 .card > .card-head { order: 0; }
+.v2 .card > .card-text { order: 1; margin-top: 8px; }
+.v2 .card > .card-facts { order: 2; }
+.v2 .card > .badges { order: 3; }
+.v2 .card > .hours-note { order: 4; }
+.v2 .card > .ai-note { order: 5; }
+.v2 .card > .card-address { order: 6; }
+.v2 .card > .tags { order: 7; }
+.v2 .card > .directions { order: 8; }
+.v2 .card > .card-meta { order: 9; }
+.v2 .card > .card-actions { order: 10; }
+
+.v2 .card-title {
+  font-size: var(--v2-fs-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.v2 .card-cat {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Почему» — без подписи на экране (она остаётся для скринридера), «Что делать» — тихая подпись без капса */
+.v2 .card-text {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .card-text dt {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .card-text dt:first-of-type {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.v2 .card-text dd:first-of-type {
+  margin-bottom: 12px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+/* Факты — пары «иконка + значение», 13 px; иконки встроенным SVG (data-URI, не внешний адрес) */
+.v2 .card-facts {
+  gap: 4px 16px;
+  margin-top: 12px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.v2 .card-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+}
+
+.v2 .card-facts > span::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: var(--ink-3);
+  -webkit-mask: var(--v2-icon) center / contain no-repeat;
+  mask: var(--v2-icon) center / contain no-repeat;
+}
+
+.v2 .card-facts > span:first-child {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='9' cy='2.5' r='1.6'/%3E%3Cpath d='M7.2 5.2h2.6l1.7 2.7h2v1.6h-2.9L9.6 8.1 9 10.6l2 2.3V16H9.4v-2.4L7.6 11.7 6.7 16H5l1.4-7.1-1 .7V12H3.8V8.7z'/%3E%3C/svg%3E");
+}
+
+.v2 .card-facts > span:nth-child(2) {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.6a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zM7.2 4.5h1.6v3.1l2.2 1.3-.8 1.4-3-1.8z'/%3E%3C/svg%3E");
+}
+
+/* Бейджи — маленькие: форма точки + цвет (как раньше), 13 px */
+.v2 .badges {
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+
+.v2 .badge {
+  padding: 2px 8px;
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+}
+
+.v2 .hours-note,
+.v2 .ai-note,
+.v2 .card-address,
+.v2 .tags li,
+.v2 .card-meta,
+.v2 .sources {
+  font-size: var(--v2-fs-s);
+}
+
+/* «Как пройти» — две равные кнопки 44 px, радиус 14 */
+.v2 .directions {
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.v2 .directions .directions-label {
+  font-size: var(--v2-fs-s);
+}
+
+.v2 .directions .directions-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-m);
+}
+
+/* Номер места — золотой кружок (как остановки на карте) */
+.v2 .rank,
+.v2 .tl-rank {
+  clip-path: none;
+  border-radius: 50%;
+}
+
+.v2 .rank {
+  width: 32px;
+  height: 32px;
+  font-size: var(--v2-fs-m);
+}
+
+/* Спокойный список: название 17, «Почему» 15 */
+.v2 .cards > .card + .card .card-title {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .cards > .card + .card .card-text dd:first-of-type {
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .cards > .card + .card .rank {
+  width: 28px;
+  height: 28px;
+  font-size: var(--v2-fs-s);
+}
+
+/* --- карта: небо и солнце с флага. Маршрут — бирюзовый акцент (опции Leaflet в map.js), остановки —
+   золотые кружки, остальное нейтральное. Тайлы приглушены фильтром только на слое тайлов:
+   маршрут, маркеры и подписи — в других панелях и фильтр не получают. */
+.v2 .leaflet-tile-pane {
+  filter: saturate(0.35) brightness(1.05);
+}
+
+.v2 .stop-icon span {
+  width: 30px;
+  height: 30px;
+  clip-path: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* «Идея ИИ» отличается не только цветом: тёмное кольцо (форма + цвет) */
+.v2 .stop-icon.is-generated span {
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* Блок маршрута — нейтральный; бирюзовый остаётся у линии и итога «по тротуарам» */
+.v2 .route {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.v2 .route > summary strong {
+  color: var(--ink);
+}
+
+/* --- вычитание: служебное уходит с основного экрана, но остаётся доступным */
+/* «Готово за … · карточек: N» — только для скринридера (role=status); «Ищу места…» и «Запрос отменён» видны */
+.v2 .results > .status[data-kind="done"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* «На сервер уйдёт только id ориентира: …» — в «Что ушло на сервер»; заметки о геолокации и ячейке остаются */
+.v2 .where-note:not([class*="is-"]) {
+  display: none;
+}
+
+/* Без капса и без стрелок в кнопках */
+.v2 .mock-pill {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.v2 .back-to-card > span[aria-hidden="true"] {
+  display: none;
+}
+
+.v2 .summary {
+  font-size: var(--v2-fs-l);
+}
+
+/* «Уточнить» (с машиной времени) свёрнут и на широком экране */
+@media (min-width: 900px) {
+  .v2 .refine {
+    margin-top: 16px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+  }
+  .v2 .refine > summary {
+    display: flex;
+  }
+  .v2 .refine > fieldset {
+    margin: 12px 14px 0;
+  }
+}
+
+.v2 .refine-count {
+  white-space: nowrap;
+}
+
+/* Зелёный — только «открыто». Источник «Из базы мест» — нейтральный контур без точки (форма отличает
+   его от статуса часов); «Идея ИИ» — прежний сиреневый с ромбом. */
+.v2 .badge-poi {
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.v2 .badge-poi::before {
+  display: none;
+}
+
+/* ================================================================== v2.1
+   Эталон Claude Design: qadam-v2-skin.css («Структура v2.1») и style.md. Всё по-прежнему только под body.v2. */
+
+/* Палитра B «Небо» (style.md): только токены под .v2 */
+.v2 {
+  --bg: #f2f5f7;
+  --surface-2: #f7f9fa;
+  --line: #dde4e8;
+  --line-strong: #788790; /* рамки полей 3,38:1 на фоне, 3,71:1 на белом */
+  --ink-2: #4b5a63; /* 6,52:1 на фоне */
+  --ink-3: #5c6870; /* 5,23:1 на фоне */
+  --accent-soft: #dcecef;
+}
+
+.v2 .hero-title {
+  margin: 4px 0 0;
+}
+
+/* Без v2 (откат): DOM переставлен под v2.1, прежний порядок на экране восстанавливает order */
+body:not(.v2) .ask {
+  display: flex;
+  flex-direction: column;
+}
+
+body:not(.v2) .ask > .presets {
+  order: -1;
+  margin-bottom: 14px;
+}
+
+body:not(.v2) .submit-row {
+  margin-top: 8px;
+}
+
+body:not(.v2) .submit-row .btn-primary {
+  width: 100%;
+  min-height: 48px;
+}
+
+/* v2.1, карточка: номер и название → «Почему» → факты одной строкой (путь, время на месте, часы) →
+   «Что делать» → «Как пройти» и справа мелко «Из базы мест» → две кнопки. Ряда бейджей нет;
+   «Идея ИИ» остаётся заметным бейджем сразу под названием. Порядок — order, DOM прежний. */
+.v2 .card:not(.skeleton) > .card-text {
+  display: contents; /* dt/dd «Почему» и «Что делать» встают в колонку карточки по отдельности */
+}
+
+.v2 .card > .card-head { order: 0; }
+.v2 .card > .badges { order: 0; }
+.v2 .card-text > dt:nth-of-type(1),
+.v2 .card-text > dd:nth-of-type(1) { order: 1; }
+.v2 .card > .card-facts { order: 2; }
+.v2 .card > .hours-note { order: 3; }
+.v2 .card > .ai-note { order: 4; }
+.v2 .card-text > dt:nth-of-type(2) { order: 5; margin-top: 12px; }
+.v2 .card-text > dd:nth-of-type(2) { order: 6; }
+.v2 .card > .card-address { order: 7; }
+.v2 .card > .tags { order: 8; }
+.v2 .card > .directions { order: 9; }
+.v2 .card > .card-meta { order: 10; }
+.v2 .card > .card-actions { order: 11; }
+
+.v2 .card-text > dd:nth-of-type(1) {
+  margin: 8px 0 0;
+}
+
+.v2 .card-text > dd:nth-of-type(2) {
+  margin: 2px 0 0;
+}
+
+/* Бейджи источника и часов в v2 не рисуем: часы — в фактах, источник — у «Как пройти».
+   Ряд остаётся только у «Идеи ИИ». */
+.v2 .card .badges .badge-poi,
+.v2 .card .badges .badge-hours {
+  display: none;
+}
+
+.v2 .card .badges:not(:has(.badge-ai)) {
+  display: none;
+}
+
+.v2 .card .badges {
+  margin-top: 8px;
+}
+
+/* Факты: иконка + значение, 15 px, одна строка с переносом по фактам */
+.v2 .card-facts {
+  gap: 4px 16px;
+  margin-top: 12px;
+  font-size: var(--v2-fs-m);
+  font-weight: 500;
+}
+
+.v2 .card-facts > span.fact-visit {
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 1.5h8V3h-.8v1.6a3.2 3.2 0 0 1-1.6 2.8L8.9 8l.7.6a3.2 3.2 0 0 1 1.6 2.8V13h.8v1.5H4V13h.8v-1.6a3.2 3.2 0 0 1 1.6-2.8L7.1 8l-.7-.6A3.2 3.2 0 0 1 4.8 4.6V3H4zm2.3 1.5v1.6c0 .6.3 1.1.8 1.4L8 6.6l.9-.6c.5-.3.8-.8.8-1.4V3zm1.7 6.4-.9.6c-.5.3-.8.8-.8 1.4V13h3.4v-1.1c0-.6-.3-1.1-.8-1.4z'/%3E%3C/svg%3E");
+}
+
+.v2 .card-facts > .fact-hours {
+  display: inline-flex;
+  font-weight: 600;
+  --v2-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.6a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zM7.2 4.5h1.6v3.1l2.2 1.3-.8 1.4-3-1.8z'/%3E%3C/svg%3E");
+}
+
+/* Статус часов: цвет + форма-подсказка через иконку; зелёный — только «открыто» (open + high) */
+.v2 .card-facts > .fact-hours.is-open { color: var(--open-ink); }
+.v2 .card-facts > .fact-hours.is-open::before { background: var(--open-ink); }
+.v2 .card-facts > .fact-hours.is-maybe { color: var(--maybe-ink); }
+.v2 .card-facts > .fact-hours.is-maybe::before { background: var(--maybe-ink); }
+.v2 .card-facts > .fact-hours.is-closed { color: var(--closed-ink); }
+.v2 .card-facts > .fact-hours.is-closed::before { background: var(--closed-ink); }
+.v2 .card-facts > .fact-hours.is-unknown { color: var(--ink-2); font-weight: 500; }
+
+/* «Как пройти»: подпись слева, источник мелко справа, ниже две равные кнопки */
+.v2 .directions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.v2 .directions .directions-label {
+  grid-column: 1;
+  flex-basis: auto;
+}
+
+.v2 .directions .dir-source {
+  display: block;
+  grid-column: 2;
+  justify-self: end;
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+  text-align: right;
+}
+
+.v2 .directions .directions-label:only-of-type,
+.v2 .directions:not(:has(.dir-source)) .directions-label {
+  grid-column: 1 / -1;
+}
+
+.v2 .directions .directions-btn {
+  grid-row: 2;
+  width: 100%;
+}
+
+/* v2.1, ожидание: заголовок «Ищу места рядом с …» 21 px, под ним «Учитываю:» — чипы реальных параметров запроса */
+.v2 .results > .status[data-kind="loading"] {
+  margin: 0 0 8px;
+  font-size: var(--v2-fs-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.v2 .loading-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding-right: 96px; /* место под «Отменить» справа */
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+.v2 .loading-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.v2 .loading .sk-summary {
+  display: none; /* полоску сводки заменяет «Учитываю» */
+}
+
+.v2 .sk {
+  background-image: linear-gradient(90deg, #e3eaee 0%, #f0f4f6 50%, #e3eaee 100%); /* скелетон в холодной палитре B */
+}
+
+/* v2.1: номера остановок на карте — золотой шестиугольник с контуром --ink (эталон), номер — textContent */
+.v2 .stop-icon svg {
+  display: block;
+  overflow: visible;
+  transition: transform 0.15s;
+}
+
+.v2 .stop-hex {
+  fill: var(--gold);
+  stroke: var(--ink);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.v2 .stop-num {
+  fill: var(--ink);
+  font: 700 16px var(--font);
+}
+
+/* «Идея ИИ» на карте — сиреневая заливка и тот же контур (цвет + подпись в карточке) */
+.v2 .stop-icon.is-generated .stop-hex {
+  fill: #d9ccf5;
+}
+
+.v2 .stop-icon.is-active svg {
+  transform: scale(1.2);
+}
+
+.v2 .stop-icon.is-active .stop-hex {
+  fill: var(--accent);
+}
+
+.v2 .stop-icon.is-active .stop-num {
+  fill: #fff;
+}
+
+/* Номера в карточках и таймлайне — тоже шестиугольники, как на карте */
+.v2 .rank,
+.v2 .tl-rank {
+  clip-path: var(--hex);
+  border-radius: 0;
+}
+
+.v2 .rank {
+  width: 30px;
+  height: 34px;
+}
+
+/* Лист — белый, с «ручкой» сверху на телефоне; главная карточка — тонкая рамка без тени */
+.v2 .panel {
+  background: var(--surface);
+}
+
+@media (max-width: 899px) {
+  .v2 .panel::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 2px;
+    background: var(--line);
+  }
+}
+
+.v2 .cards > .card:first-child {
+  border-color: var(--line);
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+/* Выбранный чип и сценарий: мягкая заливка + кольцо --accent (не только цвет заливки) */
+.v2 .preset[aria-pressed="true"],
+.v2 .chip[aria-pressed="true"],
+.v2 .btn-ghost[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent-strong);
+}
+
+/* Фокус: одна видимая обводка 2 px --accent для всех элементов v2 */
+.v2 :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* v2.1, критика vs эталон, правка 1: в карточке эталона нет ряда тегов — убираем шум (теги — не метки честности) */
+.v2 .card > .tags {
+  display: none;
+}
+
+/* v2.1, правка 2: предупреждения тише — 13 px, меньше полей; цвет и значок «!» остаются */
+.v2 .warning {
+  padding: 6px 12px 6px 32px;
+  font-size: var(--v2-fs-s);
+}
+
+.v2 .warning::before {
+  top: 8px;
+}
+
+/* v2.1, правка 3: места 2–3 — строки списка по эталону (поля 14/4), «Что делать» тише */
+.v2 .cards > .card + .card {
+  padding: 14px 4px;
+}
+
+.v2 .cards > .card + .card .card-text > dd:nth-of-type(2) {
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
 }

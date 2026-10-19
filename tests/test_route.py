@@ -254,3 +254,152 @@ def test_plan_walk_respects_budget_and_diversity() -> None:
     assert plan_walk(ORIGIN, [placed("far", 0.05)], 30) == []  # nothing fits
     small = plan_walk(ORIGIN, [placed("a", 0.0015), placed("b", 0.0017, category="cafe")], 25)
     assert len(small) == 1  # 20-min park + way there and back fits, two stops do not
+
+
+# ------------------------------------------------ T91: route on the walk graph
+
+from app.walkgraph import Mode, load_graph  # noqa: E402
+
+from .test_walkgraph import STREET, STREET_EDGES, at, write_graph  # noqa: E402
+
+
+def cand_at(poi_id: str, point: GeoPoint, category: str = "park", score: float = 0.5) -> Candidate:
+    poi = POI.model_validate({
+        "id": f"test:poi/{poi_id}", "name": f"Место {poi_id}", "category": category,
+        "geo": {"lat": point.lat, "lon": point.lon}, "sources": ["osm"],
+        "data_confidence": 0.5, "fetched_at": "2026-10-19",
+    })
+    d = haversine_m(at(0, -5), point)
+    return Candidate(poi=poi, distance_m=round(d), walk_min=walk_minutes(d), hours=UNKNOWN,
+                     score=score)
+
+
+def test_route_on_graph_follows_footways_and_crossings(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
+    r = plan_route(at(0, -5), [east, north], None, {}, graph=g)
+    assert r is not None
+    assert r.path_source == "graph"
+    assert sum(leg.distance_m for leg in r.legs) == r.total_walk_m
+    assert all(leg.walk_min == max(1, -(-leg.distance_m // 75)) for leg in r.legs)
+    assert r.total_walk_m >= 430  # across the road only at the crossing (x = 200)
+    assert [c.kind for c in r.crossings] == ["signals"]
+    assert r.steps_count == 0
+    assert (r.path[0].lat, r.path[0].lon) == (at(0, -5).lat, at(0, -5).lon)
+    last = {"test:poi/east": east, "test:poi/north": north}[r.stop_ids[-1]].poi.geo
+    assert (r.path[-1].lat, r.path[-1].lon) == (last.lat, last.lon)
+    assert "OSM" in r.note and "прямые отрезки" not in r.note
+
+
+def test_route_without_binding_stays_straight(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    far = cand_at("far", at(0, -900))  # 900 m from any node: cannot be bound
+    near = cand_at("near", at(200, -5))
+    r = plan_route(at(0, -5), [near, far], None, {}, graph=g)
+    assert r is not None
+    assert r.path_source == "straight"
+    assert r.crossings == [] and r.steps_count == 0
+    assert "прямые отрезки" in r.note
+
+
+def test_wheelchair_route_avoids_stairs(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import FOOTWAY, STEPS
+
+    nodes = {"A": (0, 0, 0), "M": (0, 20, 0), "B": (0, 40, 0), "R1": (30, 0, 0),
+             "R2": (30, 40, 0), "C": (0, 60, 0)}
+    edges = [("A", "M", STEPS), ("M", "B", STEPS), ("A", "R1", FOOTWAY),
+             ("R1", "R2", FOOTWAY), ("R2", "B", FOOTWAY), ("B", "C", FOOTWAY)]
+    g = load_graph(write_graph(tmp_path, nodes, edges))
+    stops = [cand_at("b", at(0, 40)), cand_at("c", at(0, 60))]
+    walk = plan_route(at(0, 0), stops, None, {}, graph=g)
+    chair = plan_route(at(0, 0), stops, None, {}, graph=g, mode=Mode(wheelchair=True))
+    assert walk is not None and chair is not None
+    assert walk.steps_count == 2 and chair.steps_count == 0
+    assert chair.total_walk_m > walk.total_walk_m
+
+
+def test_budget_is_checked_with_graph_minutes(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
+    visits = {"test:poi/east": 10, "test:poi/north": 10}
+    straight = plan_route(at(0, -5), [east, north], 27, visits)
+    assert straight is not None and len(straight.stop_ids) == 2  # straight: 25 of 27 min
+    graph = plan_route(at(0, -5), [east, north], 27, visits, graph=g)  # graph: 28 min
+    assert graph is not None and graph.path_source == "graph"
+    assert graph.stop_ids == ["test:poi/east"]  # by the graph the 2nd stop breaks the budget
+
+
+def test_plan_walk_checks_the_budget_on_the_graph(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east = cand_at("east", at(200, -5), score=0.9)
+    north = cand_at("north", at(0, 135), score=0.5)  # 100 m north of the far sidewalk
+    budget = 52  # two stops: straight loop 52 min, on the graph 53 min
+    by_line = plan_walk(at(0, -5), [east, north], budget)
+    on_graph = plan_walk(at(0, -5), [east, north], budget, graph=g)
+    assert len(by_line) == 2
+    assert [c.poi.id for c in on_graph] == ["test:poi/east"]
+
+
+def test_graph_note_languages() -> None:
+    for lang in ("ru", "kk", "en"):
+        straight = route_note(lang)
+        graph = route_note(lang, graph=True)
+        assert graph != straight and "OSM" in graph
+    assert "лестниц" in route_note("ru", graph=True, wheelchair=True)
+
+
+
+def test_graph_search_crash_gives_exactly_the_straight_route(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from app.walkgraph import WalkGraph
+
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
+    visits = {"test:poi/east": 10, "test:poi/north": 10}
+
+    def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("bug in the search")
+
+    monkeypatch.setattr(WalkGraph, "_search", boom)
+    on_graph = plan_route(at(0, -5), [east, north], 27, visits, graph=g)
+    plain = plan_route(at(0, -5), [east, north], 27, visits)
+    assert on_graph == plain and on_graph is not None and on_graph.path_source == "straight"
+    walk = plan_walk(at(0, -5), [east, north], 55, graph=g)
+    assert [c.poi.id for c in walk] == [c.poi.id for c in plan_walk(at(0, -5), [east, north], 55)]
+
+
+def test_route_with_every_leg_straight_is_the_straight_route(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """S1 at Mega on the real graph: NU Park only by a detour > 3 x + 200 m, both legs fall
+    back to straight segments -> path_source=straight and the straight note, not «graph»."""
+    from .test_walkgraph import FOOTWAY
+
+    nodes = {"A": (0, 0, 0), "A2": (0, 600, 0), "B2": (60, 600, 0), "B": (60, 0, 0)}
+    edges = [("A", "A2", FOOTWAY), ("A2", "B2", FOOTWAY), ("B2", "B", FOOTWAY)]
+    g = load_graph(write_graph(tmp_path, nodes, edges))
+    park = cand_at("park", at(60, 0))
+    on_graph = plan_route(at(0, 0), [park], None, {"test:poi/park": 30}, loop=True, graph=g,
+                          graph_note="graph note")
+    plain = plan_route(at(0, 0), [park], None, {"test:poi/park": 30}, loop=True)
+    assert on_graph == plain and on_graph is not None
+    assert on_graph.path_source == "straight" and on_graph.note != "graph note"
+
+
+def test_graph_route_with_some_straight_legs_says_so(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A stop 3 m from the start hangs on the same node: that leg is straight, the next one
+    follows the graph -> path_source=graph and the note says some segments are straight."""
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    near, north = cand_at("near", at(2, -3)), cand_at("north", at(0, 35))
+    visits = {"test:poi/near": 10, "test:poi/north": 10}
+    for lang, sentence in (("ru", "Часть отрезков посчитана по прямой × 1,3."),
+                           ("kk", "Кейбір кесінділер түзу сызықпен × 1,3 есептелген."),
+                           ("en", "Some segments are straight lines × 1.3.")):
+        r = plan_route(at(0, -5), [near, north], None, visits, graph=g, lang=lang,
+                       graph_note=route_note(lang, graph=True))
+        assert r is not None and r.path_source == "graph"
+        assert r.stop_ids == ["test:poi/near", "test:poi/north"]
+        assert r.legs[0].distance_m <= 4 and r.legs[1].distance_m > 200  # straight, graph
+        assert r.note == f"{route_note(lang, graph=True)} {sentence}"
+    whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g)
+    assert whole is not None and whole.path_source == "graph"
+    assert "по прямой" not in whole.note  # every leg on the graph: the note stays as it was

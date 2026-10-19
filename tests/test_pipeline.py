@@ -19,12 +19,14 @@ from typing import Any
 import h3
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from app import geo, hours, retrieval, route, validate, weather
+from app import pipeline as pipeline_mod
 from app.config import Settings, get_settings
 from app.generate import build_prompt
 from app.llm import LLMUnavailable
-from app.pipeline import Deps, InvalidRequest, UnknownLandmarkError, recommend
+from app.pipeline import TEXTS, Deps, InvalidRequest, UnknownLandmarkError, recommend
 from app.schemas import (
     POI,
     Candidate,
@@ -147,41 +149,69 @@ def install_core_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeLLM:
-    """Duck-typed LLMClient: answers QueryIntent / DraftResponse, records calls."""
+    """Duck-typed LLMClient: answers QueryIntent / DraftResponse, records calls.
+
+    Like the real client: unavailable (cooldown / no key) -> LLMUnavailable at once, with the
+    reason in `last_error`; `parse_fail` breaks only the QueryIntent call."""
 
     def __init__(self, *, available: bool = True, fail: Exception | None = None,
-                 intent: QueryIntent | None = None, embed: np.ndarray | None = None) -> None:
+                 intent: QueryIntent | None = None, embed: np.ndarray | None = None,
+                 error_kind: str = "network", parse_fail: Exception | None = None,
+                 embed_status: str | None = None, enabled: bool = True,
+                 summary: str = "Идеи от модели", whys: list[str] | None = None) -> None:
         self.available = available
+        self.summary = summary
+        self.whys = whys or []
+        self.enabled = enabled
         self.fail = fail
+        self.parse_fail = parse_fail
         self.intent = intent
         self.embed = embed
+        self.error_kind = error_kind
+        self.embed_status = embed_status
         self.model_name = "fake-claude"
         self.last_model: str | None = None
+        self.last_error: str | None = None
+        self.last_embed_status: str | None = None
         self.calls: list[str] = []
         self.embedded: list[str] = []
 
     def generate_structured(self, *, system: str, prompt: str, schema: type, effort: str = "low"
                             ) -> Any:
         self.calls.append(schema.__name__)
-        if self.fail is not None:
-            raise self.fail
+        self.last_error = None
+        failure = self.parse_fail if schema is QueryIntent and self.parse_fail else self.fail
+        if not self.available:
+            failure = LLMUnavailable("cooling down")
+        if failure is not None:
+            if isinstance(failure, LLMUnavailable):
+                self.last_error = self.error_kind
+            raise failure
         self.last_model = "fake-claude"
         if schema is QueryIntent:
             return self.intent or QueryIntent(raw_query="x", parser="llm")
         ids = [line.split('"')[3] for line in prompt.splitlines() if line.strip()
                .startswith('"id":')]
-        return DraftResponse(summary="Идеи от модели", cards=[
-            CardDraft(poi_id=i, why="Рядом и подходит.", what_to_do="Загляните на 20 минут.",
+        return DraftResponse(summary=self.summary, cards=[
+            CardDraft(poi_id=i, why=self.whys[n] if n < len(self.whys) else "Рядом и подходит.",
+                      what_to_do="Загляните на 20 минут.",
                       visit_min_low=20, visit_min_high=30, idea_source="generated")
-            for i in ids[:2]])
+            for n, i in enumerate(ids[:2])])
 
     def embed_query(self, text: str) -> np.ndarray | None:
         self.embedded.append(text)
+        self.last_embed_status = self.embed_status or ("ok" if self.embed is not None
+                                                       else "error")
         return self.embed
 
 
 def make_settings(tmp_path: Path) -> Settings:
-    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache", h3_res=9)
+    # index_dir too: the real data/index/meta.json may say "stale" — tests must not care
+    # no embeddings keys either: a test that needs one sets it explicitly (.env must not matter)
+    return dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
+                               index_dir=tmp_path / "index", h3_res=9,
+                               embed_provider="gemini", embed_model="gemini-embedding-001",
+                               gemini_api_key=None, openrouter_api_key=None)
 
 
 def make_store(pois: list[POI], landmarks: dict[str, Landmark], **over: Any) -> Store:
@@ -240,15 +270,15 @@ class TestRecommend:
         deps.llm = FakeLLM(fail=LLMUnavailable("quota"))
         a = recommend(req(), deps)
         assert a.data_used.generation == "template" and a.data_used.parser == "rules"
-        assert "LLM недоступна — показаны карточки по данным." in a.warnings
+        assert "LLM недоступна (нет связи) — показаны карточки по данным." in a.warnings
         assert a.cards
 
-    def test_llm_unavailable_flag_skips_calls(self, deps: Deps) -> None:
+    def test_unavailable_llm_warns_once(self, deps: Deps) -> None:
         deps.llm = FakeLLM(available=False)
         a = recommend(req(), deps)
-        assert deps.llm.calls == []
         assert a.data_used.generation == "template"
-        assert a.warnings.count("LLM недоступна — показаны карточки по данным.") == 1
+        assert sum(w.startswith("LLM недоступна") for w in a.warnings) == 1
+        assert not any(w.startswith("Запрос разобран по правилам") for w in a.warnings)
 
     def test_no_llm_object(self, deps: Deps) -> None:
         deps.llm = None
@@ -303,13 +333,11 @@ class TestRecommend:
             recommend(req("я турист, 2 часа", at=at), deps)
         assert deps.llm.calls == []
 
-    def test_fine_cell_is_coarsened_to_r9(self, deps: Deps) -> None:
-        fine = h3.latlng_to_cell(51.0894, 71.4161, 13)
-        a = recommend(RecommendRequest.model_validate(
-            {"query": "кофе", "location": {"h3_cell": fine}, "use_llm": False}), deps)
-        assert a.context.h3_res == 9
-        assert a.context.h3_cell == h3.cell_to_parent(fine, 9)
-        assert a.data_used.location.endswith("H3 r9")
+    def test_cell_finer_than_r10_is_rejected_by_the_contract(self, deps: Deps) -> None:
+        fine = h3.latlng_to_cell(51.0894, 71.4161, 13)  # ~40 m²: effectively a raw coordinate
+        with pytest.raises(ValidationError, match="finer than r10"):
+            RecommendRequest.model_validate(
+                {"query": "кофе", "location": {"h3_cell": fine}, "use_llm": False})
 
     def test_radius_widened_once(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: list[int] = []
@@ -342,7 +370,8 @@ class TestRecommend:
         monkeypatch.setattr(retrieval, "retrieve", boom)
         a = recommend(req(), deps)
         assert a.cards == []
-        assert "Поиск временно дал сбой — попробуйте ещё раз." in a.warnings
+        assert ("Поиск дал сбой на нашей стороне — повтор не поможет. Попробуйте другой запрос "
+                "или точку.") in a.warnings
 
     def test_template_crash_does_not_raise(self, deps: Deps,
                                            monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +476,8 @@ class TestRecommend:
         b = recommend(req(use_llm=False, lang="en"), deps)
         assert b.data_used.weather == "-3°C, wind 5 m/s"  # same numbers, answer language
         monkeypatch.setattr(weather, "get_weather", lambda origin, at: None)
-        assert recommend(req(use_llm=False), deps).data_used.weather == "погода неизвестна"
+        assert recommend(req(use_llm=False, at=None),
+                         deps).data_used.weather == "погода неизвестна"
 
     def test_query_vector_only_with_index_and_ai(self, deps: Deps) -> None:
         deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
@@ -471,13 +501,454 @@ class TestRecommend:
         deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
         deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
         assert semantic in recommend(req("кофе", lang=lang), deps).data_used.filters
-        deps.llm = FakeLLM(embed=None)  # embed_query failed (quota) -> lexical
+        deps.llm = FakeLLM(embed=None)  # embed_query failed -> lexical, with the reason
         filters = recommend(req("кофе", lang=lang), deps).data_used.filters
-        assert lexical in filters and semantic not in filters
+        assert any(f.startswith(lexical + " (") for f in filters) and semantic not in filters
         no_ai = recommend(req("кофе", lang=lang, use_llm=False), deps).data_used.filters
-        assert lexical in no_ai
+        assert lexical in no_ai  # the user chose it: no reason to explain
         deps.store.embeddings = None  # no index at all
-        assert lexical in recommend(req("кофе", lang=lang), deps).data_used.filters
+        no_index = recommend(req("кофе", lang=lang), deps).data_used.filters
+        assert any(f.startswith(lexical) for f in no_index)  # (+ «отбор — Claude» with AI)
+
+    @pytest.mark.parametrize(
+        "vec",
+        [np.zeros(4, dtype=np.float32), np.ones(3, dtype=np.float32),
+         np.array([np.nan, 1, 0, 0], dtype=np.float32)],
+        ids=["zero", "wrong-dim", "nan"],
+    )
+    def test_unusable_vector_is_reported_as_lexical(
+        self, deps: Deps, vec: np.ndarray, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """retrieval drops such a vector and goes lexical: the panel must say so too."""
+        seen: list[Any] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            seen.append(qv)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=vec)
+        filters = recommend(req("кофе"), deps).data_used.filters
+        assert "поиск: по словам (некорректный вектор запроса), отбор — Claude" in filters
+        assert seen and all(qv is None for qv in seen)
+
+    def test_query_unmatched_hook(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QUALITY's retrieval.query_unmatched(store, intent, ctx, candidates) -> warning."""
+        seen: list[tuple[Any, ...]] = []
+
+        def unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
+                      cands: list[Candidate]) -> bool:
+            seen.append((store, intent, ctx, cands))
+            return True
+
+        monkeypatch.setattr(retrieval, "query_unmatched", unmatched, raising=False)
+        texts = {"ru": "Точного совпадения по запросу нет — показано, что есть рядом.",
+                 "kk": "Сұрауға дәл сәйкес орын жоқ — жақын маңдағы орындар көрсетілді.",
+                 "en": "No exact match for your request — showing what is nearby."}
+        for lang, text in texts.items():
+            assert text in recommend(req("кофе", lang=lang, use_llm=False), deps).warnings
+        store, _intent, ctx, cands = seen[0]
+        assert store is deps.store and isinstance(ctx, SearchContext) and cands
+        monkeypatch.setattr(retrieval, "query_unmatched", lambda *a: False)
+        assert not any("совпадения" in w
+                       for w in recommend(req("кофе", use_llm=False), deps).warnings)
+
+    def test_query_unmatched_absent_or_broken(self, deps: Deps,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delattr(retrieval, "query_unmatched", raising=False)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # old main: no function yet
+
+        def boom(*_a: Any) -> bool:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(retrieval, "query_unmatched", boom, raising=False)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
+
+    def test_llm_summary_is_sanitized_as_llm(self, deps: Deps,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+
+        def sanitize(summary: str, cards: list[Card], llm: bool = False) -> str:
+            calls.append(llm)
+            return summary
+
+        monkeypatch.setattr(validate, "sanitize_summary", sanitize)
+        assert recommend(req("кофе"), deps).data_used.generation == "llm"
+        assert calls == [True]  # the LLM wrote it
+        recommend(req("кофе", use_llm=False), deps)
+        assert calls == [True, False]  # template counters / airport times: default
+
+    def test_stale_index_is_named_in_the_search_line(self, deps: Deps, tmp_path: Path) -> None:
+        import json
+
+        index = tmp_path / "index"
+        index.mkdir()
+        (index / "meta.json").write_text(json.dumps({"status": "stale"}), encoding="utf-8")
+        deps.settings = dataclasses.replace(deps.settings, index_dir=index)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        filters = recommend(req("кофе"), deps).data_used.filters
+        assert "поиск: по смыслу и по словам (индекс устарел)" in filters
+        en = recommend(req("coffee", lang="en"), deps).data_used.filters
+        assert "search: by meaning and keywords (index outdated)" in en
+
+    @pytest.mark.parametrize(
+        ("lang", "line", "warning"),
+        [("ru", "поиск: по словам (индекс не подходит к модели запросов), отбор — Claude",
+          "Смысловой поиск недоступен: индекс построен другой моделью — поиск только по словам."),
+         ("kk", "іздеу: сөздері бойынша (индекс сұрау моделіне сәйкес емес), іріктеу — Claude",
+          "Мағыналық іздеу қолжетімсіз: индекс басқа модельмен құрылған — тек сөздер бойынша "
+          "іздеу."),
+         ("en", "search: by keywords (index does not match the query model), picked by Claude",
+          "Semantic search is unavailable: the index was built with another model — keyword "
+          "search only.")],
+    )
+    def test_index_of_another_model_is_named(self, deps: Deps, tmp_path: Path, lang: str,
+                                             line: str, warning: str) -> None:
+        """EMBED_PROVIDER=openrouter over an index built with gemini-embedding-001: Store drops
+        the vectors; the answer must say why instead of a bare «по словам»."""
+        import json
+
+        index = tmp_path / "index"
+        index.mkdir()
+        (index / "meta.json").write_text(json.dumps(
+            {"model": "gemini-embedding-001", "dim": 768, "status": "ok"}), encoding="utf-8")
+        deps.settings = dataclasses.replace(
+            deps.settings, index_dir=index, embed_provider="openrouter",
+            openrouter_api_key="or-key", embed_model="google/gemini-embedding-001", embed_dim=768)
+        deps.store.embeddings = None  # dropped by Store: model mismatch
+        a = recommend(req(lang=lang), deps)
+        assert line in a.data_used.filters
+        assert warning in a.warnings
+        b = recommend(req(lang=lang, use_llm=False), deps)  # the user chose no AI
+        assert not any("(" in f for f in b.data_used.filters if "Claude" in f or "по словам" in f)
+
+    def test_missing_index_with_a_key_is_named(self, deps: Deps, tmp_path: Path) -> None:
+        deps.settings = dataclasses.replace(deps.settings, index_dir=tmp_path / "none",
+                                            gemini_api_key="g-key")
+        deps.store.embeddings = None
+        a = recommend(req(), deps)
+        assert "поиск: по словам (индекс не загружен), отбор — Claude" in a.data_used.filters
+        assert ("Смысловой поиск недоступен: индекс эмбеддингов не загружен — поиск только по "
+                "словам.") in a.warnings
+
+    def test_no_key_and_no_index_stays_quiet(self, deps: Deps) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+        deps.store.embeddings = None
+        a = recommend(req(), deps)
+        assert "поиск: по словам, отбор — Claude" in a.data_used.filters
+        assert not any("Смысловой" in w for w in a.warnings)
+
+    def test_hours_dropped_in_filters(self, deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda store, intent, ctx: {
+            "closed": 3, "closed_partial": 1, "closing_soon": 2, "night": 0}, raising=False)
+        ru = recommend(req("кофе", use_llm=False), deps).data_used.filters
+        assert ("по часам работы отсеяно 6: закрыто 3, сегодня не работает 1, "
+                "скоро закроется 2") in ru
+        kk = recommend(req("кофе", lang="kk", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("жұмыс уақыты бойынша алынып тасталды 6") for f in kk)
+        en = recommend(req("coffee", lang="en", use_llm=False), deps).data_used.filters
+        assert any(f.startswith("removed by opening hours 6: closed 3") for f in en)
+        monkeypatch.setattr(retrieval, "hours_dropped", lambda *a: {"closed": 0})
+        assert not any("отсеяно" in f
+                       for f in recommend(req("кофе", use_llm=False), deps).data_used.filters)
+
+        def boom(*_a: Any) -> dict[str, int]:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(retrieval, "hours_dropped", boom)
+        assert recommend(req("кофе", use_llm=False), deps).cards  # never kills the answer
+
+    def test_old_sanitize_signature_still_works(self, deps: Deps,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validate, "sanitize_summary", lambda summary, cards: summary)
+        assert recommend(req("кофе"), deps).summary == "Идеи от модели"
+
+    # ----------------------------------- raw tags in the model summary (S5 live)
+
+    @pytest.mark.parametrize(("lang", "leak", "raw"), [
+        ("ru", "Поздним вечером: все с тегом night рядом с EXPO.", ("night", "тег")),
+        ("kk", "Кешке қарай late_open орындары жақын.", ("late_open",)),
+    ])
+    def test_model_summary_with_a_raw_tag_becomes_the_template(
+            self, deps: Deps, lang: str, leak: str, raw: tuple[str, ...]) -> None:
+        deps.llm = FakeLLM(summary=leak)
+        a = recommend(req("кофе", lang=lang), deps)
+        assert a.lang == lang and a.data_used.generation == "llm" and a.cards
+        assert a.summary == pipeline_mod._template_summary(pipeline_mod.TEXTS[lang],
+                                                           len(a.cards))
+        assert not any(word in a.summary for word in raw)
+
+    def test_english_night_is_a_word_not_a_tag(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(summary="A quiet night walk by the river.")
+        a = recommend(req("coffee", lang="en"), deps)
+        assert a.lang == "en" and a.summary == "A quiet night walk by the river."
+
+    def test_template_summary_is_not_checked_for_tags(self, deps: Deps,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(pipeline_mod, "_template_summary", lambda t, n: "Ночью: тег night")
+        assert recommend(req("кофе", use_llm=False), deps).summary == "Ночью: тег night"
+
+    # ----------------------------------- raw tags in a model-written why (cache: 6 of 66)
+
+    @pytest.mark.parametrize("leak", ["Рядом, есть кофе и wifi.",
+                                      "Площадка отмечена тегом «для детей»."])
+    def test_model_why_with_a_raw_tag_becomes_the_template_why(self, deps: Deps,
+                                                                leak: str) -> None:
+        deps.llm = FakeLLM(whys=[leak, "Тихо и уютно."])
+        a = recommend(req("кофе"), deps)
+        assert a.data_used.generation == "llm" and len(a.cards) == 2
+        first, second = a.cards
+        assert first.why == f"≈{first.walk_min} мин пешком"  # fake_template_cards: matched
+        assert first.what_to_do == "Загляните на 20 минут." and first.idea_source == "generated"
+        assert second.why == "Тихо и уютно."  # the other card is not touched
+
+    def test_english_wifi_in_a_why_is_a_word(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(whys=["Quiet place with wifi and coffee."])
+        a = recommend(req("coffee", lang="en"), deps)
+        assert a.lang == "en" and a.cards[0].why == "Quiet place with wifi and coffee."
+
+    def test_template_cards_are_not_checked_for_tags(self, deps: Deps,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        def tagged(candidates: list[Candidate], intent: QueryIntent, ctx: SearchContext,
+                   n: int = 3) -> list[Card]:
+            return [c.model_copy(update={"why": "Есть wifi."})
+                    for c in fake_template_cards(candidates, intent, ctx, n)]
+
+        monkeypatch.setattr(validate, "template_cards", tagged)
+        a = recommend(req("кофе", use_llm=False), deps)
+        assert a.data_used.generation == "template" and a.cards
+        assert all(c.why == "Есть wifi." for c in a.cards)
+
+    @pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+    def test_template_reasons_never_look_like_raw_tags(self, lang: str) -> None:
+        # every phrase a template why is made of (retrieval.REASONS, MISSING_TAG_WORDS)
+        what = ", ".join(w.get(lang, w["ru"]) for w in retrieval.MISSING_TAG_WORDS.values())
+        for key, texts in retrieval.REASONS.items():
+            for src in retrieval.SOURCE_LABELS.values():
+                text = texts.get(lang, texts["ru"]).format(n=7, src=src, what=what)
+                assert not pipeline_mod._tag_leak(text, lang, []), (key, text)
+
+    @pytest.mark.parametrize(("lang", "text", "titles", "leak"), [
+        ("ru", "Поздним вечером: все с тегом night", [], True),
+        ("ru", "Здесь есть wifi и розетки", [], True),
+        ("ru", "Места с тегами для детей", [], True),
+        ("ru", "Работать удобно: power_outlets", [], True),
+        ("ru", "Кофейня 24_7 рядом", [], True),
+        ("ru", "Тихая прогулка вечером вдоль воды", [], False),
+        ("ru", "Кофе в зоне Wi-Fi", [], False),
+        ("ru", "Загляните в Kids Park", ["Kids Park"], False),
+        ("kk", "Кешке қарай late_open орындары", [], True),
+        ("kk", "Бұл орынның тегі бар", [], True),
+        ("kk", "Балаларға арналған kids орын", [], True),
+        ("kk", "Кешкі серуен", [], False),
+        ("en", "A quiet night walk by the river", [], False),
+        ("en", "Kids will love the view", [], False),
+        ("en", "Cafes with power_outlets nearby", [], True),
+        ("en", "Places tagged night are close", [], True),
+        ("en", "Everything with the kids tag", [], True),
+    ])
+    def test_tag_leak_detection(self, lang: str, text: str, titles: list[str],
+                                leak: bool) -> None:
+        assert pipeline_mod._tag_leak(text, lang, titles) is leak
+
+    # ----------------------------------- no query vector: Claude picks from 16
+
+    @pytest.mark.parametrize(
+        ("lang", "picked", "lexical", "semantic"),
+        [("ru", "поиск: по словам, отбор — Claude", "поиск: по словам",
+          "поиск: по смыслу и по словам"),
+         ("kk", "іздеу: сөздері бойынша, іріктеу — Claude", "іздеу: сөздері бойынша",
+          "іздеу: мағынасы мен сөздері бойынша"),
+         ("en", "search: by keywords, picked by Claude", "search: by keywords",
+          "search: by meaning and keywords")],
+    )
+    def test_claude_picks_from_a_wider_keyword_pool(
+        self, deps: Deps, monkeypatch: pytest.MonkeyPatch, lang: str, picked: str,
+        lexical: str, semantic: str
+    ) -> None:
+        ks: list[int] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            ks.append(k)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        # 1) no vector, Claude on -> 16 keyword candidates, Claude picks
+        a = recommend(req("кофе", lang=lang), deps)
+        assert ks[-1] == 16 and a.data_used.generation == "llm"
+        assert picked in a.data_used.filters
+        # 2) no AI -> 8 candidates, plain keyword search
+        b = recommend(req("кофе", lang=lang, use_llm=False), deps)
+        assert ks[-1] == 8 and lexical in b.data_used.filters
+        assert not any("Claude" in f for f in b.data_used.filters)
+        # 3) a usable vector -> 8 candidates, semantic search
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=np.ones(4, dtype=np.float32) / 2)
+        c = recommend(req("кофе", lang=lang), deps)
+        assert ks[-1] == 8 and semantic in c.data_used.filters
+
+    def test_claude_unavailable_keeps_the_usual_pool(self, deps: Deps,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        ks: list[int] = []
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            ks.append(k)
+            return fake_retrieve(store, intent, ctx, qv, k)
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        deps.llm = FakeLLM(available=False)
+        a = recommend(req("кофе"), deps)
+        assert ks == [8] and "поиск: по словам" in a.data_used.filters
+        deps.llm = FakeLLM(fail=LLMUnavailable("timeout"))  # asked, then failed
+        b = recommend(req("кофе"), deps)
+        assert ks[-1] == 16 and b.data_used.generation == "template"
+        assert "поиск: по словам" in b.data_used.filters  # no «отбор — Claude» claim
+        assert len(b.cards) <= 3
+
+    # ------------------------------------------- silent-failure review (wave 3)
+
+    def test_llm_down_says_why(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(fail=LLMUnavailable("400"), error_kind="no_credit")
+        a = recommend(req(), deps)
+        assert "LLM недоступна (закончились кредиты API) — показаны карточки по данным." in (
+            a.warnings)
+        assert not any(w.startswith("Запрос разобран по правилам") for w in a.warnings)
+
+    def test_cooling_llm_is_still_asked_for_its_cache(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(available=False, error_kind="quota")
+        a = recommend(req(), deps)
+        assert deps.llm.calls  # the client answers from cache or fails fast by itself
+        assert "LLM недоступна (лимит запросов) — показаны карточки по данным." in a.warnings
+
+    def test_switched_off_llm_is_never_called(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(enabled=False)
+        a = recommend(req(), deps)
+        assert deps.llm.calls == [] and a.data_used.generation == "template"
+        assert "LLM недоступна (отключено в настройках) — показаны карточки по данным." in (
+            a.warnings)
+
+    def test_parse_fallback_is_visible(self, deps: Deps) -> None:
+        deps.llm = FakeLLM(parse_fail=LLMUnavailable("timeout"), error_kind="timeout")
+        a = recommend(req(), deps)
+        assert a.data_used.parser == "rules" and a.data_used.generation == "llm"
+        assert "Запрос разобран по правилам: ИИ не ответил (таймаут)." in a.warnings
+        en = recommend(req("coffee", lang="en"), deps)
+        assert "The request was parsed by rules: the AI did not answer (timeout)." in (
+            en.warnings)
+
+    def test_finalize_bug_is_visible(self, deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                     caplog: pytest.LogCaptureFixture) -> None:
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(validate, "finalize", boom)
+        with caplog.at_level(logging.ERROR):
+            a = recommend(req(), deps)
+        assert a.cards and a.data_used.generation == "template"
+        assert "Тексты ИИ не прошли проверку — показаны карточки по данным." in a.warnings
+        assert any("finalize failed" in r.getMessage() and "Traceback" not in r.getMessage()
+                   and "line" in r.getMessage() for r in caplog.records)
+
+    def test_route_failures_are_visible(self, deps: Deps,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(route, "plan_walk", boom)
+        a = recommend(req("хочу прогуляться час", use_llm=False), deps)
+        assert a.cards  # plan_walk crash falls back to the candidates
+        assert "Маршрут построить не удалось — карточки показаны без маршрута." in a.warnings
+        monkeypatch.setattr(route, "plan_route", boom)
+        b = recommend(req("кафе или музей", use_llm=False), deps)
+        assert b.cards and b.route is None
+        assert "Маршрут построить не удалось — карточки показаны без маршрута." in b.warnings
+
+    def test_semantic_search_down_is_visible(self, deps: Deps) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status="daily_quota")
+        a = recommend(req(), deps)
+        assert ("Смысловой поиск недоступен (дневная квота Gemini) — поиск только по словам."
+                in a.warnings)
+        assert "поиск: по словам (дневная квота Gemini), отбор — Claude" in a.data_used.filters
+        deps.llm = FakeLLM(embed=np.zeros(4, dtype=np.float32), embed_status="ok")
+        bad = recommend(req(), deps)
+        assert ("поиск: по словам (некорректный вектор запроса), отбор — Claude"
+                in bad.data_used.filters)
+
+    @pytest.mark.parametrize(
+        ("lang", "picked", "lexical"),
+        [("ru", "поиск: по словам, отбор — Claude", "поиск: по словам"),
+         ("kk", "іздеу: сөздері бойынша, іріктеу — Claude", "іздеу: сөздері бойынша"),
+         ("en", "search: by keywords, picked by Claude", "search: by keywords")],
+    )
+    def test_empty_gemini_key_is_a_choice_not_a_failure(self, deps: Deps, lang: str,
+                                                        picked: str, lexical: str) -> None:
+        """Video takes run with an empty GEMINI_API_KEY: no «(no key)», no warning."""
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key=None)
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status="no_key")
+        a = recommend(req(lang=lang), deps)
+        search = [f for f in a.data_used.filters if f.startswith(lexical)]
+        assert search == [picked]
+        assert not any("Gemini" in w or "Смысловой" in w or "Мағыналық" in w
+                       for w in a.warnings)
+        b = recommend(req(lang=lang, use_llm=False), deps)
+        assert [f for f in b.data_used.filters if f.startswith(lexical)] == [lexical]
+
+    @pytest.mark.parametrize(
+        ("status", "lang", "reason"),
+        [("auth", "ru", "ключ OpenRouter недействителен"),
+         ("no_credit", "ru", "нет кредитов OpenRouter"),
+         ("quota", "ru", "лимит запросов OpenRouter"),
+         ("auth", "kk", "OpenRouter кілті жарамсыз"),
+         ("no_credit", "en", "no OpenRouter credits")],
+    )
+    def test_openrouter_failures_are_named(self, deps: Deps, status: str, lang: str,
+                                           reason: str) -> None:
+        deps.settings = dataclasses.replace(deps.settings, embed_provider="openrouter",
+                                            openrouter_api_key="or-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status=status)
+        a = recommend(req(lang=lang), deps)
+        assert any(f"({reason})" in f for f in a.data_used.filters)
+        assert any(f"({reason})" in w for w in a.warnings)
+
+    @pytest.mark.parametrize(
+        ("status", "ru_reason"),
+        [("minute_quota", "минутный лимит Gemini"), ("daily_quota", "дневная квота Gemini")],
+    )
+    def test_gemini_quota_kinds_are_named(self, deps: Deps, status: str,
+                                          ru_reason: str) -> None:
+        deps.settings = dataclasses.replace(deps.settings, gemini_api_key="g-key")
+        deps.store.embeddings = np.zeros((len(deps.store.pois), 4), dtype=np.float32)
+        deps.llm = FakeLLM(embed=None, embed_status=status)
+        a = recommend(req(), deps)
+        assert f"поиск: по словам ({ru_reason}), отбор — Claude" in a.data_used.filters
+        assert (f"Смысловой поиск недоступен ({ru_reason}) — поиск только по словам."
+                in a.warnings)
+        en = recommend(req(lang="en"), deps)
+        assert any("Gemini per-minute limit" in f or "Gemini daily quota" in f
+                   for f in en.data_used.filters)
+
+    def test_time_machine_weather_label(self, deps: Deps) -> None:
+        a = recommend(req(use_llm=False, at="2026-01-05T15:00:00+05:00"), deps)
+        assert a.data_used.weather == "погода не учтена: время задано вручную"
+        now = recommend(req(use_llm=False, at=None), deps)
+        assert now.data_used.weather == "погода неизвестна"
+
+    def test_hours_note_never_mixes_languages(self, deps: Deps) -> None:
+        from app.pipeline import _localize_hours
+
+        a = recommend(req(use_llm=False), deps)
+        moved = _localize_hours(a.cards, [], a.context.local_time, "en")  # no candidate
+        assert all(c.open_note == "check opening hours before you go" for c in moved)
+        assert _localize_hours(a.cards, [], a.context.local_time, "ru") == a.cards
 
     def test_logs_never_carry_query_or_cell(self, deps: Deps,
                                             caplog: pytest.LogCaptureFixture) -> None:
@@ -674,6 +1145,19 @@ def no_weather(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("no_weather")
 class TestRealCore:
+    @pytest.mark.parametrize(("lang", "query", "landmark"), [
+        ("ru", "Тихое кафе с wifi и розетками, поработать", "expo"),
+        ("ru", "Куда с ребёнком в тепло, бесплатно", "khan_shatyr"),
+        ("kk", "Балалармен тегін мұражай", "baiterek"),
+        ("en", "Quiet cafe with wifi and power outlets, open late", "expo"),
+    ])
+    def test_template_whys_do_not_trip_the_tag_check(self, real_deps: Deps, lang: str,
+                                                     query: str, landmark: str) -> None:
+        a = recommend(real_req(query, landmark, lang=lang), real_deps)
+        assert a.data_used.generation == "template" and a.cards
+        for card in a.cards:
+            assert not pipeline_mod._tag_leak(card.why, lang, [card.title]), card.why
+
     def test_s1_walk_is_a_loop_within_budget(self, real_deps: Deps) -> None:
         a = recommend(real_req("Я сейчас возле Mega Silk Way, хочу прогуляться 30–60 минут — "
                                "что посоветуете?", "mega_silk_way"), real_deps)
@@ -772,6 +1256,47 @@ class TestRealCore:
         assert cyrillic == []  # only POI titles / addresses may stay in the local script
         assert a.context.area_label.startswith("near EXPO")
 
+    def test_e7_without_ai_finds_sights_near_expo(self, real_deps: Deps,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+        """The video scene «AI off — answer from the data»: E7 must still show sights."""
+        names: list[str] = []
+        real = retrieval.retrieve
+
+        def spy(store: Store, intent: QueryIntent, ctx: SearchContext, qv: Any, k: int = 8
+                ) -> list[Candidate]:
+            out = real(store, intent, ctx, qv, k)
+            names.extend(c.poi.name for c in out)
+            return out
+
+        monkeypatch.setattr(retrieval, "retrieve", spy)
+        a = recommend(real_req("I'm near EXPO with one free hour. What's worth seeing nearby?",
+                               "expo"), real_deps)
+        assert 2 <= len(a.cards) <= 3, (a.warnings, [c.title for c in a.cards])
+        assert {"attraction", "park"} <= set(a.intent.categories)
+        assert "25-ти летие Независимости" in names and "Аллея мира и согласия" in names
+        sightish = {"attraction", "monument", "museum", "viewpoint", "gallery", "religious",
+                    "park"}
+        assert all(c.category in sightish for c in a.cards)
+        assert all(c.walk_min <= 20 for c in a.cards)  # «nearby» = within a 20-min walk
+
+    def test_budget_radius_never_means_more_than_20_min_one_way(
+        self, real_deps: Deps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[tuple[int | None, int | None]] = []
+        real = geo.radius_for
+
+        def spy(intent: QueryIntent) -> int:
+            seen.append((intent.time_budget_min, intent.max_walk_min))
+            return real(intent)
+
+        monkeypatch.setattr(geo, "radius_for", spy)
+        recommend(real_req("есть 2 часа, что посмотреть?", "baiterek"), real_deps)
+        assert seen[0] == (120, 20)  # 0.35 × 120 = 42 min one way would be too far
+        recommend(real_req("есть полчаса, что посмотреть?", "baiterek"), real_deps)
+        assert seen[-1] == (30, None)  # 0.35 × 30 ≈ 11 min: the budget decides
+        recommend(real_req("2 часа, не дальше 30 минут пешком", "baiterek"), real_deps)
+        assert seen[-1] == (120, 30)  # an explicit limit always wins
+
     def test_e6_kazakh_answer_has_no_russian_service_text(self, real_deps: Deps) -> None:
         a = recommend(real_req("Мен Бәйтерек жанындамын, бір сағатқа серуендегім келеді. "
                                "Не ұсынасыз?", "baiterek"), real_deps)
@@ -792,7 +1317,7 @@ class TestRealCore:
         a = recommend(RecommendRequest.model_validate({
             "query": "кофе", "location": {"h3_cell": cell}, "lang": "kk", "at": DAYTIME,
             "use_llm": False}), real_deps)
-        assert a.context.area_label.startswith("сіздің ауданыңыз (≈0,1 км²)")
+        assert a.context.area_label.startswith("сіздің ауданыңыз (≈13 га)")  # r9: 12,56 га
 
     def test_ui_tourist_switch_at_the_airport_is_honest(self, real_deps: Deps) -> None:
         """POLISH: tourist + departure 120 from the UI, text without categories -> 2 cafes are
@@ -839,3 +1364,145 @@ class TestRealCore:
         if a.route is not None:
             assert a.route.legs[-1].to_id != "origin"
             assert "без обратной дороги" in a.route.note
+
+
+# --------------------------------------- T91: the route and card minutes on the walk graph
+
+
+def _grid_graph(tmp_path: Path) -> Path:
+    """Lit footways every 40 m around EXPO (x, y in metres from the walkgraph test origin)."""
+    from .test_walkgraph import FOOTWAY, LIT, write_graph
+
+    step, xs, ys = 40, range(-800, 1641, 40), range(-1300, 1101, 40)
+    nodes = {f"{x}:{y}": (x, y, 0) for x in xs for y in ys}
+    edges = []
+    for x in xs:
+        for y in ys:
+            if f"{x + step}:{y}" in nodes:
+                edges.append((f"{x}:{y}", f"{x + step}:{y}", FOOTWAY | LIT))
+            if f"{x}:{y + step}" in nodes:
+                edges.append((f"{x}:{y}", f"{x}:{y + step}", FOOTWAY | LIT))
+    return write_graph(tmp_path, nodes, edges)
+
+
+def _graph_deps(deps: Deps, path: Path) -> Deps:
+    settings = dataclasses.replace(deps.settings, walk_graph_enabled=True, walk_graph_path=path)
+    return Deps(store=deps.store, llm=deps.llm, settings=settings)
+
+
+def test_route_and_card_minutes_follow_the_graph(deps: Deps, tmp_path: Path) -> None:
+    import math
+
+    from app.walkgraph import load_graph
+
+    path = _grid_graph(tmp_path)
+    ans = recommend(req("кофе", use_llm=False), _graph_deps(deps, path))
+    assert len(ans.cards) >= 2 and ans.route is not None
+    assert ans.route.path_source == "graph"
+    assert ans.route.total_walk_m == sum(leg.distance_m for leg in ans.route.legs)
+    graph = load_graph(path)
+    assert graph is not None
+    lengths = graph.lengths_from(ans.context.origin, {c.poi_id: c.geo for c in ans.cards},
+                                 origin_landmark="expo")
+    for card in ans.cards:  # distance and minutes on the card: both along the graph
+        assert card.distance_m == round(lengths[card.poi_id])
+        assert card.walk_min == max(1, math.ceil(lengths[card.poi_id] / 75 - 1e-9))
+        assert card.why.startswith(f"≈{card.walk_min} мин")  # the reason says the same
+
+
+def test_without_the_flag_or_with_a_broken_graph_the_route_is_straight(
+    deps: Deps, tmp_path: Path
+) -> None:
+    off = recommend(req("кофе", use_llm=False), deps)  # tests run with WALK_GRAPH=false
+    assert off.route is not None and off.route.path_source == "straight"
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "walk_graph.npz").write_bytes(b"not a zip")
+    ans = recommend(req("кофе", use_llm=False), _graph_deps(deps, broken / "walk_graph.npz"))
+    assert ans.route is not None and ans.route.path_source == "straight"
+    assert [c.walk_min for c in ans.cards] == [c.walk_min for c in off.cards]
+
+
+def test_walk_limit_holds_for_graph_minutes(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """max_walk_min is a straight-line radius; the graph minutes on the cards keep it too."""
+    from app.walkgraph import WalkGraph
+
+    near, far = "test:poi/12", "test:poi/1"  # straight 4 and 5 min from EXPO
+    lengths = {near: 280.0, far: 600.0}  # on the graph: 4 and 8 min
+
+    def fake_lengths(self, origin, targets, mode=None, **kw):  # type: ignore[no-untyped-def]
+        return {key: lengths[key] for key in targets if key in lengths}
+
+    monkeypatch.setattr(WalkGraph, "lengths_from", fake_lengths)
+    graph_deps = _graph_deps(deps, _grid_graph(tmp_path))
+    ans = recommend(req("кофе", use_llm=False, overrides={"max_walk_min": 5}), graph_deps)
+    assert [(c.poi_id, c.walk_min) for c in ans.cards] == [(near, 4)]  # 8 min trimmed
+    assert not any("По тротуарам" in w for w in ans.warnings)
+
+    lengths[near] = 450.0  # both over the limit on the graph: kept, and the user is told
+    ans = recommend(req("кофе", use_llm=False, overrides={"max_walk_min": 5}), graph_deps)
+    assert ans.cards and all(c.walk_min > 5 for c in ans.cards)
+    assert any("По тротуарам до мест дольше 5 мин" in w for w in ans.warnings)
+
+
+# ------------------- E2: at night, every place over the walking limit -> no walking route
+
+NIGHT_TAXI = {"ru": "лучше на такси", "kk": "такси", "en": "taxi"}
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_night_all_places_over_the_limit_no_route_and_taxi_once(deps: Deps, lang: str) -> None:
+    """E2 live: 02:30, Ginza 29 min and Дастаркан 33 min over the 15-min limit, yet a 6.3 km
+    walking route with 28 crossings was drawn. At night that is bad advice: cards stay,
+    the route goes, the taxi is advised once (not three warnings saying the same)."""
+    ans = recommend(req("куда пойти", use_llm=False, lang=lang,
+                        overrides={"night": True, "max_walk_min": 4}), deps)
+    assert ans.cards and all(c.walk_min > 4 for c in ans.cards)  # straight 5 and 6 min
+    assert ans.route is None
+    taxi = [w for w in ans.warnings if "такси" in w.lower() or "taxi" in w.lower()]
+    assert len(taxi) == 1 and NIGHT_TAXI[lang] in taxi[0].lower() and "4" in taxi[0]
+    assert TEXTS[lang]["night"] not in ans.warnings  # the night tip is refined, not repeated
+
+
+def test_night_with_one_place_within_the_limit_keeps_the_route(deps: Deps) -> None:
+    ans = recommend(req("куда пойти", use_llm=False, overrides={"night": True, "max_walk_min": 5}),
+                    deps)
+    assert any(c.walk_min <= 5 for c in ans.cards) and len(ans.cards) >= 2
+    assert ans.route is not None
+    assert TEXTS["ru"]["night"] in ans.warnings
+
+
+def test_day_all_places_over_the_limit_keeps_the_route(deps: Deps) -> None:
+    ans = recommend(req("куда пойти", use_llm=False, overrides={"max_walk_min": 3}), deps)
+    assert len(ans.cards) >= 2 and all(c.walk_min > 3 for c in ans.cards)  # 4, 5, 6 min
+    assert ans.route is not None
+    assert not any("такси" in w for w in ans.warnings)
+
+
+# ------------- area of an H3 cell in kk / en: hectares, exactly as the browser (cellAreaHa)
+
+
+@pytest.mark.parametrize(("res", "lang", "label"), [
+    (10, "kk", "сіздің ауданыңыз (≈1,8 га)"),  # r10: 1,79 га; «≈0,0 км²» before
+    (10, "en", "your area (≈1.8 ha)"),
+    (9, "kk", "сіздің ауданыңыз (≈13 га)"),
+    (9, "en", "your area (≈13 ha)"),
+])
+def test_cell_area_label_in_hectares(res: int, lang: str, label: str) -> None:
+    cell = h3.latlng_to_cell(51.0891, 71.4157, res)  # EXPO
+    assert pipeline_mod._localized_area(lang, None, cell, "ваш район") == label  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("ha", "kk", "en"), [
+    (12.56, "13", "13"),
+    (12.5, "13", "13"),  # half up, as Intl.NumberFormat (Python round() would give 12)
+    (9.96, "10", "10"),  # one decimal under 10 ha, then the trailing zero goes
+    (1.794, "1,8", "1.8"),
+    (2.04, "2", "2"),
+    (3612.3, "3\u00a0612", "3,612"),  # groups of thousands for coarse cells
+])
+def test_hectares_are_formatted_like_the_browser(ha: float, kk: str, en: str) -> None:
+    assert pipeline_mod._format_ha(ha, "kk") == kk
+    assert pipeline_mod._format_ha(ha, "en") == en

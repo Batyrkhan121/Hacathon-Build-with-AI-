@@ -9,7 +9,15 @@ import pytest
 
 from app.geo import haversine_m, radius_for, to_h3, walk_minutes
 from app.hours import ASTANA_TZ
-from app.retrieval import WEIGHTS, explain, lexical_relevance, retrieve
+from app.retrieval import (
+    INFO_PARTS,
+    WEIGHTS,
+    explain,
+    hours_dropped,
+    lexical_relevance,
+    query_unmatched,
+    retrieve,
+)
 from app.route import plan_route
 from app.schemas import POI, GeoPoint, Landmark, QueryIntent, SearchContext, WeatherInfo
 from app.store import Store, load_pois
@@ -220,7 +228,7 @@ def test_score_is_weighted_sum(synthetic_pois: list[POI]) -> None:
     out = retrieve(make_store(synthetic_pois), intent("кофе"), make_ctx(), None, k=8)
     for c in out:
         parts = c.score_parts
-        bonuses = sum(v for k, v in parts.items() if k not in WEIGHTS and k != "mmr")
+        bonuses = sum(v for k, v in parts.items() if k not in WEIGHTS and k not in INFO_PARTS)
         expected = sum(WEIGHTS[k] * parts[k] for k in WEIGHTS) + bonuses
         assert c.score == pytest.approx(expected, abs=1e-3)
         assert 0.0 <= parts["proximity"] <= 1.0
@@ -422,16 +430,26 @@ def test_non_finite_query_vector_falls_back_to_lexical(synthetic_pois: list[POI]
     assert all(np.isfinite(c.score) for c in out)
 
 
-def test_poi_without_embedding_scored_lexically(synthetic_pois: list[POI]) -> None:
-    matrix = np.zeros((len(synthetic_pois), 4), dtype=np.float32)  # nobody has a vector
-    matrix[1] = [0, 1, 0, 0]
+def test_poi_without_vector_gets_pool_median(synthetic_pois: list[POI]) -> None:
+    """Silent-failure review №2: a POI without a vector was scored on the lexical scale only,
+    while the others got 0.7*cos + 0.3*lex — different scales. Now it gets the pool median."""
+    matrix = np.zeros((len(synthetic_pois), 4), dtype=np.float32)
+    for i in range(len(synthetic_pois)):
+        matrix[i] = [0.6, 0.8, 0.0, 0.0] if i % 2 else [0.8, 0.6, 0.0, 0.0]
+    alpha = next(i for i, p in enumerate(synthetic_pois) if p.id == "test:poi/1")
+    matrix[alpha] = 0.0  # no vector for this POI
     store = make_store(synthetic_pois, embeddings=matrix)
     q = intent("кофе", must_tags=["coffee"])
-    with_vec = retrieve(store, q, make_ctx(), np.array([1, 0, 0, 0], dtype=np.float32), k=20)
+    out = retrieve(store, q, make_ctx(), np.array([1, 0, 0, 0], dtype=np.float32), k=20)
+    alpha_c = next(c for c in out if c.poi.id == "test:poi/1")
+    others = [c.score_parts["semantic"] for c in out if c.poi.id != "test:poi/1"]
+    assert "semantic" not in alpha_c.score_parts
+    assert alpha_c.score_parts["no_vector"] == 1.0
     lexical = retrieve(make_store(synthetic_pois), q, make_ctx(), None, k=20)
-    alpha_sem = next(c for c in with_vec if c.poi.id == "test:poi/1")
-    alpha_lex = next(c for c in lexical if c.poi.id == "test:poi/1")
-    assert alpha_sem.score_parts["relevance"] == alpha_lex.score_parts["relevance"]
+    alpha_lex = next(c for c in lexical if c.poi.id == "test:poi/1").score_parts["relevance"]
+    median = float(np.median(others))
+    assert alpha_c.score_parts["relevance"] == pytest.approx(0.7 * median + 0.3 * alpha_lex,
+                                                              abs=1e-3)
 
 
 def test_unnamed_places_do_not_flood_candidates() -> None:
@@ -692,3 +710,68 @@ def test_no_tags_penalty_only_when_tags_were_asked() -> None:
     museum = make_poi("9", "museum", 0.0, tags=["indoor"])
     out = retrieve(make_store([museum]), intent("куда сходить"), make_ctx(), None)
     assert "no_tags" not in out[0].score_parts
+
+
+# ------------------------------------------------ RAG review R7: "no match" signal
+
+
+@pytest.mark.parametrize(
+    ("query", "kwargs", "expected"),
+    [
+        ("порекомендуй казино", {}, True),
+        ("абракадабра", {}, True),
+        ("кофе", {}, False),  # cafes match the word
+        ("куда сходить", {}, False),  # only stopwords: nothing was asked specifically
+        ("казино", {"must_tags": ["night"]}, False),  # structured request, not free text
+        ("казино", {"categories": ["bar"]}, False),
+    ],
+)
+def test_query_unmatched(
+    synthetic_pois: list[POI], query: str, kwargs: dict[str, object], expected: bool
+) -> None:
+    store = make_store(synthetic_pois)
+    q = intent(query, **kwargs)
+    out = retrieve(store, q, make_ctx(), None, k=8)
+    assert query_unmatched(store, q, make_ctx(), out) is expected
+
+
+def test_query_unmatched_ignores_landmark_words(synthetic_pois: list[POI]) -> None:
+    from app.schemas import Landmark as LandmarkModel
+
+    mega = LandmarkModel(id="mega_silk_way", names={"ru": "Mega"}, aliases=["mega silk way"],
+                         geo=ORIGIN)
+    store = Store(pois=synthetic_pois, by_id={p.id: p for p in synthetic_pois},
+                  landmarks={"mega_silk_way": mega})
+    q = intent("я возле mega silk way", landmark_mention="mega_silk_way")
+    ctx = make_ctx().model_copy(update={"landmark_id": "mega_silk_way"})
+    assert query_unmatched(store, q, ctx, retrieve(store, q, ctx, None)) is False
+    assert query_unmatched(store, intent("казино"), make_ctx(), []) is False  # nothing found
+
+
+
+def test_semantic_part_only_when_cosine_was_used(synthetic_pois: list[POI]) -> None:
+    matrix = np.tile(np.array([0.6, 0.8, 0.0, 0.0], dtype=np.float32), (len(synthetic_pois), 1))
+    store = make_store(synthetic_pois, embeddings=matrix)
+    good = retrieve(store, intent("кофе"), make_ctx(), np.array([1, 0, 0, 0], np.float32))
+    assert all("semantic" in c.score_parts for c in good)
+    for query_vec in (None, np.ones(3, np.float32), np.array([np.nan, 0, 0, 0], np.float32)):
+        out = retrieve(store, intent("кофе"), make_ctx(), query_vec)
+        assert not any("semantic" in c.score_parts for c in out)  # vector was not used
+
+
+# ------------------------------------- silent-failure review №2, item 4: hours drops
+
+
+def test_hours_dropped_counts_reasons(synthetic_pois: list[POI]) -> None:
+    store = make_store(synthetic_pois)
+    monday = hours_dropped(store, intent(), make_ctx(at=MON_NOON, radius=1500))
+    assert monday["closed"] == 2  # museum «Mo off» + bar (opens at 18:00)
+    assert monday["closed_partial"] == 1  # gallery: Monday not described in OSM
+    late = datetime(2026, 10, 20, 21, 45, tzinfo=ASTANA_TZ)
+    assert hours_dropped(store, intent(), make_ctx(at=late))["closing_soon"] >= 2
+    night = datetime(2026, 10, 20, 1, 0, tzinfo=ASTANA_TZ)
+    assert hours_dropped(store, intent(night=True), make_ctx(at=night))["night"] >= 1
+    # consistent with retrieve: dropped + kept = everything that passed radius/profile
+    out = retrieve(store, intent(), make_ctx(at=MON_NOON, radius=1500), None, k=50)
+    in_radius = [p for p in synthetic_pois if haversine_m(ORIGIN, p.geo) <= 1500]
+    assert len(out) + sum(monday.values()) == len(in_radius)

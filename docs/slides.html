@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Qadam — питч</title>
+<!-- Источник docs/slides.pdf (T81). Тезисы и цифры только из docs/PITCH.md и итогов T80 (docs/SCENARIOS.md).
+     Сборка PDF: msedge --headless --no-pdf-header-footer --print-to-pdf=docs/slides.pdf docs/slides.html -->
+<style>
+  @page { size: 1920px 1080px; margin: 0; }
+  :root {
+    --ink: #10232b; --muted: #5a6b72; --teal: #0a6e87; --teal-soft: #e3f1f4;
+    --sun: #f2b705; --sun-soft: #fdf3d3; --paper: #f7f5f0; --card: #ffffff; --line: #dfe4e2;
+    --ok: #1f8a4c; --ok-soft: #e2f3e8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--paper); color: var(--ink);
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .slide { width: 1920px; height: 1080px; padding: 96px 120px 72px; position: relative;
+    display: flex; flex-direction: column; page-break-after: always; break-after: page; overflow: hidden; }
+  .slide:last-child { page-break-after: auto; break-after: auto; }
+  .kicker { font-size: 26px; letter-spacing: .08em; text-transform: uppercase; color: var(--teal);
+    font-weight: 700; margin-bottom: 18px; }
+  h1 { font-size: 72px; line-height: 1.08; font-weight: 750; letter-spacing: -.01em; max-width: 1500px; }
+  h1 .hl { color: var(--teal); }
+  .body { flex: 1; display: grid; gap: 64px; margin-top: 56px; align-items: start; }
+  .two { grid-template-columns: 1.05fr 1fr; }
+  ul.points { list-style: none; display: grid; gap: 30px; }
+  ul.points li { font-size: 34px; line-height: 1.32; padding-left: 44px; position: relative; }
+  ul.points li::before { content: ""; position: absolute; left: 0; top: 14px; width: 18px; height: 18px;
+    background: var(--sun); clip-path: polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%); }
+  .muted { color: var(--muted); }
+  .footer { position: absolute; left: 120px; right: 120px; bottom: 40px; display: flex;
+    justify-content: space-between; font-size: 22px; color: var(--muted); }
+  .footer b { color: var(--teal); }
+  .stat { background: var(--card); border: 2px solid var(--line); border-radius: 28px; padding: 40px 44px; }
+  .stat .num { font-size: 132px; font-weight: 800; line-height: 1; color: var(--teal); letter-spacing: -.03em; }
+  .stat .num.sun { color: #b98700; }
+  .stat .lbl { font-size: 30px; margin-top: 14px; line-height: 1.3; }
+  .stats { display: grid; gap: 28px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 40px; }
+  .chip { font-size: 26px; padding: 12px 24px; border-radius: 999px; background: var(--card);
+    border: 2px solid var(--line); }
+  /* card mock (slide 2) — real S1 answer, 18.10 */
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 28px; padding: 36px 40px;
+    box-shadow: 0 18px 40px rgba(16,35,43,.08); }
+  .card .t { display: flex; align-items: center; gap: 18px; font-size: 40px; font-weight: 750; }
+  .hex { width: 46px; height: 46px; background: var(--sun); display: grid; place-items: center;
+    font-size: 24px; font-weight: 800; clip-path: polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%); }
+  .card .meta { font-size: 26px; color: var(--muted); margin: 10px 0 18px 64px; }
+  .badges { display: flex; gap: 12px; margin-left: 64px; flex-wrap: wrap; }
+  .badge { font-size: 22px; padding: 6px 16px; border-radius: 999px; font-weight: 600; }
+  .b-data { background: var(--ok-soft); color: var(--ok); }
+  .b-hours { background: #eef0ef; color: #4a5a60; }
+  .b-ai { background: var(--sun-soft); color: #8a6400; }
+  .card h4 { font-size: 20px; letter-spacing: .08em; color: var(--muted); margin: 22px 0 6px 64px; }
+  .card p { font-size: 27px; line-height: 1.35; margin-left: 64px; }
+  .route { background: var(--teal-soft); border-radius: 24px; padding: 20px 28px; margin-bottom: 20px; font-size: 25px; line-height: 1.35; }
+  .route b { color: var(--teal); }
+  .route .note { color: var(--muted); font-size: 22px; margin-top: 8px; }
+  /* pipeline (slide 3) */
+  .flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 18px; margin-top: 8px; }
+  .step { background: var(--card); border: 2px solid var(--line); border-radius: 22px; padding: 26px 22px; min-height: 250px; }
+  .step .n { width: 52px; height: 52px; background: var(--teal); color: #fff; font-weight: 800; font-size: 26px;
+    display: grid; place-items: center; clip-path: polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%); }
+  .step h3 { font-size: 30px; margin: 18px 0 10px; }
+  .step p { font-size: 22px; line-height: 1.35; color: var(--muted); }
+  .step.llm { border-color: var(--sun); background: var(--sun-soft); }
+  .rule { margin-top: 36px; background: var(--ink); color: #fff; border-radius: 24px; padding: 30px 40px;
+    font-size: 34px; display: flex; gap: 28px; align-items: center; }
+  .rule b { color: var(--sun); }
+  .under { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 36px; }
+  .under p { font-size: 28px; line-height: 1.35; }
+  /* trust (slide 4) */
+  .bigrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .bigrow .stat .num { font-size: 96px; }
+  .bigrow .stat .lbl { font-size: 25px; }
+  /* privacy (slide 5) */
+  .hexwrap { display: grid; place-items: center; position: relative; height: 440px; }
+  .bighex { width: 380px; height: 330px; background: rgba(10,110,135,.18); border: 6px solid var(--teal);
+    clip-path: polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%); }
+  .hexlabel { position: absolute; top: 40px; background: var(--ink); color: #fff; font-size: 26px;
+    padding: 12px 22px; border-radius: 14px; }
+  pre { background: var(--ink); color: #e6f3f6; border-radius: 22px; padding: 30px 36px; font-size: 26px; line-height: 1.45;
+    font-family: Consolas, "Cascadia Mono", monospace; white-space: pre; }
+  pre .k { color: var(--sun); }
+  pre .c { color: #8fb3bd; }
+  /* business (slide 6) */
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .col { background: var(--card); border: 2px solid var(--line); border-radius: 26px; padding: 36px 36px; }
+  .col h3 { font-size: 36px; color: var(--teal); margin-bottom: 18px; }
+  .col p { font-size: 27px; line-height: 1.38; }
+  .tag { display: inline-block; font-size: 24px; font-weight: 700; padding: 8px 18px; border-radius: 999px;
+    background: var(--sun-soft); color: #8a6400; margin-top: 22px; }
+  .strip { margin-top: 36px; font-size: 30px; padding: 26px 36px; border-left: 8px solid var(--sun); background: var(--card); border-radius: 0 20px 20px 0; }
+  /* limits (slide 7) */
+  .col h3.warn { color: #9a5b00; }
+  .col ul { list-style: none; display: grid; gap: 18px; }
+  .col li { font-size: 28px; line-height: 1.35; padding-left: 30px; position: relative; }
+  .col li::before { content: "—"; position: absolute; left: 0; color: var(--muted); }
+  .end { margin-top: 40px; font-size: 32px; }
+  .end b { color: var(--teal); }
+  /* title strip on slide 1 */
+  .brand { display: flex; align-items: center; gap: 18px; font-size: 30px; font-weight: 700; color: var(--teal); margin-bottom: 40px; }
+  .brand .mark { width: 54px; height: 54px; flex: none; }
+</style>
+</head>
+<body>
+
+<!-- 1 -->
+<section class="slide">
+  <div class="brand"><svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 24L14 8M14 24L22 8" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/><circle cx="25.2" cy="7.8" r="2.6" fill="#f2b705"/></svg>Qadam · ИИ-помощник для прогулок по Астане</div>
+  <div class="kicker">Проблема</div>
+  <h1>Куда пойти рядом <span class="hl">прямо сейчас?</span></h1>
+  <div class="body two">
+    <div>
+      <ul class="points">
+        <li>Карты показывают сотни точек, но не отвечают на главный вопрос: что из этого подходит мне сейчас.</li>
+        <li>Тяжелее всего туристу с парой часов до рейса, родителю с ребёнком, человеку на коляске — вечером и в мороз.</li>
+        <li>Открытые данные неполные. Совет, который не врёт там, где данных нет, — первое требование.</li>
+      </ul>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">28%</div><div class="lbl">мест Астаны с известными часами работы</div></div>
+      <div class="stat"><div class="num sun">5%</div><div class="lbl">мест с указанной доступностью для коляски</div></div>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · Build with AI · кейс НИЦ Smart City</span><span>Данные: OpenStreetMap, снимок 18.10.2026 · 1/7</span></div>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <div class="kicker">Решение · live-демо S1</div>
+  <h1>1–3 места <span class="hl">с объяснением</span></h1>
+  <div class="body two">
+    <div>
+      <ul class="points">
+        <li><b>Вход:</b> ориентир или район, запрос по-русски, по-казахски или по-английски, время и погода.</li>
+        <li><b>Выход:</b> 1–3 карточки «почему / сколько времени / что делать» и мини-маршрут по тротуарам (где есть данные OSM).</li>
+        <li><b>Метки на каждой карточке:</b> «Из базы мест» или «Идея ИИ», источник фактов, уверенность в часах.</li>
+      </ul>
+      <div class="chips">
+        <span class="chip">«Я возле Mega Silk Way, хочу прогуляться 30–60 минут»</span>
+      </div>
+    </div>
+    <div>
+      <div class="route"><b>«Ночью» у Байтерека:</b> 2,6 км · 35 мин · переходов 7, со светофором 5 · есть лестницы (8)</div>
+      <div class="card">
+        <div class="t"><div class="hex">1</div>NU Park</div>
+        <div class="meta">Парк · ≈590 м · 11 мин пешком · на месте 20–30 мин</div>
+        <div class="badges"><span class="badge b-data">Из базы мест</span><span class="badge b-hours">Часы не подтверждены</span></div>
+        <h4>ПОЧЕМУ</h4>
+        <p>NU Park ближе всего: идти около 11 минут, и место подходит для прогулки.</p>
+        <h4>ЧТО ДЕЛАТЬ</h4>
+        <p>Дойдите до парка и пройдите по дорожкам без спешки.</p>
+        <p class="muted" style="font-size:22px;margin-top:16px">Факты: OpenStreetMap · нет данных о часах, проверьте перед визитом</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · фрагменты реальных ответов: карточка S1 (18.10), маршрут пресета «Ночью» (19.10)</span><span>2/7</span></div>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <div class="kicker">Как это работает</div>
+  <h1>RAG, где <span class="hl">факты считает код</span></h1>
+  <div class="body" style="gap:0">
+    <div class="flow">
+      <div class="step llm"><div class="n">1</div><h3>Понять запрос</h3><p>Claude → JSON по схеме; при сбое — правила ru/kk/en</p></div>
+      <div class="step"><div class="n">2</div><h3>Контекст</h3><p>центр H3-ячейки, время UTC+5, погода</p></div>
+      <div class="step"><div class="n">3</div><h3>Фильтры</h3><p>расстояние, часы, дети, коляска, ночь</p></div>
+      <div class="step"><div class="n">4</div><h3>Релевантность</h3><p>эмбеддинги; без вектора — по словам</p></div>
+      <div class="step"><div class="n">5</div><h3>Ранжирование</h3><p>веса + разнообразие (MMR) → кандидаты</p></div>
+      <div class="step llm"><div class="n">6</div><h3>Текст</h3><p>Claude: «почему / что делать»; при сбое — шаблоны</p></div>
+    </div>
+    <div class="rule"><b>Проверка</b> карточки только из кандидатов · расстояние, минуты, часы и адрес — из данных · «открыто сейчас» только при надёжных часах</div>
+    <div class="under">
+      <p><b>1222 места</b> OpenStreetMap по всей Астане, сбор одной командой.</p>
+      <p>Описания от Claude — у <b>3%</b> мест, с пометкой «сгенерировано».</p>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · подробности: docs/RAG.md</span><span>3/7</span></div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <div class="kicker">Почему этому можно доверять</div>
+  <h1>Метки, валидатор, запасной путь — <span class="hl">и eval</span></h1>
+  <div class="body" style="gap:44px">
+    <div class="bigrow">
+      <div class="stat"><div class="num">16/16</div><div class="lbl">сценариев с Claude и вектором</div></div>
+      <div class="stat"><div class="num">16/16</div><div class="lbl">сценариев без ИИ: правила и шаблоны</div></div>
+      <div class="stat"><div class="num">14/14</div><div class="lbl">запросов к Claude получили вектор запроса</div></div>
+      <div class="stat"><div class="num sun">7,6 с</div><div class="lbl">медиана ответа с Claude (пустой кэш)</div></div>
+    </div>
+    <ul class="points">
+      <li>«Открыто сейчас» — только при надёжных данных: валидатор вырезает такие фразы из текста ИИ, если часы не подтверждены.</li>
+      <li>Без ИИ тоже работает: при сбое, лимите или выключенном Claude ответ собирается по шаблонам из тех же данных.</li>
+      <li>16 сценариев: S1–S5 из кейса и 11 краевых (ночь, коляска, казахский, prompt-injection, аэропорт). Eval поймал две настоящие ошибки — обе исправлены.</li>
+    </ul>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · итоги T94, 19.10.2026 · docs/SCENARIOS.md</span><span>4/7</span></div>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <div class="kicker">Приватность</div>
+  <h1>Сервер <span class="hl">не знает, где вы</span></h1>
+  <div class="body two">
+    <div>
+      <ul class="points">
+        <li>Браузер переводит точный GPS в H3-ячейку r10 (≈1,8 га, ребро ≈76 м) и отправляет только её. Сырые координаты и ячейки мельче r10 сервер отклоняет (422).</li>
+        <li>Точную позицию наш сервер не видит никогда: по клику «Как пройти» браузер сам открывает с ней 2GIS или Яндекс. История не хранится, в логах нет связки «ячейка + текст».</li>
+        <li>Закон РК «О персональных данных и их защите» № 94-V: собираем минимум.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="hexwrap"><div class="hexlabel">На сервер уходит только эта ячейка r10 ≈1,8 га</div><svg width="400" height="350" viewBox="0 0 400 350" aria-hidden="true"><polygon points="105,5 295,5 395,175 295,345 105,345 5,175" fill="rgba(10,110,135,.18)" stroke="#0a6e87" stroke-width="6" stroke-linejoin="round"/></svg></div>
+      <pre><span class="c">// Что ушло на сервер</span>
+{ <span class="k">"query"</span>: "…",
+  <span class="k">"location"</span>: { <span class="k">"h3_cell"</span>: "8a2153806d17fff" } }
+<span class="c">// координат в запросе нет</span></pre>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · кому что уходит: docs/ETHICS.md</span><span>5/7</span></div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <div class="kicker">Бизнес · гипотеза, с заказчиками не проверена</div>
+  <h1>Кому это <span class="hl">нужно</span></h1>
+  <div class="body" style="gap:0">
+    <div class="cols3">
+      <div class="col"><h3>Город · B2G</h3><p>Smart City и акимат, туристический портал Астаны. Виджет «что рядом» и API для городских сервисов и киосков.</p></div>
+      <div class="col"><h3>Бизнес · B2B</h3><p>ТРЦ, музеи, отели и авиакомпании: «стоповер в Астане» — что успеть за 2 часа между рейсами.</p></div>
+      <div class="col"><h3>Пользователь</h3><p>Честный совет рядом с собой: на трёх языках, с метками источника и без хранения истории.</p></div>
+    </div>
+    <div class="strip">Монетизация — партнёрские места только с меткой «партнёр». <b>Ранжирование по данным не продаётся.</b></div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · модель — гипотеза</span><span>6/7</span></div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <div class="kicker">Ограничения, риски и план</div>
+  <h1>Честно о границах — <span class="hl">и что дальше</span></h1>
+  <div class="body" style="gap:0">
+    <div class="cols3" style="grid-template-columns:1fr 1fr">
+      <div class="col"><h3 class="warn">Честно не умеем</h3><ul>
+        <li>Данные OSM неполные: часы у 28% мест, коляска у 5%.</li>
+        <li>Плотность неравномерная: у аэропорта всего 3 кафе — система так и говорит.</li>
+        <li>Тротуары и переходы в OSM отмечены не везде: там маршрут по прямой × 1,3, и мы это пишем.</li>
+        <li>Риски: устаревание данных, лимиты и отказы LLM, смещение к популярным местам.</li>
+      </ul></div>
+      <div class="col"><h3>Что дальше</h3><ul>
+        <li>Официальная афиша событий с меткой «временное».</li>
+        <li>Telegram-бот и голос.</li>
+        <li>Данные о доступности вместе с партнёрами.</li>
+      </ul></div>
+    </div>
+    <div class="end" style="margin-top:28px;font-size:30px"><b>Уже готово:</b> маршрут по тротуарам OSM — переходы, светофоры, лестницы; считается на нашем сервере.</div>
+    <div class="end" style="margin-top:18px">Qadam — шаг к городу, где на вопрос «куда пойти» отвечают честно.<br><b style="white-space:nowrap">github.com/Batyrkhan121/Hacathon-Build-with-AI-</b></div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · демо-видео — по ссылке в README</span><span>7/7</span></div>
+</section>
+
+</body>
+</html>
