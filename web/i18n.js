@@ -183,6 +183,8 @@ const DICT = {
     'dir.2gis': '2GIS',
     'dir.yandex': 'Яндекс Карты',
     'dir.aria': 'Как пройти до «{title}» пешком: {app}, откроется в новой вкладке',
+    'dir.titleHere': 'Как пройти (маршрут от вашей точки):',
+    'dir.ariaHere': 'Маршрут от вашей точки до «{title}» пешком: {app}, откроется в новой вкладке',
 
     'data.title': 'Какие данные использованы',
     'data.location': 'Место',
@@ -452,6 +454,8 @@ const DICT = {
     'dir.2gis': '2GIS',
     'dir.yandex': 'Яндекс Карталар',
     'dir.aria': '«{title}» дейін жаяу бағыт: {app}, жаңа бетте ашылады',
+    'dir.titleHere': 'Қалай жетуге болады (сіздің нүктеңізден):',
+    'dir.ariaHere': 'Сіздің нүктеңізден «{title}» дейін жаяу бағыт: {app}, жаңа бетте ашылады',
 
     'data.title': 'Қандай деректер пайдаланылды',
     'data.location': 'Орын',
@@ -721,6 +725,8 @@ const DICT = {
     'dir.2gis': '2GIS',
     'dir.yandex': 'Yandex Maps',
     'dir.aria': 'Walking directions to “{title}”: {app}, opens in a new tab',
+    'dir.titleHere': 'Directions (route from your location):',
+    'dir.ariaHere': 'Walking route from your location to “{title}”: {app}, opens in a new tab',
 
     'data.title': 'What data was used',
     'data.location': 'Location',

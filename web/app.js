@@ -287,6 +287,7 @@ function renderAnswer({ redrawMap = true } = {}) {
     request: state.lastRequest,
     meta: state.meta,
     originName: requestOriginName(),
+    preciseStart, // функция: точку отдаёт только в момент клика по «Как пройти»
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
@@ -517,6 +518,7 @@ function setLocation(loc) {
   if (loc.source !== 'gps') {
     stopGeoWatch();
     mapView.clearHere();
+    gpsPoint = null; // ориентир или точка с карты: старт «Как пройти» снова context.origin
   }
   state.location = loc;
   state.whereMsg = null;
@@ -547,6 +549,16 @@ function setCellFromPoint(lat, lng) {
 // Сама точка нужна только для отметки «вы здесь» на карте.
 let geoWatch = null;
 let geoTimer = null;
+// Точная точка GPS — только в памяти страницы. Нужна для отметки «вы здесь» и, по решению пользователя,
+// как старт в «Как пройти» (по клику, прямо в 2GIS/Яндекс, мимо нашего сервера). Не в API, не в DOM,
+// не в localStorage, не в консоль.
+let gpsPoint = null; // { cell, lat, lon }
+
+// Старт «Как пройти» от точной точки — только если ответ получен для той же ячейки, что и GPS-точка.
+function preciseStart() {
+  if (!gpsPoint || state.lastRequest?.location?.h3_cell !== gpsPoint.cell) return null;
+  return { lat: gpsPoint.lat, lon: gpsPoint.lon };
+}
 
 function stopGeoWatch() {
   if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
@@ -566,6 +578,7 @@ function applyGpsFix(lat, lng, accuracyM) {
   } else {
     setLocation({ type: 'cell', cell, far, accuracy, source: 'gps' });
   }
+  gpsPoint = { cell, lat, lon: lng }; // последняя (самая точная) фиксация
   mapView.showHere(lat, lng, accuracyM, t('map.here'));
 }
 
