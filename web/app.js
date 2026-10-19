@@ -61,6 +61,8 @@ const els = {
   whereNote: $('where-note'),
   presets: $('presets'),
   budgetChips: $('budget-chips'),
+  refine: $('refine'),
+  refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
   modeChips: $('mode-chips'),
   departure: $('departure'),
@@ -432,6 +434,13 @@ function renderChips() {
   if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
   els.filterHint.hidden = !hints.length;
   els.filterHint.textContent = hints.join(' ');
+  // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
+  const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
+  els.refineCount.textContent = picked ? `· ${picked}` : '';
+}
+
+function syncRefineOpen() {
+  if (window.matchMedia('(min-width: 900px)').matches) els.refine.open = true;
 }
 
 function filtersChanged() {
@@ -787,6 +796,8 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  syncRefineOpen();
+  window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
   renderAll();
   renderIntro();
 

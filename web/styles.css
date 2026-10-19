@@ -1397,6 +1397,78 @@ input[type="time"] {
 
 /* --- data used */
 
+/* «Уточнить» на телефоне: свёрнутый блок с режимом, фильтрами и временем. */
+.refine {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.refine > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.refine > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* шеврон справа: ▾ свёрнуто, ▴ открыто */
+.refine > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+
+.refine[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.refine-count {
+  color: var(--accent-strong);
+}
+
+.refine[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.refine > fieldset {
+  margin: 12px 14px 0;
+}
+
+.refine > fieldset:last-child {
+  margin-bottom: 12px;
+}
+
+/* Широкий экран: блок всегда открыт, заголовок-переключатель не нужен. */
+@media (min-width: 900px) {
+  .refine {
+    margin-top: 0;
+    border: 0;
+    background: none;
+  }
+  .refine > summary {
+    display: none;
+  }
+  .refine > fieldset {
+    margin: 12px 0 0;
+  }
+}
+
 .data-used {
   margin-top: 14px;
   border: 1px solid var(--line);

@@ -71,6 +71,13 @@
             <p class="where-note" id="where-note" aria-live="polite"></p>
           </fieldset>
 
+          <!-- Телефон: режим, фильтры и время свёрнуты, чтобы ответ был ближе; на ≥ 900 px блок всегда открыт (app.js). -->
+          <details class="refine" id="refine">
+            <summary>
+              <span data-i18n="refine.title">Уточнить: режим, фильтры, время</span>
+              <span class="refine-count" id="refine-count"></span>
+            </summary>
+
           <fieldset class="modes">
             <legend class="label" data-i18n="mode.legend">Режим</legend>
             <div class="chips" id="mode-chips"></div>
@@ -96,6 +103,7 @@
             </div>
             <p class="hint" data-i18n="when.hint">Машина времени для демо, время Астаны (UTC+5)</p>
           </fieldset>
+          </details>
         </form>
       </section>
 
