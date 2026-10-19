@@ -2666,3 +2666,13 @@ body:not(.v2) .submit-row .btn-primary {
 .v2 .warning::before {
   top: 8px;
 }
+
+/* v2.1, правка 3: места 2–3 — строки списка по эталону (поля 14/4), «Что делать» тише */
+.v2 .cards > .card + .card {
+  padding: 14px 4px;
+}
+
+.v2 .cards > .card + .card .card-text > dd:nth-of-type(2) {
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
