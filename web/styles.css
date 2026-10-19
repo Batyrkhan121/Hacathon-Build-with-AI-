@@ -2651,3 +2651,8 @@ body:not(.v2) .submit-row .btn-primary {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* v2.1, критика vs эталон, правка 1: в карточке эталона нет ряда тегов — убираем шум (теги — не метки честности) */
+.v2 .card > .tags {
+  display: none;
+}
