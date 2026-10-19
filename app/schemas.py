@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.2.0"  # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10
-MAX_H3_RES = 10  # finest H3 cell the server accepts (r10 ≈ 0,015 км²); finer = near-exact point
+MAX_H3_RES = 10  # finest H3 cell the server accepts (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
 
@@ -231,7 +231,7 @@ class SearchContext(BaseModel):
     origin: GeoPoint  # centre of the H3 cell or the landmark, never the raw user point
     h3_cell: str
     h3_res: int
-    area_label: str  # e.g. "у EXPO", "ваш район (≈0,1 км²)"
+    area_label: str  # e.g. "у EXPO", "ваш район (≈1,8 га)"
     landmark_id: str | None = None
     local_time: datetime  # tz-aware, UTC+5
     weather: WeatherInfo | None = None
