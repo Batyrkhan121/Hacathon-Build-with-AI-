@@ -96,7 +96,7 @@ textarea {
 .skip {
   position: absolute;
   left: 8px;
-  top: -40px;
+  top: -60px; /* при min-height 44 px ссылка не должна выглядывать сверху */
   z-index: 2000;
   background: var(--ink);
   color: #fff;
@@ -147,11 +147,13 @@ textarea {
   background: #e8e4da;
 }
 
-.back-to-card {
+.map-wrap .back-to-card {
   position: absolute;
   top: 10px;
   left: 10px;
   z-index: 1000;
+  width: auto; /* не наследует width:100% кнопки «Подсказать» на ≤ 420 px и не закрывает зум справа */
+  max-width: calc(100% - 80px);
   box-shadow: var(--shadow);
 }
 
