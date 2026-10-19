@@ -1180,7 +1180,21 @@ input[type="time"] {
   flex-basis: 100%;
 }
 
-.directions .btn-link {
+/* «Как пройти» — главное действие карточки: кнопки с бирюзовой рамкой (один компонент .btn-ghost). */
+.directions {
+  gap: 6px 8px;
+  margin-top: 12px;
+}
+
+.directions .directions-btn {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-size: 15px;
+  text-decoration: none;
+}
+
+/* «На карте» / «Маршрут» / «Сайт» — второстепенные ссылки под служебным блоком */
+.card-actions .btn-link {
   padding-inline: 0;
   margin-right: 12px;
 }

@@ -428,6 +428,8 @@ function renderCard(card, when, ctx) {
           card.tags.slice(0, 6).map((tag) => h('li', { text: tagLabel(tag) })),
         )
       : null,
+    // Главное действие критического пути — «Как пройти»: сразу после «почему / что делать».
+    renderDirections(card, ctx.origin, ctx.preciseStart),
     h(
       'div',
       { class: 'card-meta' },
@@ -454,13 +456,12 @@ function renderCard(card, when, ctx) {
     h(
       'div',
       { class: 'card-actions' },
-      h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
-      h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')),
+      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onMap(card.rank) }, t('card.onMap')),
+      h('button', { type: 'button', class: 'btn btn-link btn-sm', onclick: () => ctx.onRoute(card.rank) }, t('card.route')),
       site
         ? h('a', { class: 'btn btn-link btn-sm', href: site, target: '_blank', rel: 'noopener noreferrer' }, t('card.site'))
         : null,
     ),
-    renderDirections(card, ctx.origin, ctx.preciseStart),
   );
   li.addEventListener('mouseenter', () => ctx.onHover?.(card.rank));
   li.addEventListener('mouseleave', () => ctx.onHover?.(null));
@@ -496,7 +497,7 @@ function renderDirections(card, origin, preciseStart) {
     const a = h(
       'a',
       {
-        class: 'btn btn-link btn-sm',
+        class: 'btn btn-ghost btn-sm directions-btn',
         href,
         target: '_blank',
         rel: 'noopener noreferrer',
