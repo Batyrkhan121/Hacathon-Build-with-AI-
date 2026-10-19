@@ -40,6 +40,7 @@ const state = {
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
+  hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
@@ -448,6 +449,11 @@ function renderChips() {
   if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
   els.filterHint.hidden = !hints.length;
   els.filterHint.textContent = hints.join(' ');
+  // Новая подсказка (турист, доступная среда) и «Вылет через» не должны прятаться в свёрнутом «Уточнить»:
+  // раскрываем блок один раз, когда подсказка появилась; если пользователь свернёт — не навязываем.
+  const hintKey = hints.join('|');
+  if (hintKey && hintKey !== state.hintKey) els.refine.open = true;
+  state.hintKey = hintKey;
   // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
   const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
   // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
