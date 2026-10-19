@@ -86,11 +86,23 @@ function landmarkName(lm) {
   return lm.names?.[getLang()] || lm.names?.ru || lm.id;
 }
 
-function cellAreaKm2(cell) {
+// Площадь ячейки в гектарах: r9 ≈ 10–13 га, r10 ≈ 1,5–1,9 га. В км² с одним знаком r10 дала бы «0,0».
+function cellAreaHa(cell) {
+  let ha;
   try {
-    return formatNumber(h3.cellArea(cell, 'km2'), 1);
+    ha = h3.cellArea(cell, 'km2') * 100;
   } catch {
-    return formatNumber(0.1, 1);
+    ha = 10;
+  }
+  return formatNumber(ha, ha >= 10 ? 0 : 1);
+}
+
+// Разрешение берём из самой ячейки, а не пишем «r9» в тексте: подпись не соврёт и для r10.
+function cellRes(cell) {
+  try {
+    return h3.getResolution(cell);
+  } catch {
+    return H3_RES;
   }
 }
 
@@ -459,7 +471,8 @@ function renderWhereNote() {
     return;
   }
   if (state.location.type === 'cell') {
-    note.textContent = t('where.noteCell', { cell: state.location.cell, area: cellAreaKm2(state.location.cell) });
+    const cell = state.location.cell;
+    note.textContent = t('where.noteCell', { cell, area: cellAreaHa(cell), res: cellRes(cell) });
     note.classList.add('is-privacy');
     if (state.location.far) {
       note.append(document.createElement('br'), t('geo.far'));
@@ -472,7 +485,7 @@ function renderWhereNote() {
 
 function renderLocationOnMap() {
   if (state.location.type === 'cell') {
-    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
   } else {
     const lm = landmarkById(state.location.id);
     mapView.showLandmark(lm, t('map.origin', { name: landmarkName(lm) }));
@@ -624,7 +637,7 @@ function bindEvents() {
     mapView.setLegendLabels(legendLabels());
     autoGrow();
     if (state.location.type === 'cell') {
-      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
     }
     setBusy(Boolean(state.inflight));
   });
