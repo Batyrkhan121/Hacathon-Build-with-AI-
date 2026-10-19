@@ -1,0 +1,450 @@
+/* Qadam city guide: home composition.
+ * The existing Airbnb reference lock supplies white canvas, confident type and real
+ * map media. Qadam's own yellow marks the start action; cobalt carries the guide.
+ * One composer, ruled conditions, five small starting ideas. No decorative cards.
+ */
+.home-view {
+  --home-blue: #245fc5;
+  --home-yellow: #f2b705;
+  --home-rule: #d8dfe8;
+  --home-label: #556070;
+}
+
+.home-view ::selection {
+  background: #f2b705;
+  color: #202631;
+}
+
+.home-view .home-heading .eyebrow,
+.home-view .home-intro {
+  display: none;
+}
+
+.home-view .controls {
+  padding: 28px 20px 24px;
+}
+
+.home-view .home-heading {
+  margin: 0 0 26px;
+}
+
+.home-view .home-heading h2 {
+  color: var(--home-blue);
+  max-width: 11ch;
+  font-size: clamp(40px, 10.8vw, 50px);
+  line-height: 1.02;
+  letter-spacing: -.035em;
+  font-weight: 750;
+  text-wrap: balance;
+}
+
+.home-view .query-row {
+  padding: 0;
+  border: 1px solid #9eacbf;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: none;
+  gap: 0;
+  overflow: hidden;
+}
+
+.home-view .query-row:focus-within {
+  border-color: var(--home-blue);
+  box-shadow: none;
+}
+
+.home-view .query-row textarea {
+  min-height: 100px;
+  padding: 17px 16px 15px;
+  font-size: 17px;
+  line-height: 1.4;
+  color: #202631;
+  caret-color: var(--home-blue);
+}
+
+.home-view .query-row textarea::placeholder {
+  color: #5a6575;
+}
+
+.home-view .query-row textarea:focus-visible {
+  outline: 2px solid var(--home-blue);
+  outline-offset: -4px;
+}
+
+.home-view .mobile-conditions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--home-rule);
+  margin: 0 16px;
+  padding: 0;
+}
+
+.home-view .condition-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 64px;
+  min-width: 0;
+  padding: 11px 0;
+  text-align: left;
+  background: #fff;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.home-view .condition-control:hover {
+  background: #f1f5fc;
+}
+
+.home-view .condition-control:focus-visible {
+  outline-offset: -2px;
+}
+
+.home-view .condition-control > img {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+.home-view .condition-control > span:not(.control-chevron) {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-view .condition-control small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--home-label);
+  font-weight: 400;
+}
+
+.home-view .condition-control strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 650;
+  color: #202631;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-view .condition-where {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--home-rule);
+}
+
+.home-view .condition-duration {
+  border-right: 1px solid var(--home-rule);
+  padding-right: 12px;
+}
+
+.home-view .condition-when {
+  padding-left: 12px;
+}
+
+.home-view .control-chevron {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin: 0 3px 0 0;
+  border-radius: 0;
+  background: url('../assets/icons/chevron.svg') center / 17px no-repeat;
+  color: transparent;
+  font-size: 0;
+  transform: none;
+}
+
+.home-view .parameters {
+  margin: 0 16px;
+  width: auto;
+  border: 0;
+}
+
+.home-view .parameters > summary {
+  border: 0;
+  min-height: 44px;
+  padding: 9px 0;
+  color: var(--home-blue);
+  font-size: 0;
+  font-weight: 600;
+  gap: 8px;
+}
+
+.home-view .parameters > summary::before {
+  content: 'Қосымша параметрлер';
+  width: auto;
+  height: auto;
+  background: none;
+  font-size: 13px;
+}
+
+html[lang='ru'] .home-view .parameters > summary::before {
+  content: 'Ещё параметры';
+}
+
+html[lang='en'] .home-view .parameters > summary::before {
+  content: 'More options';
+}
+
+.home-view .parameters > summary::after {
+  content: '';
+  width: 17px;
+  height: 17px;
+  margin-left: auto;
+  border-radius: 0;
+  background: url('../assets/icons/chevron.svg') center / 17px no-repeat;
+  transform: rotate(90deg);
+}
+
+.home-view .parameters[open] > summary::after {
+  transform: rotate(-90deg);
+}
+
+.home-view .parameters[open] > summary {
+  margin-bottom: 12px;
+}
+
+.home-view .parameters-done {
+  margin-bottom: 12px;
+}
+
+.home-view .query-row #submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 8px 8px;
+  width: calc(100% - 16px);
+  min-height: 54px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--home-yellow);
+  box-shadow: none;
+  color: #202631;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.home-view .query-row #submit::after {
+  content: '';
+  width: 24px;
+  height: 24px;
+  background: url('../assets/city-arrow.svg') center / 24px no-repeat;
+}
+
+.home-view .query-row #submit:hover {
+  background: #e7ac00;
+}
+
+.home-view .query-row #submit:active {
+  background: #da9f00;
+}
+
+.home-view .presets {
+  margin-top: 26px;
+}
+
+.home-view .presets .label {
+  margin-bottom: 8px;
+  color: #202631;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.home-view .preset-list {
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-right: -20px;
+  padding: 0 20px 8px 0;
+  mask-image: none;
+}
+
+.home-view .preset[data-preset] {
+  min-height: 44px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #d0d9e6;
+  border-radius: 7px;
+  color: #202631;
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.home-view .preset[data-preset]:hover,
+.home-view .preset[data-preset][aria-pressed='true'] {
+  background: #edf3ff;
+  border-color: var(--home-blue);
+  color: #194b9f;
+}
+
+.home-view .preset img {
+  width: 17px;
+  height: 17px;
+}
+
+.home-view .privacy-note {
+  margin-top: 14px;
+  max-width: 48ch;
+  color: #556070;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.home-view:not(.map-open) .app > .map-wrap {
+  margin: 0 20px 24px;
+  height: 220px;
+  min-height: 220px;
+  border-radius: 12px;
+}
+
+.home-view .map-label {
+  border-radius: 6px;
+  box-shadow: 0 3px 12px #20263118;
+}
+
+@media (min-width: 600px) and (max-width: 999px) {
+  .home-view .controls {
+    padding: 38px 28px 28px;
+    max-width: 640px;
+  }
+
+  .home-view .home-heading h2 {
+    max-width: 12ch;
+    font-size: 56px;
+  }
+
+  .home-view .preset-list {
+    flex-wrap: wrap;
+    margin-right: 0;
+    padding-right: 0;
+  }
+
+  .home-view:not(.map-open) .app > .map-wrap {
+    max-width: 584px;
+    margin: 0 auto 28px;
+  }
+}
+
+@media (min-width: 1000px) {
+  .home-view .app {
+    grid-template-columns: minmax(520px, 52%) minmax(0, 1fr);
+  }
+
+  .home-view .controls {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: clamp(32px, 5.2vh, 56px) clamp(28px, 3.5vw, 58px) 32px;
+  }
+
+  .home-view .home-heading {
+    margin-bottom: 30px;
+  }
+
+  .home-view .home-heading h2 {
+    max-width: 11ch;
+    font-size: clamp(52px, 4.8vw, 68px);
+  }
+
+  .home-view .query-row textarea {
+    min-height: 98px;
+    padding: 20px 20px 17px;
+    font-size: 19px;
+    line-height: 1.4;
+  }
+
+  .home-view .mobile-conditions {
+    margin: 0 20px;
+  }
+
+  .home-view .condition-control {
+    min-height: 67px;
+  }
+
+  .home-view .condition-control small {
+    font-size: 13px;
+  }
+
+  .home-view .condition-control strong {
+    font-size: 16px;
+  }
+
+  .home-view .parameters {
+    margin: 0 20px;
+  }
+
+  .home-view .presets {
+    margin-top: 28px;
+  }
+
+  .home-view .preset-list {
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0;
+  }
+
+  .home-view .privacy-note {
+    margin-top: 20px;
+  }
+
+  .home-view:not(.map-open) .app > .map-wrap {
+    height: calc(100% - 40px);
+    min-height: 0;
+    margin: 20px 24px 20px 0;
+    border-radius: 16px;
+  }
+}
+
+@media (min-width: 1000px) and (max-height: 800px) {
+  .home-view .controls {
+    padding-top: 26px;
+    padding-bottom: 24px;
+  }
+
+  .home-view .home-heading {
+    margin-bottom: 24px;
+  }
+
+  .home-view .home-heading h2 {
+    font-size: 54px;
+  }
+
+  .home-view .query-row textarea {
+    min-height: 84px;
+    padding-top: 16px;
+    padding-bottom: 14px;
+    font-size: 18px;
+  }
+
+  .home-view .condition-control {
+    min-height: 60px;
+  }
+
+  .home-view .presets {
+    margin-top: 22px;
+  }
+
+  .home-view .privacy-note {
+    margin-top: 16px;
+  }
+}
+
+@media (max-width: 370px) {
+  .home-view .home-heading h2 {
+    font-size: 40px;
+  }
+
+  .home-view .controls {
+    padding-top: 24px;
+  }
+
+  .home-view .home-heading {
+    margin-bottom: 23px;
+  }
+}

@@ -3,6 +3,7 @@ import {t,getLang,setLang,applyI18n,onLangChange,formatNumber} from './lib/i18n.
 import * as view from './lib/render.js';
 import * as map from './lib/map.js';
 import {ux} from './lib/experience-copy.js';
+import {localizeAnswer} from './lib/localize-answer.js';
 
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 const [fixtures,landmarks]=await Promise.all([fetch('../fixtures.json').then(r=>r.json()),fetch('../landmarks.json').then(r=>r.json())]);
@@ -31,9 +32,9 @@ const hero=view.h('div',{class:'home-heading'},view.h('p',{class:'eyebrow'}),vie
 $('ask').before(hero);$('ask').after(document.querySelector('.presets'));
 const privacy=view.h('p',{class:'privacy-note'},icon('privacy-hex'),view.h('span'));document.querySelector('.controls').append(privacy);
 const editCancel=view.h('button',{type:'button',class:'btn btn-link edit-cancel',onclick:()=>{if(editSnapshot){Object.assign(state,copy(editSnapshot.state));$('query').value=editSnapshot.query;}editSnapshot=null;state.editing=false;state.mapOpen=false;render();topOfPanel();}});$('ask').append(editCancel);
-const toolbar=view.h('button',{type:'button',class:'query-summary','aria-label':ux('editQuery'),onclick:()=>editQuery()},view.h('span',{class:'query-summary-icon',text:'←','aria-hidden':'true'}),view.h('span',{class:'query-summary-content'},view.h('strong'),view.h('small')),view.h('span',{class:'edit-label'}));
+const toolbar=view.h('button',{type:'button',class:'query-summary','aria-label':ux('editQuery'),onclick:()=>editQuery()},view.h('span',{class:'query-summary-icon ui-arrow arrow-left','aria-hidden':'true'}),view.h('span',{class:'query-summary-content'},view.h('strong'),view.h('small')),view.h('span',{class:'edit-label'}));
 $('results').prepend(toolbar);
-const mapBack=view.h('button',{type:'button',class:'btn map-back',onclick:()=>closeMap()},view.h('span',{text:'←','aria-hidden':'true'}),view.h('span'));
+const mapBack=view.h('button',{type:'button',class:'btn map-back',onclick:()=>closeMap()},view.h('span',{class:'ui-arrow arrow-left','aria-hidden':'true'}),view.h('span'));
 const mapLabel=view.h('div',{class:'map-label'},icon('map-pin'),view.h('span'),view.h('small'));
 const mapSelection=view.h('button',{type:'button',class:'map-selection',onclick:()=>closeMap(state.selected)});
 const mapCaption=view.h('p',{class:'map-caption'});mapWrap.append(mapBack,mapLabel,mapSelection,mapCaption);
@@ -57,7 +58,7 @@ function syncChrome(){
  mapBack.lastElementChild.textContent=state.answer?ux('back'):ux('editQuery');mapLabel.querySelector('span').textContent=ux('mapTitle');mapLabel.querySelector('small').textContent=locationName();
  mapCaption.textContent=ux('routeNote');mapCaption.hidden=!state.answer?.cards.length||home;
  const selected=state.answer?.cards.find(c=>c.rank===state.selected);mapSelection.hidden=!selected||!state.mapOpen;mapSelection.replaceChildren();
- if(selected)mapSelection.append(view.h('span',{class:'rank',text:selected.rank}),view.h('span',{},view.h('small',{text:ux('selected')}),view.h('strong',{text:selected.title}),view.h('small',{text:ux('compactTime',{min:selected.walk_min})+' · '+ux('card')})),view.h('span',{'aria-hidden':'true',text:'↑'}));
+ if(selected)mapSelection.append(view.h('span',{class:'rank',text:selected.rank}),view.h('span',{},view.h('small',{text:ux('selected')}),view.h('strong',{text:selected.title}),view.h('small',{text:ux('compactTime',{min:selected.walk_min})+' · '+ux('card')})),view.h('span',{class:'ui-arrow arrow-up','aria-hidden':'true'}));
 }
 window.addEventListener('keydown',e=>{if(e.key==='Escape'&&state.mapOpen){map.stopPick();closeMap();}});
 
@@ -74,7 +75,7 @@ function controls(){
  $('day-chips').replaceChildren();for(const n of [0,1])chip($('day-chips'),t(n?'when.tomorrow':'when.today'),state.day===n,()=>{state.day=n;change();});
  $('time-chips').replaceChildren();for(const tm of [null,'10:00','19:00','23:30'])chip($('time-chips'),tm||t('when.now'),state.time===tm,()=>{state.time=tm;change();});$('time-input').value=state.time||'';
  const name=landmarks.find(l=>l.id===state.landmark)?.names[getLang()]||'EXPO';
- advancedSummary.textContent=`${state.cell?t('where.cellOption'):name} · ${t('budget.'+state.budget)} · ${state.day?t('when.tomorrow')+' ':''}${state.time||t('when.now')}`;
+ advancedSummary.textContent=ux('extraOptions');advancedSummary.setAttribute('aria-label',ux('extraOptions'));
  $('where-note').textContent=state.cell?t('where.noteCell',{cell:fixtures.localmockAnswer.context.h3_cell,area:formatNumber(.1,1)}):t('where.noteLandmark',{id:state.landmark});
  $('submit').querySelector('span').textContent=ux('submit');syncChrome();
 }
@@ -97,11 +98,13 @@ function enrich(){
   // Keep decision-critical information visible; disclose supporting detail.
   const text=el.querySelector('.card-text'),what=view.h('dl',{class:'card-more-text'});
   if(text?.children.length===4){const whatLabel=text.children[2],whatContent=text.children[3];what.append(whatLabel,whatContent);}
-  const details=view.h('details',{class:'card-details'}),summary=view.h('summary',{text:ux('details')});details.append(summary,what);
+  const details=view.h('details',{class:'card-details'}),summary=view.h('summary',{text:ux('detailsSources')});details.append(summary,what);
   for(const selector of ['.card-address','.tags','.card-meta']){const node=el.querySelector(selector);if(node)details.append(node);}
   const siteLink=el.querySelector('a[aria-disabled]');if(siteLink)details.append(siteLink);
-  el.querySelector('.card-actions').before(details);details.addEventListener('toggle',()=>{summary.textContent=ux(details.open?'detailsClose':'details');});
+  el.querySelector('.card-actions').before(details);details.addEventListener('toggle',()=>{summary.textContent=ux(details.open?'detailsClose':'detailsSources');});
   if(card?.open_status==='unknown')el.querySelector('.hours-note').textContent=t('hours.noData');
+  else if(card?.open_note && state.view!=='closing-soon' && state.variant!=='closing_soon')details.append(el.querySelector('.hours-note'));
+  el.querySelector('.card-text')?.classList.add('stop-reason');
   if(state.view==='closing-soon'||state.variant==='closing_soon')el.querySelector('.hours-note').classList.add('closing-warning');
 
  }
@@ -110,15 +113,20 @@ function enrich(){
  $('stale').hidden=state.view!=='stale';$('answer').classList.toggle('is-stale',state.view==='stale');
  const head=document.querySelector('.answer-head');
  if(head){
-  const titleRow=view.h('div',{class:'result-heading'},view.h('h2',{text:ux('nearby')}),view.h('button',{type:'button',class:'btn btn-ghost map-toggle',onclick:()=>openMap()},icon('map-pin'),ux('map')));
-  const meta=view.h('p',{class:'answer-count',text:ux('places',{n:state.answer.cards.length})+(state.answer.route?' · '+ux('routeTotal',{min:state.answer.route.total_min,dist:view.formatDistance(state.answer.route.total_walk_m)}):'')});
-  head.prepend(meta,titleRow);head.append(view.h('p',{class:'demo-notice',text:ux('demoNote')}));
+  const titleRow=view.h('div',{class:'result-heading'},view.h('h2',{text:state.answer.cards.length?ux('journeyTitle'):ux('nearby')}),view.h('button',{type:'button',class:'btn btn-ghost map-toggle',onclick:()=>openMap()},icon('map-pin'),ux('map')));
+  const meta=view.h('p',{class:'answer-count',text:(state.answer.route?ux('routeTotal',{min:state.answer.route.total_min,dist:view.formatDistance(state.answer.route.total_walk_m)})+' · ':'')+ux('places',{n:state.answer.cards.length})});
+  head.prepend(titleRow,meta);head.append(view.h('p',{class:'demo-notice',text:ux('demoNote')}));
+  if(state.answer.cards.length>1 && state.answer.route){
+   const overview=view.h('nav',{class:'walk-overview','aria-label':ux('route')});
+   for(const card of state.answer.cards){const stop=view.h('button',{type:'button',class:'walk-stop',onclick:()=>{const el=document.querySelector('#card-'+card.rank);el?.scrollIntoView({block:'center',behavior:map.reducedMotion()?'instant':'smooth'});el?.querySelector('.card-actions button')?.focus({preventScroll:true});}},view.h('span',{class:'walk-stop-number',text:card.rank}),view.h('span',{},view.h('strong',{text:card.title}),view.h('small',{text:ux('compactTime',{min:card.walk_min})})));overview.append(stop);}
+   head.append(overview);
+  }
   if(!state.answer.cards.length)titleRow.querySelector('.map-toggle').hidden=true;
  }
  const timeline=document.querySelector('.route');
  if(timeline){
   const more=view.h('details',{class:'route-disclosure'});const total=ux('routeTotal',{min:state.answer.route.total_min,dist:view.formatDistance(state.answer.route.total_walk_m)});
-  const sum=view.h('summary',{},icon('walking'),view.h('span',{},view.h('strong',{text:ux('route')}),view.h('small',{text:total})),view.h('span',{class:'disclosure-chevron',text:'⌄','aria-hidden':'true'}));more.append(sum);timeline.before(more);more.append(timeline);
+  const sum=view.h('summary',{},icon('walking'),view.h('span',{},view.h('strong',{text:ux('route')}),view.h('small',{text:total})),view.h('span',{class:'disclosure-chevron ui-arrow arrow-down','aria-hidden':'true'}));more.append(sum);timeline.before(more);more.append(timeline);
   const over=timeline.querySelector('.route-over');if(over)more.before(over);
   if(state.view==='route'||state.view==='over-budget')more.open=true;
  }
@@ -140,12 +148,12 @@ function prepareAnswer(){if(state.view==='stale'&&state.answer)return copy(state
  if(state.view==='coffee'){a.cards=[copy(fixtures.cardVariants.likely_open_ai.card)];a.cards[0].rank=1;a.route=null;a.summary=t('preset.S2.query');a.warnings=[ux('coffeeWarning')];}
  if(state.view==='kids'){a.cards=[copy(fixtures.cardVariants.unnamed_playground.card)];a.cards[0].rank=1;a.route=null;a.summary=t('preset.S3.query');}
  if(state.view==='no-ai'||state.variant==='no_ai')a.warnings=[];
- if(getLang()!=='kk'){
-  const en=getLang()==='en';
-  a.summary=ux(!a.cards.length?'emptySummary':state.view==='answer-short'?'shortSummary':'summary');
-  for(const c of a.cards){const museum=c.category==='museum',play=c.category==='playground';c.title=museum?(en?'Alem.ai — Museum of Singularity':'Alem.ai — Музей Сингулярности'):play?(en?'Playground · 120 m':'Детская площадка · 120 м'):'Mega Silk Way';c.why=museum?(en?'A nearby immersive museum for a curious afternoon.':'Иммерсивный музей рядом для новых впечатлений.'):play?(en?'A short nearby stop for a walk with children.':'Короткая остановка рядом для прогулки с ребёнком.'):(en?'A warm place to take a break after your walk.':'Можно согреться и сделать перерыв после прогулки.');c.address=c.address?(en?'Mock address · EXPO':'Мок-адрес · EXPO'):null;c.what_to_do=museum?(en?'Explore the exhibits. Check tickets before visiting.':'Посмотрите экспозицию. Уточните билеты перед визитом.'):(en?'Take a short break. Check opening hours beforehand.':'Сделайте короткий перерыв. Проверьте часы перед визитом.');c.open_note=c.open_status==='unknown'?t('hours.noData'):(state.variant==='closing_soon'||state.view==='closing-soon')?ux('closing'):ux('schedule');}
- }
- return a;
+ const sent=request();
+ a.intent.raw_query=sent.query;a.intent.time_budget_min=sent.overrides.time_budget_min;
+ if('landmark_mention' in a.intent)a.intent.landmark_mention=locationName();
+ if(a.route)a.route.fits_budget=a.route.total_min<=state.budget;
+ if(Array.isArray(a.data_used.filters))a.data_used.filters=a.data_used.filters.map(value=>/120|2 сағат|2 часа|2 hours/.test(value)?t('budget.'+state.budget):value);
+ return localizeAnswer(a,getLang());
 }
 function render(){
  if(state.view!=='pick')map.stopPick();restoreMap();controls();
@@ -167,7 +175,7 @@ function render(){
   view.renderError($('answer'),{kind:({error:'network',timeout:'timeout','too-large':'too_large',unavailable:'unavailable'})[state.view]},{canRetryNoAi:true,onRetry:()=>submit(),onRetryNoAi:()=>{state.view='no-ai';render();},onShorten:()=>{state.view='home';state.editing=false;render();$('query').focus();}});return;
  }
  state.answer=prepareAnswer();if(state.view!=='stale')state.answerRequest=request();
- if(state.view==='selected'){state.answer.cards=[copy(fixtures.cardVariants.open_poi.card)];state.answer.route=null;state.answer.summary='';}
+ if(state.view==='selected'){state.answer.cards=[copy(fixtures.cardVariants.open_poi.card)];state.answer.route=null;state.answer.summary='';state.answer=localizeAnswer(state.answer,getLang());}
  view.renderAnswer($('answer'),state.answer,context());
  $('status').textContent=t('status.done',{sec:'0,7',n:state.answer.cards.length});enrich();
  if(map.hasMap()){
@@ -190,5 +198,6 @@ const cardViews={ 'card-open':'open_poi','card-maybe':'likely_open_ai','card-unn
 state.variant=cardViews[state.view]||null;if(state.variant==='closing_soon')state.time='17:30';state.cell=['privacy','data','pick'].includes(state.view);advanced.open=false;
 if(params.get('lang'))setLang(params.get('lang'));applyI18n();
 map.initMap($('map'));map.showLandmarkHints(landmarks);if(!map.hasMap())$('map-fallback').hidden=false;
-$('query').value=state.view==='home'?'':fixtures.localmockAnswer.intent.raw_query;render();
+if(state.view==='answer-short'){state.landmark='mega_silk_way';state.budget=60;}
+$('query').value=state.view==='home'?'':state.view==='answer-short'?t('preset.S1.query'):({kk:`${locationName()} маңында ${state.budget} минут серуендегім келеді`,ru:`Хочу погулять ${state.budget} минут рядом с ${locationName()}`,en:`I'd like a ${state.budget}-minute walk near ${locationName()}`})[getLang()];render();
 window.preview={state,fixtures,show(name){state.view=name;state.variant=cardViews[name]||null;state.cell=['privacy','data','pick'].includes(name);render();},request,ready:true};

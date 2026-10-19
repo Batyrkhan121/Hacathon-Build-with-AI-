@@ -7,7 +7,7 @@ const LOCALES = { ru: 'ru-RU', kk: 'kk-KZ', en: 'en-GB' };
 const DICT = {
   ru: {
     'app.title': 'Qadam — прогулки по Астане',
-    'app.tagline': 'ИИ-помощник для прогулок по Астане',
+    'app.tagline': 'Пешие прогулки по Астане',
     'app.mock': 'Мок-данные',
     'app.mockTitle': 'Ответ берётся из web/mock/answer_sample.json, а не с сервера',
     'skip': 'К результатам',
@@ -256,7 +256,7 @@ const DICT = {
 
   kk: {
     'app.title': 'Qadam — Астанада серуен',
-    'app.tagline': 'Астанада серуендеуге арналған ЖИ-көмекші',
+    'app.tagline': 'Астанада жаяу серуен',
     'app.mock': 'Мок-деректер',
     'app.mockTitle': 'Жауап серверден емес, web/mock/answer_sample.json файлынан алынады',
     'skip': 'Нәтижелерге өту',
@@ -505,7 +505,7 @@ const DICT = {
 
   en: {
     'app.title': 'Qadam — walks in Astana',
-    'app.tagline': 'AI walking guide for Astana',
+    'app.tagline': 'Walks around Astana',
     'app.mock': 'Mock data',
     'app.mockTitle': 'The answer comes from web/mock/answer_sample.json, not from the server',
     'skip': 'Skip to results',

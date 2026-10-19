@@ -68,3 +68,12 @@ node capture.cjs
 ### Route footsteps
 
 Chrome/Playwright: следы и SVG загружаются; zoom меняет размещение (5 → 14 следов); слой aria-hidden, без событий ввода; reduced motion отключает animation; mobile 390px без overflow; переход к home удаляет следы. Ошибок JavaScript нет. Просмотрены desktop/mobile screenshots.
+
+
+## City guide · проверка новой главной и результатов
+
+33/33 базовых и44/44 дополнительных проверок. Матрица360/390/768/1280/1440×KK/RU/EN; CTA в первом экране; без overflow. Сохранение query/budget/facts при смене языка; keyboard details; overview → нужная остановка; map/back; шаги и линия; duration/Done; cancel; empty. Подтверждённое переполнение overview с тремя длинными названиями исправлено (flex intrinsic width); повторные проверки прошли.
+
+Детектор запущен один раз:3 предупреждения в унаследованных файлах (privacy note border, closing warning border, vendor Helvetica). Новые стили не дают исходных предупреждений о10px языках; новое правило stale-button задаёт белый текст. Эти3находки переданы независимому визуальному reviewer, не объявлены дефектами без runtime-доказательств.
+
+Независимый finish review: композиция и required screenshots прошли; единственное замечание —4Unicode-стрелки — исправлено на SVG. Verdict pass: material fix resolved, disposition ship в пределах этой проверки. Публичный smoke: HTTP200, главнаяKK → S1 →2остановки/49мин/460м →карта→возврат; ошибокJS/overflow нет.

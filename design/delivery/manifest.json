@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18T17:52:59.681Z",
+  "generatedAt": "2026-10-19T18:05:35.670Z",
   "frames": [
     {
       "file": "screens/01-home.png",
@@ -13,7 +13,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 949,
+        "bodyHeight": 924,
         "firstCard": null
       }
     },
@@ -29,10 +29,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2329,
+        "bodyHeight": 1931,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 770.234375
+          "top": 431.484375,
+          "bottom": 725.453125
         }
       }
     },
@@ -50,8 +50,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 20,
-          "bottom": 480.140625
+          "top": 14,
+          "bottom": 363.578125
         }
       }
     },
@@ -69,8 +69,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 20,
-          "bottom": 463.265625
+          "top": 14,
+          "bottom": 354.078125
         }
       }
     },
@@ -88,8 +88,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 20,
-          "bottom": 474.953125
+          "top": 14,
+          "bottom": 406.359375
         }
       }
     },
@@ -107,8 +107,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 20,
-          "bottom": 490.953125
+          "top": 14,
+          "bottom": 404.96875
         }
       }
     },
@@ -126,8 +126,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 88,
-          "bottom": 567.640625
+          "top": 70,
+          "bottom": 389.78125
         }
       }
     },
@@ -145,8 +145,8 @@
         "lang": "kk",
         "bodyHeight": 800,
         "firstCard": {
-          "top": 20,
-          "bottom": 480.140625
+          "top": 14,
+          "bottom": 383.96875
         }
       }
     },
@@ -162,10 +162,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1355,
+        "bodyHeight": 1180,
         "firstCard": {
-          "top": 311,
-          "bottom": 501
+          "top": 414.796875,
+          "bottom": 542.796875
         }
       }
     },
@@ -197,7 +197,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1087,
+        "bodyHeight": 1103,
         "firstCard": null
       }
     },
@@ -213,10 +213,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2499,
+        "bodyHeight": 2105,
         "firstCard": {
-          "top": 518.1875,
-          "bottom": 940.140625
+          "top": 601.390625,
+          "bottom": 897.359375
         }
       }
     },
@@ -232,10 +232,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1402,
+        "bodyHeight": 1219,
         "firstCard": {
-          "top": 408.28125,
-          "bottom": 849.734375
+          "top": 403.484375,
+          "bottom": 667.65625
         }
       }
     },
@@ -251,10 +251,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1402,
+        "bodyHeight": 1224,
         "firstCard": {
-          "top": 408.421875,
-          "bottom": 849.875
+          "top": 408.765625,
+          "bottom": 672.9375
         }
       }
     },
@@ -270,7 +270,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1168,
+        "bodyHeight": 1184,
         "firstCard": null
       }
     },
@@ -286,10 +286,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1400,
+        "bodyHeight": 1220,
         "firstCard": {
-          "top": 408.421875,
-          "bottom": 847.6875
+          "top": 408.765625,
+          "bottom": 668.84375
         }
       }
     },
@@ -305,10 +305,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1352,
+        "bodyHeight": 1234,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 799.234375
+          "top": 370.484375,
+          "bottom": 682.84375
         }
       }
     },
@@ -324,7 +324,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 820,
+        "bodyHeight": 800,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -343,10 +343,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2329,
+        "bodyHeight": 1931,
         "firstCard": {
-          "top": -1180.71875,
-          "bottom": -758.765625
+          "top": -699.515625,
+          "bottom": -405.546875
         }
       }
     },
@@ -362,7 +362,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1153,
+        "bodyHeight": 1132,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -381,10 +381,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1949,
+        "bodyHeight": 1551,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 770.234375
+          "top": 431.484375,
+          "bottom": 725.453125
         }
       }
     },
@@ -400,10 +400,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2329,
+        "bodyHeight": 1931,
         "firstCard": {
-          "top": -1180.71875,
-          "bottom": -758.765625
+          "top": -699.515625,
+          "bottom": -405.546875
         }
       }
     },
@@ -419,7 +419,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1773,
+        "bodyHeight": 1757,
         "firstCard": null
       }
     },
@@ -435,7 +435,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1773,
+        "bodyHeight": 1757,
         "firstCard": null
       }
     },
@@ -499,7 +499,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 988,
+        "bodyHeight": 963,
         "firstCard": null
       }
     },
@@ -515,10 +515,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 2867,
+        "bodyHeight": 2380,
         "firstCard": {
-          "top": -1304.578125,
-          "bottom": -863.125
+          "top": -741.375,
+          "bottom": -447.40625
         }
       }
     },
@@ -552,8 +552,8 @@
         "lang": "kk",
         "bodyHeight": 900,
         "firstCard": {
-          "top": 340,
-          "bottom": 725.484375
+          "top": 428.171875,
+          "bottom": 664.265625
         }
       }
     },
@@ -571,8 +571,8 @@
         "lang": "kk",
         "bodyHeight": 720,
         "firstCard": {
-          "top": 324,
-          "bottom": 709.484375
+          "top": 428.171875,
+          "bottom": 686.015625
         }
       }
     },
@@ -590,8 +590,8 @@
         "lang": "kk",
         "bodyHeight": 1080,
         "firstCard": {
-          "top": 340,
-          "bottom": 725.484375
+          "top": 428.171875,
+          "bottom": 664.265625
         }
       }
     },
@@ -607,10 +607,10 @@
         "width": 390,
         "scrollWidth": 390,
         "lang": "kk",
-        "bodyHeight": 2234,
+        "bodyHeight": 1856,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 722.046875
+          "top": 406.390625,
+          "bottom": 647.390625
         }
       }
     },
@@ -626,10 +626,10 @@
         "width": 768,
         "scrollWidth": 768,
         "lang": "kk",
-        "bodyHeight": 2054,
+        "bodyHeight": 1638,
         "firstCard": {
-          "top": 328.140625,
-          "bottom": 679.40625
+          "top": 385.390625,
+          "bottom": 583.59375
         }
       }
     },
@@ -645,10 +645,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "ru",
-        "bodyHeight": 2267,
+        "bodyHeight": 1824,
         "firstCard": {
-          "top": 328.140625,
-          "bottom": 750.09375
+          "top": 421.453125,
+          "bottom": 685.625
         }
       }
     },
@@ -664,10 +664,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "en",
-        "bodyHeight": 2143,
+        "bodyHeight": 1742,
         "firstCard": {
-          "top": 328.140625,
-          "bottom": 726.59375
+          "top": 406.390625,
+          "bottom": 648.0625
         }
       }
     },
@@ -683,10 +683,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1376,
+        "bodyHeight": 1165,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 823.921875
+          "top": 349.484375,
+          "bottom": 613.65625
         }
       }
     },
@@ -718,7 +718,7 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1153,
+        "bodyHeight": 1132,
         "firstCard": {
           "top": 0,
           "bottom": 0
@@ -737,10 +737,10 @@
         "width": 360,
         "scrollWidth": 360,
         "lang": "kk",
-        "bodyHeight": 1895,
+        "bodyHeight": 1636,
         "firstCard": {
-          "top": 348.28125,
-          "bottom": 787.546875
+          "top": 431.484375,
+          "bottom": 691.5625
         }
       }
     }

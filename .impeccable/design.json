@@ -1,0 +1,554 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T18:03:19.036556+00:00",
+  "title": "Design System: Qadam",
+  "extensions": {
+    "colorMeta": {
+      "cobalt": {
+        "role": "primary",
+        "displayName": "Cobalt",
+        "tonalRamp": [
+          "oklch(15.0% 0.1709 260.6)",
+          "oklch(26.4% 0.1709 260.6)",
+          "oklch(37.9% 0.1709 260.6)",
+          "oklch(49.3% 0.1709 260.6)",
+          "oklch(60.7% 0.1709 260.6)",
+          "oklch(72.1% 0.1709 260.6)",
+          "oklch(83.6% 0.1709 260.6)",
+          "oklch(95.0% 0.1709 260.6)"
+        ]
+      },
+      "cobalt-strong": {
+        "role": "primary",
+        "displayName": "Cobalt strong",
+        "tonalRamp": [
+          "oklch(15.0% 0.1468 260.3)",
+          "oklch(26.4% 0.1468 260.3)",
+          "oklch(37.9% 0.1468 260.3)",
+          "oklch(49.3% 0.1468 260.3)",
+          "oklch(60.7% 0.1468 260.3)",
+          "oklch(72.1% 0.1468 260.3)",
+          "oklch(83.6% 0.1468 260.3)",
+          "oklch(95.0% 0.1468 260.3)"
+        ]
+      },
+      "cobalt-soft": {
+        "role": "primary",
+        "displayName": "Cobalt soft",
+        "tonalRamp": [
+          "oklch(15.0% 0.0173 264.5)",
+          "oklch(26.4% 0.0173 264.5)",
+          "oklch(37.9% 0.0173 264.5)",
+          "oklch(49.3% 0.0173 264.5)",
+          "oklch(60.7% 0.0173 264.5)",
+          "oklch(72.1% 0.0173 264.5)",
+          "oklch(83.6% 0.0173 264.5)",
+          "oklch(95.0% 0.0173 264.5)"
+        ]
+      },
+      "start-yellow": {
+        "role": "primary",
+        "displayName": "Start yellow",
+        "tonalRamp": [
+          "oklch(15.0% 0.1656 85.0)",
+          "oklch(26.4% 0.1656 85.0)",
+          "oklch(37.9% 0.1656 85.0)",
+          "oklch(49.3% 0.1656 85.0)",
+          "oklch(60.7% 0.1656 85.0)",
+          "oklch(72.1% 0.1656 85.0)",
+          "oklch(83.6% 0.1656 85.0)",
+          "oklch(95.0% 0.1656 85.0)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite ink",
+        "tonalRamp": [
+          "oklch(15.0% 0.0224 262.5)",
+          "oklch(26.4% 0.0224 262.5)",
+          "oklch(37.9% 0.0224 262.5)",
+          "oklch(49.3% 0.0224 262.5)",
+          "oklch(60.7% 0.0224 262.5)",
+          "oklch(72.1% 0.0224 262.5)",
+          "oklch(83.6% 0.0224 262.5)",
+          "oklch(95.0% 0.0224 262.5)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Reading text",
+        "tonalRamp": [
+          "oklch(15.0% 0.0279 258.4)",
+          "oklch(26.4% 0.0279 258.4)",
+          "oklch(37.9% 0.0279 258.4)",
+          "oklch(49.3% 0.0279 258.4)",
+          "oklch(60.7% 0.0279 258.4)",
+          "oklch(72.1% 0.0279 258.4)",
+          "oklch(83.6% 0.0279 258.4)",
+          "oklch(95.0% 0.0279 258.4)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted text",
+        "tonalRamp": [
+          "oklch(15.0% 0.0269 258.4)",
+          "oklch(26.4% 0.0269 258.4)",
+          "oklch(37.9% 0.0269 258.4)",
+          "oklch(49.3% 0.0269 258.4)",
+          "oklch(60.7% 0.0269 258.4)",
+          "oklch(72.1% 0.0269 258.4)",
+          "oklch(83.6% 0.0269 258.4)",
+          "oklch(95.0% 0.0269 258.4)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "Daylight white",
+        "tonalRamp": [
+          "oklch(15.0% 0.0000 0.0)",
+          "oklch(26.4% 0.0000 0.0)",
+          "oklch(37.9% 0.0000 0.0)",
+          "oklch(49.3% 0.0000 0.0)",
+          "oklch(60.7% 0.0000 0.0)",
+          "oklch(72.1% 0.0000 0.0)",
+          "oklch(83.6% 0.0000 0.0)",
+          "oklch(95.0% 0.0000 0.0)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Utility canvas",
+        "tonalRamp": [
+          "oklch(15.0% 0.0029 264.5)",
+          "oklch(26.4% 0.0029 264.5)",
+          "oklch(37.9% 0.0029 264.5)",
+          "oklch(49.3% 0.0029 264.5)",
+          "oklch(60.7% 0.0029 264.5)",
+          "oklch(72.1% 0.0029 264.5)",
+          "oklch(83.6% 0.0029 264.5)",
+          "oklch(95.0% 0.0029 264.5)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Utility line",
+        "tonalRamp": [
+          "oklch(15.0% 0.0109 256.7)",
+          "oklch(26.4% 0.0109 256.7)",
+          "oklch(37.9% 0.0109 256.7)",
+          "oklch(49.3% 0.0109 256.7)",
+          "oklch(60.7% 0.0109 256.7)",
+          "oklch(72.1% 0.0109 256.7)",
+          "oklch(83.6% 0.0109 256.7)",
+          "oklch(95.0% 0.0109 256.7)"
+        ]
+      },
+      "route-rule": {
+        "role": "neutral",
+        "displayName": "Route rule",
+        "tonalRamp": [
+          "oklch(15.0% 0.0144 254.6)",
+          "oklch(26.4% 0.0144 254.6)",
+          "oklch(37.9% 0.0144 254.6)",
+          "oklch(49.3% 0.0144 254.6)",
+          "oklch(60.7% 0.0144 254.6)",
+          "oklch(72.1% 0.0144 254.6)",
+          "oklch(83.6% 0.0144 254.6)",
+          "oklch(95.0% 0.0144 254.6)"
+        ]
+      },
+      "composer-border": {
+        "role": "neutral",
+        "displayName": "Composer border",
+        "tonalRamp": [
+          "oklch(15.0% 0.0317 256.0)",
+          "oklch(26.4% 0.0317 256.0)",
+          "oklch(37.9% 0.0317 256.0)",
+          "oklch(49.3% 0.0317 256.0)",
+          "oklch(60.7% 0.0317 256.0)",
+          "oklch(72.1% 0.0317 256.0)",
+          "oklch(83.6% 0.0317 256.0)",
+          "oklch(95.0% 0.0317 256.0)"
+        ]
+      },
+      "route-path": {
+        "role": "primary",
+        "displayName": "Approximate path",
+        "tonalRamp": [
+          "oklch(15.0% 0.0737 258.8)",
+          "oklch(26.4% 0.0737 258.8)",
+          "oklch(37.9% 0.0737 258.8)",
+          "oklch(49.3% 0.0737 258.8)",
+          "oklch(60.7% 0.0737 258.8)",
+          "oklch(72.1% 0.0737 258.8)",
+          "oklch(83.6% 0.0737 258.8)",
+          "oklch(95.0% 0.0737 258.8)"
+        ]
+      },
+      "open-bg": {
+        "role": "secondary",
+        "displayName": "Open background",
+        "tonalRamp": [
+          "oklch(15.0% 0.0190 157.9)",
+          "oklch(26.4% 0.0190 157.9)",
+          "oklch(37.9% 0.0190 157.9)",
+          "oklch(49.3% 0.0190 157.9)",
+          "oklch(60.7% 0.0190 157.9)",
+          "oklch(72.1% 0.0190 157.9)",
+          "oklch(83.6% 0.0190 157.9)",
+          "oklch(95.0% 0.0190 157.9)"
+        ]
+      },
+      "open-ink": {
+        "role": "secondary",
+        "displayName": "Open green",
+        "tonalRamp": [
+          "oklch(15.0% 0.0959 155.4)",
+          "oklch(26.4% 0.0959 155.4)",
+          "oklch(37.9% 0.0959 155.4)",
+          "oklch(49.3% 0.0959 155.4)",
+          "oklch(60.7% 0.0959 155.4)",
+          "oklch(72.1% 0.0959 155.4)",
+          "oklch(83.6% 0.0959 155.4)",
+          "oklch(95.0% 0.0959 155.4)"
+        ]
+      },
+      "maybe-ink": {
+        "role": "secondary",
+        "displayName": "Possible opening teal",
+        "tonalRamp": [
+          "oklch(15.0% 0.0753 215.2)",
+          "oklch(26.4% 0.0753 215.2)",
+          "oklch(37.9% 0.0753 215.2)",
+          "oklch(49.3% 0.0753 215.2)",
+          "oklch(60.7% 0.0753 215.2)",
+          "oklch(72.1% 0.0753 215.2)",
+          "oklch(83.6% 0.0753 215.2)",
+          "oklch(95.0% 0.0753 215.2)"
+        ]
+      },
+      "unknown-bg": {
+        "role": "neutral",
+        "displayName": "Unknown background",
+        "tonalRamp": [
+          "oklch(15.0% 0.0046 258.3)",
+          "oklch(26.4% 0.0046 258.3)",
+          "oklch(37.9% 0.0046 258.3)",
+          "oklch(49.3% 0.0046 258.3)",
+          "oklch(60.7% 0.0046 258.3)",
+          "oklch(72.1% 0.0046 258.3)",
+          "oklch(83.6% 0.0046 258.3)",
+          "oklch(95.0% 0.0046 258.3)"
+        ]
+      },
+      "unknown-ink": {
+        "role": "neutral",
+        "displayName": "Unknown ink",
+        "tonalRamp": [
+          "oklch(15.0% 0.0246 255.0)",
+          "oklch(26.4% 0.0246 255.0)",
+          "oklch(37.9% 0.0246 255.0)",
+          "oklch(49.3% 0.0246 255.0)",
+          "oklch(60.7% 0.0246 255.0)",
+          "oklch(72.1% 0.0246 255.0)",
+          "oklch(83.6% 0.0246 255.0)",
+          "oklch(95.0% 0.0246 255.0)"
+        ]
+      },
+      "closed-bg": {
+        "role": "secondary",
+        "displayName": "Closed background",
+        "tonalRamp": [
+          "oklch(15.0% 0.0188 25.6)",
+          "oklch(26.4% 0.0188 25.6)",
+          "oklch(37.9% 0.0188 25.6)",
+          "oklch(49.3% 0.0188 25.6)",
+          "oklch(60.7% 0.0188 25.6)",
+          "oklch(72.1% 0.0188 25.6)",
+          "oklch(83.6% 0.0188 25.6)",
+          "oklch(95.0% 0.0188 25.6)"
+        ]
+      },
+      "closed-ink": {
+        "role": "secondary",
+        "displayName": "Closed red",
+        "tonalRamp": [
+          "oklch(15.0% 0.1468 27.7)",
+          "oklch(26.4% 0.1468 27.7)",
+          "oklch(37.9% 0.1468 27.7)",
+          "oklch(49.3% 0.1468 27.7)",
+          "oklch(60.7% 0.1468 27.7)",
+          "oklch(72.1% 0.1468 27.7)",
+          "oklch(83.6% 0.1468 27.7)",
+          "oklch(95.0% 0.1468 27.7)"
+        ]
+      },
+      "ai-bg": {
+        "role": "secondary",
+        "displayName": "AI background",
+        "tonalRamp": [
+          "oklch(15.0% 0.0193 302.2)",
+          "oklch(26.4% 0.0193 302.2)",
+          "oklch(37.9% 0.0193 302.2)",
+          "oklch(49.3% 0.0193 302.2)",
+          "oklch(60.7% 0.0193 302.2)",
+          "oklch(72.1% 0.0193 302.2)",
+          "oklch(83.6% 0.0193 302.2)",
+          "oklch(95.0% 0.0193 302.2)"
+        ]
+      },
+      "ai-ink": {
+        "role": "secondary",
+        "displayName": "AI purple",
+        "tonalRamp": [
+          "oklch(15.0% 0.1533 296.2)",
+          "oklch(26.4% 0.1533 296.2)",
+          "oklch(37.9% 0.1533 296.2)",
+          "oklch(49.3% 0.1533 296.2)",
+          "oklch(60.7% 0.1533 296.2)",
+          "oklch(72.1% 0.1533 296.2)",
+          "oklch(83.6% 0.1533 296.2)",
+          "oklch(95.0% 0.1533 296.2)"
+        ]
+      },
+      "warning-bg": {
+        "role": "secondary",
+        "displayName": "Warning background",
+        "tonalRamp": [
+          "oklch(15.0% 0.0329 89.8)",
+          "oklch(26.4% 0.0329 89.8)",
+          "oklch(37.9% 0.0329 89.8)",
+          "oklch(49.3% 0.0329 89.8)",
+          "oklch(60.7% 0.0329 89.8)",
+          "oklch(72.1% 0.0329 89.8)",
+          "oklch(83.6% 0.0329 89.8)",
+          "oklch(95.0% 0.0329 89.8)"
+        ]
+      },
+      "warning-ink": {
+        "role": "secondary",
+        "displayName": "Warning ink",
+        "tonalRamp": [
+          "oklch(15.0% 0.0861 84.1)",
+          "oklch(26.4% 0.0861 84.1)",
+          "oklch(37.9% 0.0861 84.1)",
+          "oklch(49.3% 0.0861 84.1)",
+          "oklch(60.7% 0.0861 84.1)",
+          "oklch(72.1% 0.0861 84.1)",
+          "oklch(83.6% 0.0861 84.1)",
+          "oklch(95.0% 0.0861 84.1)"
+        ]
+      },
+      "focus-warm": {
+        "role": "neutral",
+        "displayName": "Warm focus",
+        "tonalRamp": [
+          "oklch(15.0% 0.1293 79.2)",
+          "oklch(26.4% 0.1293 79.2)",
+          "oklch(37.9% 0.1293 79.2)",
+          "oklch(49.3% 0.1293 79.2)",
+          "oklch(60.7% 0.1293 79.2)",
+          "oklch(72.1% 0.1293 79.2)",
+          "oklch(83.6% 0.1293 79.2)",
+          "oklch(95.0% 0.1293 79.2)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Home city headline; responsive overrides are recorded in DESIGN.md."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Results walk title."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Stop identity."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "General interface reading."
+      },
+      "stop-reason": {
+        "displayName": "Stop Reason",
+        "purpose": "Visible reason for the stop."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Compact control labels and action text."
+      },
+      "badge": {
+        "displayName": "Badge",
+        "purpose": "Hours and provenance labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "map-label-home",
+        "value": "0 3px 12px #20263118",
+        "purpose": "White label floating over the home map."
+      },
+      {
+        "name": "map-overlay",
+        "value": "0 2px 12px #20263116",
+        "purpose": "Results map label and zoom controls."
+      },
+      {
+        "name": "map-caption",
+        "value": "0 2px 10px #20263112",
+        "purpose": "Approximate-route note over the map."
+      },
+      {
+        "name": "map-selection",
+        "value": "0 4px 20px #20263116",
+        "purpose": "Selected-stop panel in the phone map view."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-transition",
+        "value": "0.15s ease-out",
+        "purpose": "Small control background and border changes."
+      },
+      {
+        "name": "loading-steps",
+        "value": "1.4s cubic-bezier(.2,0,0,1) infinite",
+        "purpose": "Alternating search footsteps while loading; reduced motion disables animation."
+      },
+      {
+        "name": "route-steps",
+        "value": "3.6s ease-out infinite",
+        "purpose": "Decorative footsteps along the approximate map path; reduced motion disables animation."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow-phone-max",
+        "value": "370px"
+      },
+      {
+        "name": "tablet-min",
+        "value": "600px"
+      },
+      {
+        "name": "desktop-min",
+        "value": "1000px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Search button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The yellow home action starts a walk search.",
+      "html": "<button class=\"ds-search\">Серуен табу<svg viewBox=\"0 0 24 24\" width=\"24\" height=\"24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M4 12h15m-6-6 6 6-6 6\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-search{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;min-height:54px;padding:13px 16px;border:0;border-radius:8px;background:var(--home-yellow,#f2b705);color:var(--ink,#202631);font:700 17px/1.45 var(--font,system-ui);cursor:pointer;transition:background-color .15s ease-out}.ds-search:hover{background:#e7ac00}.ds-search:active{background:#da9f00}.ds-search:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px}"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "White outlined utility action used in advanced options.",
+      "html": "<button class=\"ds-secondary\">Қолдану</button>",
+      "css": ".ds-secondary{min-height:44px;padding:10px 14px;border:1px solid #ccd5e3;border-radius:8px;background:#fff;color:var(--ink,#202631);font:600 14px/1.45 var(--font,system-ui);cursor:pointer;transition:background-color .15s ease-out,border-color .15s ease-out}.ds-secondary:hover{background:var(--bg,#f7f8fa);border-color:#8b9ebd}.ds-secondary:active{background:var(--accent-soft,#eaf1ff)}.ds-secondary:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px}"
+    },
+    {
+      "name": "Query composer field",
+      "kind": "input",
+      "refersTo": "query-composer",
+      "description": "Borderless request field within the flat home composer.",
+      "html": "<div class=\"ds-composer\"><textarea class=\"ds-query\" rows=\"2\" aria-label=\"Сұрауыңыз\" placeholder=\"Бір сағатым бар. Жақын жерде не көре аламын?\"></textarea></div>",
+      "css": ".ds-composer{border:1px solid #9eacbf;border-radius:14px;background:#fff;overflow:hidden}.ds-composer:focus-within{border-color:var(--accent,#245fc5)}.ds-query{display:block;width:100%;min-height:100px;padding:17px 16px 15px;border:0;border-radius:0;background:transparent;color:var(--ink,#202631);font:400 17px/1.4 var(--font,system-ui);caret-color:var(--accent,#245fc5);resize:vertical}.ds-query::placeholder{color:#5a6575}.ds-query:focus-visible{outline:2px solid var(--accent,#245fc5);outline-offset:-4px}"
+    },
+    {
+      "name": "Language navigation",
+      "kind": "nav",
+      "description": "Neutral selected language controls preserve the three interface languages.",
+      "html": "<nav class=\"ds-language\" aria-label=\"Тіл\"><button aria-pressed=\"false\">РУС</button><button aria-pressed=\"true\">ҚАЗ</button><button aria-pressed=\"false\">ENG</button></nav>",
+      "css": ".ds-language{display:flex;gap:2px}.ds-language button{min-width:44px;min-height:44px;padding:6px;border:0;border-radius:8px;background:transparent;color:var(--muted,#5c6675);font:600 12px/1.45 var(--font,system-ui);cursor:pointer}.ds-language button[aria-pressed=true]{background:#f0f2f5;color:var(--ink,#202631);font-weight:700}.ds-language button:hover{background:#f0f2f5}.ds-language button:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px}"
+    },
+    {
+      "name": "Preset chip",
+      "kind": "chip",
+      "refersTo": "preset",
+      "description": "Compact home shortcuts stay white until selected or hovered.",
+      "html": "<button class=\"ds-preset\" aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"13\" cy=\"4.5\" r=\"1.75\"/><path d=\"m9.5 20.5 2-6-1.5-4 3-2 2.5 4 3 1M7 11l3-3M11.5 14.5l4 2 1 4\"/></svg>Mega маңында серуен</button>",
+      "css": ".ds-preset{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:10px 12px;border:1px solid #d0d9e6;border-radius:7px;background:#fff;color:var(--ink,#202631);font:500 13px/1.35 var(--font,system-ui);cursor:pointer;transition:background-color .15s ease-out,border-color .15s ease-out}.ds-preset:hover,.ds-preset[aria-pressed=true]{background:#edf3ff;border-color:var(--accent,#245fc5);color:#194b9f}.ds-preset:focus-visible{outline:3px solid var(--accent,#245fc5);outline-offset:3px}"
+    },
+    {
+      "name": "High-confidence open badge",
+      "kind": "chip",
+      "refersTo": "badge-open",
+      "description": "Only confirmed open plus high confidence receives the green fill.",
+      "html": "<span class=\"ds-open\"><svg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"m7.5 12 3 3 6-6\"/></svg>Ашық</span>",
+      "css": ".ds-open{display:inline-flex;align-items:center;gap:5px;padding:3px 5px;border:1px solid var(--open-bg,#e6f4eb);border-radius:5px;background:var(--open-bg,#e6f4eb);color:var(--open-ink,#17613a);font:500 12px/1.4 var(--font,system-ui)}"
+    },
+    {
+      "name": "AI provenance badge",
+      "kind": "chip",
+      "refersTo": "badge-ai",
+      "description": "Purple communicates the source of an idea, independently of opening status.",
+      "html": "<span class=\"ds-ai\"><svg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m13 3 2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5L13 3ZM5 2v4M3 4h4\"/></svg>ЖИ идеясы</span>",
+      "css": ".ds-ai{display:inline-flex;align-items:center;gap:5px;padding:3px 5px;border:1px solid #ddd2f0;border-radius:5px;background:var(--ai-bg,#f2edfb);color:var(--ai-ink,#6340a3);font:500 12px/1.4 var(--font,system-ui)}"
+    },
+    {
+      "name": "Itinerary stop",
+      "kind": "card",
+      "refersTo": "itinerary-stop",
+      "description": "A flat numbered stop keeps identity and reason visible; supporting facts disclose inline.",
+      "html": "<article class=\"ds-stop\"><span class=\"ds-rank\">1</span><h3>Mega Silk Way</h3><p class=\"ds-facts\">≈160 м · жаяу 3 мин</p><p>Жақын жердегі жылы аялдама.</p><div class=\"ds-stop-actions\"><details><summary>Мәліметтер мен дереккөздер</summary><p>Қосымша орын деректері.</p></details><button><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0Z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/></svg>Картада</button></div></article>",
+      "css": ".ds-stop{position:relative;padding:20px 0 22px 52px;color:var(--ink,#202631);font:400 15px/1.45 var(--font,system-ui);border-bottom:1px solid #e3e8ef}.ds-rank{position:absolute;left:0;top:20px;display:grid;place-items:center;width:35px;height:35px;border-radius:50%;background:var(--gold,#f2b705);font-size:18px;font-weight:700}.ds-stop h3{margin:0 0 8px;font-size:23px;font-weight:700;line-height:1.22;letter-spacing:-.025em}.ds-stop p{margin:0 0 10px}.ds-stop .ds-facts{font-size:13px;color:#3c4757}.ds-stop-actions{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.ds-stop-actions details{flex:1;min-width:0}.ds-stop-actions summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;font-size:12px;font-weight:550;color:#495362;cursor:pointer;list-style:none}.ds-stop-actions summary::after{content:\"+\";color:#245fc5;font-size:20px}.ds-stop-actions details[open] summary::after{content:\"−\"}.ds-stop-actions button{display:flex;align-items:center;gap:6px;min-height:44px;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:#194b9f;font:650 13px/1.45 var(--font,system-ui);cursor:pointer}.ds-stop-actions button:hover{background:#edf3ff}.ds-stop-actions button:focus-visible{outline:3px solid #245fc5;outline-offset:3px}.ds-stop-actions summary:focus-visible{outline:3px solid #b07c00;outline-offset:3px}"
+    },
+    {
+      "name": "Walk overview",
+      "kind": "nav",
+      "refersTo": "walk-overview",
+      "description": "Equal-width linked stop summaries precede the detailed vertical sequence.",
+      "html": "<nav class=\"ds-overview\" aria-label=\"Серуен бағыты\"><button><span class=\"ds-number\">1</span><span><strong>Mega Silk Way</strong><small>3 мин жаяу</small></span></button><button><span class=\"ds-number\">2</span><span><strong>Балалар алаңы</strong><small>2 мин жаяу</small></span></button></nav>",
+      "css": ".ds-overview{display:flex;min-width:0;padding:12px 0;border-top:1px solid #dce3ec;border-bottom:1px solid #dce3ec}.ds-overview button{display:flex;align-items:center;gap:8px;flex:1 1 0;min-width:0;min-height:56px;padding:7px 12px 7px 0;border:0;background:transparent;text-align:left;color:#202631;font-family:var(--font,system-ui);cursor:pointer}.ds-overview button+button{padding-left:14px;border-left:1px solid #dce3ec}.ds-overview button>span:last-child{min-width:0}.ds-number{display:grid;place-items:center;flex:0 0 30px;width:30px;height:30px;border-radius:50%;background:#edf3ff;color:#194b9f;font-size:15px;font-weight:700}.ds-overview button:first-child .ds-number{background:#f2b705;color:#202631}.ds-overview strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:650;line-height:1.35}.ds-overview small{display:block;margin-top:3px;font-size:12px;color:#5c6675}.ds-overview button:hover strong{text-decoration:underline;text-underline-offset:3px}.ds-overview button:focus-visible{outline:3px solid #b07c00;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A city guide, step by step",
+    "overview": "Qadam uses a white daylight surface, confident system typography, cobalt wayfinding and a yellow start action. Ruled conditions and an openly spaced sequence make the full walk readable before supporting detail. The existing hexagon logo keeps its cobalt body and yellow center.",
+    "keyCharacteristics": [
+      "White reading surfaces and graphite text.",
+      "Cobalt navigation, yellow start, explicit semantic status.",
+      "Numbered overview, linked stop sequence and approximate map.",
+      "System fonts, original SVG icons and accessible touch controls."
+    ],
+    "rules": [
+      {
+        "name": "The Color Meaning Rule",
+        "body": "Saturated yellow marks the start action and first stop. Green means high-confidence open only; purple identifies AI provenance.",
+        "section": "colors"
+      },
+      {
+        "name": "The System Type Rule",
+        "body": "Use the system font stack throughout, including the map. Preserve Kazakh character coverage.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Reading Rule",
+        "body": "The home composer and itinerary rows have no shadow. Reserve small shadows for controls floating over the map.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep status words and source labels visible alongside color.",
+      "Do preserve the different home and results panel proportions.",
+      "Do keep the approximate-route caption and OpenStreetMap attribution visible.",
+      "Do preserve keyboard focus, 44px action targets and reduced-motion behavior."
+    ],
+    "donts": [
+      "Don't use saturated yellow or purple as an opening-status signal.",
+      "Don't turn the main itinerary back into equal rounded card stacks.",
+      "Don't add photos, ratings, favorites or factual claims absent from the supplied product data.",
+      "Don't describe the approximate route or decorative footsteps as street navigation or live location."
+    ]
+  }
+}
