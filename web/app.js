@@ -1,5 +1,5 @@
 // Qadam UI: состояние формы, пресеты S1–S5, «моё место» → H3, запрос к API и отрисовка ответа.
-import { t, getLang, setLang, applyI18n, onLangChange, formatNumber, locale } from './i18n.js';
+import { t, getLang, setLang, applyI18n, onLangChange, formatNumber } from './i18n.js';
 import { fetchLandmarks, fetchMeta, recommend, isMock } from './api.js';
 import * as mapView from './map.js';
 import * as view from './render.js';
@@ -88,16 +88,16 @@ function landmarkName(lm) {
   return lm.names?.[getLang()] || lm.names?.ru || lm.id;
 }
 
-// Номинальная площадь ячейки этого разрешения, как в подписи сервера: r10 ≈ 0,015 км², r9 ≈ 0,11 км².
-// Две значащие цифры, чтобы мелкая ячейка не превращалась в «0,0».
-function cellAreaKm2(cell) {
-  let km2;
+// Площадь района в гектарах по реальной площади этой ячейки — тот же формат, что у сервера
+// («ваш район (≈1,8 га)»): r10 у EXPO ≈ 1,8 га, r9 ≈ 13 га. От 10 га — целое, иначе один знак.
+function cellAreaHa(cell) {
+  let ha;
   try {
-    km2 = h3.getHexagonAreaAvg(h3.getResolution(cell), 'km2');
+    ha = h3.cellArea(cell, 'km2') * 100;
   } catch {
-    km2 = 0.015;
+    ha = 1.8;
   }
-  return new Intl.NumberFormat(locale(), { maximumSignificantDigits: 2 }).format(km2);
+  return formatNumber(ha, ha >= 10 ? 0 : 1);
 }
 
 // Разрешение берём из самой ячейки, а не пишем «r9» в тексте: подпись не соврёт и для r10.
@@ -287,6 +287,7 @@ function renderAnswer({ redrawMap = true } = {}) {
     request: state.lastRequest,
     meta: state.meta,
     originName: requestOriginName(),
+    preciseStart, // функция: точку отдаёт только в момент клика по «Как пройти»
     onMap: (rank) => focusOnMap(rank),
     onRoute: (rank) => showRoute(rank),
     onHover: (rank) => mapView.highlightStop(rank),
@@ -484,7 +485,7 @@ function renderWhereNote() {
   }
   if (state.location.type === 'cell') {
     const { cell, accuracy } = state.location;
-    note.textContent = t('where.noteCell', { cell, area: cellAreaKm2(cell), res: cellRes(cell) });
+    note.textContent = t('where.noteCell', { cell, area: cellAreaHa(cell), res: cellRes(cell) });
     note.classList.add('is-privacy');
     if (accuracy) {
       // Точность GPS — число, а не место: её можно показать. Хуже размера ячейки — говорим честно.
@@ -503,7 +504,7 @@ function renderWhereNote() {
 
 function renderLocationOnMap() {
   if (state.location.type === 'cell') {
-    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+    mapView.showCell(state.location.cell, t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
   } else {
     const lm = landmarkById(state.location.id);
     mapView.showLandmark(lm, t('map.origin', { name: landmarkName(lm) }));
@@ -517,6 +518,7 @@ function setLocation(loc) {
   if (loc.source !== 'gps') {
     stopGeoWatch();
     mapView.clearHere();
+    gpsPoint = null; // ориентир или точка с карты: старт «Как пройти» снова context.origin
   }
   state.location = loc;
   state.whereMsg = null;
@@ -547,6 +549,16 @@ function setCellFromPoint(lat, lng) {
 // Сама точка нужна только для отметки «вы здесь» на карте.
 let geoWatch = null;
 let geoTimer = null;
+// Точная точка GPS — только в памяти страницы. Нужна для отметки «вы здесь» и, по решению пользователя,
+// как старт в «Как пройти» (по клику, прямо в 2GIS/Яндекс, мимо нашего сервера). Не в API, не в DOM,
+// не в localStorage, не в консоль.
+let gpsPoint = null; // { cell, lat, lon }
+
+// Старт «Как пройти» от точной точки — только если ответ получен для той же ячейки, что и GPS-точка.
+function preciseStart() {
+  if (!gpsPoint || state.lastRequest?.location?.h3_cell !== gpsPoint.cell) return null;
+  return { lat: gpsPoint.lat, lon: gpsPoint.lon };
+}
 
 function stopGeoWatch() {
   if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
@@ -566,6 +578,7 @@ function applyGpsFix(lat, lng, accuracyM) {
   } else {
     setLocation({ type: 'cell', cell, far, accuracy, source: 'gps' });
   }
+  gpsPoint = { cell, lat, lon: lng }; // последняя (самая точная) фиксация
   mapView.showHere(lat, lng, accuracyM, t('map.here'));
 }
 
@@ -706,7 +719,7 @@ function bindEvents() {
     mapView.setLegendLabels(legendLabels());
     autoGrow();
     if (state.location.type === 'cell') {
-      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaKm2(state.location.cell) }));
+      mapView.updateCellTooltip(t('cell.tooltip', { area: cellAreaHa(state.location.cell) }));
     }
     mapView.setHereLabel(t('map.here'));
     setBusy(Boolean(state.inflight));
