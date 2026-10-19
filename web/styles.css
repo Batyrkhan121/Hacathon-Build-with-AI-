@@ -1961,59 +1961,127 @@ input[type="time"],
   white-space: nowrap;
 }
 
-/* Порядок первого экрана: заголовок → панель запроса → сценарии → «Где я» → «Уточнить».
-   form: display: contents — его дети становятся пунктами колонки; DOM и отправка формы прежние. */
-.v2 .controls {
-  display: flex;
-  flex-direction: column;
-}
-
-.v2 .controls > .brand { order: 0; }
-.v2 .controls > .hero { order: 1; }
-.v2 .controls > .ask { display: contents; }
-.v2 .ask > .query-row { order: 2; }
-.v2 .ask > .form-error { order: 3; }
-.v2 .controls > .presets { order: 4; margin-top: 16px; }
-.v2 .ask > .where { order: 5; }
-.v2 .ask > .refine { order: 6; }
-
-.v2 .query-row,
-.v2 .ask .query-row {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 8px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--v2-r-panel);
-  box-shadow: var(--v2-shadow-1);
-}
-
-.v2 .query-row:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 110, 135, 0.25);
+/* v2.1, первый экран: заголовок → строка ценности → поле → сценарии → «Рядом с … Изменить» → «Подсказать»
+   → строка о приватности. Порядок задан разметкой (Tab сверху вниз), здесь только вид. */
+.v2 .query-row {
+  display: block;
 }
 
 .v2 .query-row textarea {
+  width: 100%;
   min-height: 52px;
-  padding: 8px 8px;
+  padding: 13px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--v2-r-btn);
+  background: var(--surface);
+  font-size: 16px; /* меньше 16 px — iPhone увеличивает страницу при фокусе */
+  line-height: 1.4;
+}
+
+/* Сценарии — одна прокручиваемая строка чипов-капсул (прокрутка внутри ряда, не страницы) */
+.v2 .presets {
+  margin: 12px 0 0;
+}
+
+.v2 .presets > .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.v2 .preset-list {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  margin: 0 -16px;
+  padding: 2px 16px 4px; /* место под кольцо фокуса */
+  scrollbar-width: none;
+}
+
+.v2 .preset-list::-webkit-scrollbar {
+  display: none;
+}
+
+.v2 .preset {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: var(--v2-fs-m);
+}
+
+.v2 .preset .preset-tag {
+  display: none; /* S1–S5 — служебная нумерация, на экране лишняя */
+}
+
+/* «Рядом с: {место}» и «Изменить» */
+.v2 .ask-near {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-m);
+  color: var(--ink-2);
+}
+
+.v2 .btn-text {
+  min-height: 44px;
+  padding: 0 4px;
   border: 0;
-  border-radius: 12px;
-  background: transparent;
-  font-size: var(--v2-fs-l);
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.v2 .query-row textarea:focus-visible {
-  outline: none; /* фокус показывает рамка панели (:focus-within) */
-  box-shadow: none;
+.v2 .btn-text:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.v2 .query-row .btn-primary,
-.v2 .ask .query-row .btn-primary {
+/* «Подсказать» — последней, во всю ширину, 52 px */
+.v2 .submit-row {
+  margin-top: 8px;
+}
+
+.v2 .submit-row .btn-primary {
   width: 100%;
   min-height: 52px;
   border-radius: var(--v2-r-btn);
   font-size: var(--v2-fs-l);
+}
+
+/* Строка о приватности с замком (встроенный SVG) */
+.v2 .privacy-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: var(--v2-fs-s);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.v2 .privacy-line::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5V3.8a3 3 0 0 1 6 0V5h.5A1.5 1.5 0 0 1 11 6.5v4A1.5 1.5 0 0 1 9.5 12h-7A1.5 1.5 0 0 1 1 10.5v-4A1.5 1.5 0 0 1 2.5 5zm1.5 0h3V3.8a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5V3.8a3 3 0 0 1 6 0V5h.5A1.5 1.5 0 0 1 11 6.5v4A1.5 1.5 0 0 1 9.5 12h-7A1.5 1.5 0 0 1 1 10.5v-4A1.5 1.5 0 0 1 2.5 5zm1.5 0h3V3.8a1.5 1.5 0 0 0-3 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* «Где я» свёрнуто за «Изменить» */
+.v2 .where:not(.is-open) {
+  display: none;
 }
 
 /* Телефон: карта на первом экране — не больше 30 % высоты */
@@ -2338,4 +2406,24 @@ input[type="time"],
 
 .v2 .hero-title {
   margin: 4px 0 0;
+}
+
+/* Без v2 (откат): DOM переставлен под v2.1, прежний порядок на экране восстанавливает order */
+body:not(.v2) .ask {
+  display: flex;
+  flex-direction: column;
+}
+
+body:not(.v2) .ask > .presets {
+  order: -1;
+  margin-bottom: 14px;
+}
+
+body:not(.v2) .submit-row {
+  margin-top: 8px;
+}
+
+body:not(.v2) .submit-row .btn-primary {
+  width: 100%;
+  min-height: 48px;
 }

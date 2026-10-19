@@ -81,6 +81,9 @@ const els = {
   staleBtn: $('stale-btn'),
   mapFallback: $('map-fallback'),
   backToCard: $('back-to-card'),
+  askNearText: $('ask-near-text'),
+  whereToggle: $('where-toggle'),
+  whereBox: $('where'),
 };
 
 // ------------------------------------------------------------------ helpers
@@ -512,6 +515,8 @@ function renderLandmarkSelect() {
 }
 
 function renderWhereNote() {
+  // v2.1: «Рядом с: {место}» у кнопки — видно, откуда ищем, даже когда «Где я» свёрнуто
+  els.askNearText.textContent = t('query.near', { where: whereLabel() });
   const note = els.whereNote;
   note.className = 'where-note';
   if (state.whereMsg) {
@@ -830,6 +835,14 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  // v2.1: «Где я» свёрнуто за «Изменить»; поле подписано заголовком «Куда пойдём?»
+  els.whereToggle.addEventListener('click', () => {
+    const open = !els.whereBox.classList.contains('is-open');
+    els.whereBox.classList.toggle('is-open', open);
+    els.whereToggle.setAttribute('aria-expanded', String(open));
+    if (open) els.landmark?.focus();
+  });
+  if (document.body.classList.contains('v2')) els.query.setAttribute('aria-labelledby', 'hero-title');
   els.backToCard.addEventListener('click', () => {
     const rank = state.backRank;
     showBackToCard(null);
