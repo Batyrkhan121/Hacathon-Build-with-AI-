@@ -147,6 +147,18 @@ textarea {
   background: #e8e4da;
 }
 
+.back-to-card {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+  box-shadow: var(--shadow);
+}
+
+.back-to-card[hidden] {
+  display: none;
+}
+
 .map-fallback {
   position: absolute;
   inset: auto 16px 16px;
