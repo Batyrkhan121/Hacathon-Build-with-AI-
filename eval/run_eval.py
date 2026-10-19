@@ -597,8 +597,63 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[str]) -> None:
+# ------------------------------------------------------------ privacy probes (1.2.0)
+
+# Bodies sent as is (not through RecommendRequest): the server itself must reject them with 422.
+PRIVACY_PROBES: list[tuple[str, str, dict[str, Any]]] = [
+    ("r11", "ячейка H3 r11 (мельче r10)",
+     {"query": "кофе рядом", "location": {"h3_cell": "8b2153806d12fff"}}),
+    ("raw_coords", "сырые координаты lat/lon",
+     {"query": "кофе рядом", "location": {"lat": 51.0894, "lon": 71.4161}}),
+]
+PostFn = Callable[[dict[str, Any]], int]  # sends one body, returns the HTTP status (-1 = no answer)
+
+
+def run_privacy_probes(post: PostFn | None) -> list[dict[str, Any]]:
+    """Each probe must be rejected with 422. post=None: check the request schema in-process
+    (the API validates with the same model, so a schema rejection is a 422 there)."""
+    out = []
+    for pid, title, body in PRIVACY_PROBES:
+        if post is None:
+            try:
+                RecommendRequest.model_validate(body)
+                got = "принят схемой"
+            except ValidationError:
+                got = "422"
+        else:
+            status = post(body)
+            got = "нет ответа" if status < 0 else str(status)
+        out.append({"id": pid, "title": title, "got": got, "passed": got == "422"})
+    return out
+
+
+def url_post(base_url: str, timeout_s: float = 30.0) -> PostFn:
+    import httpx
+
+    endpoint = base_url.rstrip("/") + "/api/recommend"
+
+    def post(body: dict[str, Any]) -> int:
+        try:
+            return httpx.post(endpoint, json=body, timeout=timeout_s).status_code
+        except httpx.HTTPError:
+            return -1
+
+    return post
+
+
+def privacy_summary(probes: list[dict[str, Any]]) -> str:
+    ok = sum(p["passed"] for p in probes)
+    parts = "; ".join(f"{p['title']} → {p['got']}" for p in probes)
+    return f"{ok}/{len(probes)} отклонены с 422 ({parts})"
+
+
+def write_report(
+    out_dir: Path, mode: str, results: list[Result], notes: list[str],
+    privacy: list[dict[str, Any]] | None = None,
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if privacy is not None:
+        notes = [*notes, f"Приватность: {privacy_summary(privacy)}"]
     (out_dir / "report.md").write_text(render_md(mode, results, notes), encoding="utf-8")
     payload = {
         "mode": mode,
@@ -607,6 +662,7 @@ def write_report(out_dir: Path, mode: str, results: list[Result], notes: list[st
         "notes": notes,
         "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
         "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
+        "privacy": privacy or [],
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
@@ -888,12 +944,14 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("граф тротуаров в этом прогоне не используется (WALK_GRAPH=false или "
                      "нет файла графа): ожидание route_source=graph пропущено для "
                      + ", ".join(wants_graph))
-    write_report(args.out, mode, results, notes)
+    privacy = run_privacy_probes(url_post(args.url) if args.url else None)
+    write_report(args.out, mode, results, notes, privacy)
     passed = sum(r.passed for r in results)
     for r in results:
         print(f"{r.id:<4} {'pass' if r.passed else 'FAIL'}  {'; '.join(r.failures)[:160]}")
     for n in notes:
         print(f"note: {n}")
+    print(f"PRIVACY: {privacy_summary(privacy)}")
     print(f"EVAL {mode}: {passed}/{len(results)} -> {args.out / 'report.md'}")
     return 0
 

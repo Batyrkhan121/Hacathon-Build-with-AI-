@@ -513,3 +513,35 @@ def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) ->
 
     results = {r.id: r for r in run_eval.run_all(scns, mixed)}
     assert not results["X1"].passed and results["X2"].passed
+
+
+# ------------------------------------------------------------- privacy probes (1.2.0)
+
+
+def test_privacy_probes_schema_rejects_r11_and_raw_coords() -> None:
+    probes = run_eval.run_privacy_probes(None)
+    assert {p["id"] for p in probes} == {"r11", "raw_coords"}
+    assert all(p["passed"] and p["got"] == "422" for p in probes), probes
+
+
+def test_privacy_probes_over_http() -> None:
+    """The server answer decides: 422 passes, 200 (cell coarsened / coords taken) fails."""
+    sent: list[dict] = []
+
+    def post(body: dict) -> int:
+        sent.append(body)
+        return 422 if "lat" in body["location"] else 200
+
+    probes = {p["id"]: p for p in run_eval.run_privacy_probes(post)}
+    assert not probes["r11"]["passed"] and probes["r11"]["got"] == "200"
+    assert probes["raw_coords"]["passed"]
+    assert len(sent) == 2
+    assert "1/2 отклонены" in run_eval.privacy_summary(list(probes.values()))
+
+
+def test_report_has_privacy_block(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert [p["id"] for p in report["privacy"]] == ["r11", "raw_coords"]
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Приватность: 2/2 отклонены с 422" in md
