@@ -400,8 +400,10 @@ function renderCard(card, when, ctx) {
     h(
       'p',
       { class: 'card-facts' },
-      h('span', { text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
-      h('span', { text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
+      h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
+      h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
+      // v2.1: статус часов — в строке фактов (тот же текст и та же логика, что у бейджа; бейдж скрыт в v2)
+      h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
     ),
     card.address ? h('p', { class: 'card-address', text: card.address }) : null,
     h(
@@ -432,7 +434,7 @@ function renderCard(card, when, ctx) {
         )
       : null,
     // Главное действие критического пути — «Как пройти»: сразу после «почему / что делать».
-    renderDirections(card, ctx.origin, ctx.preciseStart),
+    renderDirections(card, ctx.origin, ctx.preciseStart, poi),
     h(
       'div',
       { class: 'card-meta' },
@@ -492,7 +494,7 @@ export function directionsUrls(dest, origin) {
 // preciseStart() отдаёт точную GPS-точку (только в памяти страницы) или null.
 // В href всегда лежит старт context.origin; точную точку подставляем лишь в момент клика —
 // сами открываем навигатор, ссылка в DOM не меняется (точки нет в разметке и в предпросмотре).
-function renderDirections(card, origin, preciseStart) {
+function renderDirections(card, origin, preciseStart, poi = false) {
   const { yandex, twogis } = directionsUrls(card.geo, origin);
   const title = cardTitle(card);
   const fromHere = Boolean(preciseStart?.());
@@ -524,6 +526,8 @@ function renderDirections(card, origin, preciseStart) {
     'div',
     { class: 'directions' },
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
+    // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
+    poi ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
     link(twogis, t('dir.2gis'), 'twogis'),
     link(yandex, t('dir.yandex'), 'yandex'),
   );
