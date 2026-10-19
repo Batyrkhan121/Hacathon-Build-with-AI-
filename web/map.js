@@ -9,6 +9,7 @@ const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">Op
 let map = null;
 let originLayer;
 let cellLayer;
+let hereLayer; // «вы здесь»: точная точка GPS, только на этой карте, никуда не отправляется
 let answerLayer;
 let directLayer;
 let routeLine = null;
@@ -23,6 +24,7 @@ export function initMap(el) {
   L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
   originLayer = L.layerGroup().addTo(map);
   cellLayer = L.layerGroup().addTo(map);
+  hereLayer = L.layerGroup().addTo(map);
   answerLayer = L.layerGroup().addTo(map);
   directLayer = L.layerGroup().addTo(map);
   return true;
@@ -319,6 +321,37 @@ export function showCell(cell, tooltip) {
 
 export function updateCellTooltip(text) {
   cellLayer?.eachLayer((layer) => layer.setTooltipContent?.(text));
+}
+
+// Синяя точка и круг точности GPS. Рисуются в браузере; координаты не уходят ни в API, ни в ссылки.
+export function showHere(lat, lng, accuracyM, label) {
+  if (!map) return;
+  hereLayer.clearLayers();
+  L.circle([lat, lng], {
+    radius: accuracyM,
+    color: '#1a73e8',
+    weight: 1,
+    fillColor: '#1a73e8',
+    fillOpacity: 0.08,
+    interactive: false,
+  }).addTo(hereLayer);
+  L.circleMarker([lat, lng], {
+    radius: 6,
+    color: '#ffffff',
+    weight: 2,
+    fillColor: '#1a73e8',
+    fillOpacity: 1,
+  })
+    .bindTooltip(label, { direction: 'bottom', offset: [0, 6] })
+    .addTo(hereLayer);
+}
+
+export function setHereLabel(label) {
+  hereLayer?.eachLayer((layer) => layer.setTooltipContent?.(label));
+}
+
+export function clearHere() {
+  hereLayer?.clearLayers();
 }
 
 export function clearCell() {
