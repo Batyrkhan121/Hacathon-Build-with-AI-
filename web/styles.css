@@ -1580,12 +1580,13 @@ input[type="time"] {
 
 /* ------------------------------------------------------------------ polish (T75/T76) */
 
-/* Зона клика ≥ 40 px без изменения вида: псевдоэлемент на 3 px сверху и снизу
-   (ровно половина зазора 6 px между рядами, так что зоны соседей не пересекаются). */
+/* Зона нажатия ≥ 44 px. Чипы и маленькие кнопки видны на 38 px, а псевдоэлемент добавляет
+   по 3 px сверху и снизу (ровно половина зазора 6 px между рядами, зоны соседей не пересекаются). */
 .chip,
 .btn-sm,
 .btn-link {
   position: relative;
+  min-height: 38px;
 }
 
 .chip::after,
@@ -1596,15 +1597,31 @@ input[type="time"] {
   inset: -3px 0;
 }
 
-.lang button {
-  min-height: 36px;
+.btn,
+select,
+input[type="time"],
+.preset,
+.lang button,
+.pick-cancel,
+.skip {
+  min-height: 44px;
+}
+
+.btn-sm,
+.btn-link {
+  min-height: 38px;
+}
+
+/* «Указать на карте» внутри текста заметки: вид прежний, зона нажатия 44 px. */
+.where-note .where-pick::after {
+  inset: -8px 0;
 }
 
 .leaflet-bar a,
 .leaflet-touch .leaflet-bar a {
-  width: 36px;
-  height: 36px;
-  line-height: 36px;
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
 }
 
 /* Атрибуция OSM: ссылка была 3,9:1 на полупрозрачном фоне — делаем ≥ 4,5:1. */
