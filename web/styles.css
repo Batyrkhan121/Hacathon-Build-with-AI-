@@ -1036,8 +1036,10 @@ input[type="time"] {
 }
 
 .card-text {
-  margin: 10px 0 0;
-  font-size: 14px;
+  margin: 12px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
 }
 
 .card-text dt {
@@ -1074,10 +1076,24 @@ input[type="time"] {
   background: var(--surface-2);
 }
 
+/* Служебное (полнота и источники фактов) — одна приглушённая группа под текстом, метки остаются видны. */
 .card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.card-meta .sources {
+  margin: 0;
+}
+
+/* в flex-ряду .confidence сжимается по содержимому — полосе нужна своя ширина */
+.card-meta .bar {
+  flex: 0 0 72px;
 }
 
 .confidence {
@@ -1125,8 +1141,8 @@ input[type="time"] {
 .card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 6px 8px;
+  margin-top: 12px;
 }
 
 /* «Как пройти»: внешние навигаторы, отдельной строкой под действиями карточки. */
@@ -1142,6 +1158,17 @@ input[type="time"] {
 .directions-label {
   font-weight: 600;
   color: var(--ink-2);
+}
+
+/* «Как пройти»: подпись своей строкой, ссылки под ней от одного края — длинная kk-подпись
+   («Қалай жетуге болады (сіздің нүктеңізден):») не рвёт ряд ссылок. */
+.directions .directions-label {
+  flex-basis: 100%;
+}
+
+.directions .btn-link {
+  padding-inline: 0;
+  margin-right: 12px;
 }
 
 /* Легенда к пунктиру на карте. */
