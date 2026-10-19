@@ -40,6 +40,7 @@ const state = {
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
+  hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
   picking: false,
@@ -356,7 +357,11 @@ function scrollMapIntoView(rank) {
 function showBackToCard(rank) {
   state.backRank = rank ?? null;
   els.backToCard.hidden = state.backRank === null;
-  if (state.backRank !== null) els.backToCard.textContent = t('map.backToCard', { n: state.backRank });
+  if (state.backRank === null) return;
+  // стрелка — только визуальная подсказка направления, скринридер читает лишь текст
+  const arrow = Object.assign(document.createElement('span'), { textContent: '↓' });
+  arrow.setAttribute('aria-hidden', 'true');
+  els.backToCard.replaceChildren(arrow, t('map.backToCard', { n: state.backRank }));
 }
 
 function renderPresets() {
@@ -444,9 +449,24 @@ function renderChips() {
   if (state.flags.wheelchair) hints.push(t('hint.wheelchair'));
   els.filterHint.hidden = !hints.length;
   els.filterHint.textContent = hints.join(' ');
+  // Новая подсказка (турист, доступная среда) и «Вылет через» не должны прятаться в свёрнутом «Уточнить»:
+  // раскрываем блок один раз, когда подсказка появилась; если пользователь свернёт — не навязываем.
+  const hintKey = hints.join('|');
+  if (hintKey && hintKey !== state.hintKey) els.refine.open = true;
+  state.hintKey = hintKey;
   // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
   const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
-  els.refineCount.textContent = picked ? `· ${picked}` : '';
+  // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
+  els.refineCount.replaceChildren();
+  if (picked) {
+    const dot = Object.assign(document.createElement('span'), { textContent: `· ${picked}` });
+    dot.setAttribute('aria-hidden', 'true');
+    const sr = Object.assign(document.createElement('span'), {
+      className: 'visually-hidden',
+      textContent: `(${t('refine.picked', { n: picked })})`,
+    });
+    els.refineCount.append(dot, sr);
+  }
 }
 
 function syncRefineOpen() {
@@ -814,7 +834,12 @@ async function init() {
     if (rank === null) return;
     // начало карточки к верху экрана: при «nearest» длинная карточка осталась бы с середины
     view.highlightCard(rank); // подсветка; её прокрутку «nearest» перебивает следующая строка
-    document.getElementById(`card-${rank}`)?.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    const card = document.getElementById(`card-${rank}`);
+    if (!card) return;
+    card.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    // кнопка прячется вместе с фокусом — переводим его на карточку, а не на body (клавиатура, скринридер)
+    card.setAttribute('tabindex', '-1');
+    card.focus({ preventScroll: true });
   });
   syncRefineOpen();
   window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
