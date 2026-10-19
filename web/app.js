@@ -27,6 +27,7 @@ const DEFAULT_LANDMARK = 'expo';
 const H3_RES = 10; // контракт 1.2.0: сервер принимает ячейки до r10 (≈0,015 км²), мельче — 422
 const GEO_GOOD_M = 76; // ≈ ребро ячейки r10: точнее этого — дальше не уточняем
 const GEO_MAX_WAIT_MS = 20000; // дольше не ждём: берём лучшую полученную точку
+const GEO_LOW_M = 500; // хуже — обычно Wi-Fi или сотовая сеть без GPS: подсказываем, но ячейку не блокируем
 const ASTANA_CENTER = { lat: 51.128, lon: 71.43 };
 const FAR_KM = 40;
 
@@ -489,8 +490,14 @@ function renderWhereNote() {
     note.classList.add('is-privacy');
     if (accuracy) {
       // Точность GPS — число, а не место: её можно показать. Хуже размера ячейки — говорим честно.
-      note.append(document.createElement('br'), t('geo.accuracy', { m: formatNumber(accuracy) }));
-      if (accuracy > GEO_GOOD_M) note.append(' ', t('geo.coarse'));
+      note.append(document.createElement('br'));
+      if (accuracy > GEO_LOW_M) {
+        note.append(t('geo.lowAccuracy', { m: formatNumber(accuracy) }));
+        note.classList.add('is-warn');
+      } else {
+        note.append(t('geo.accuracy', { m: formatNumber(accuracy) }));
+        if (accuracy > GEO_GOOD_M) note.append(' ', t('geo.coarse'));
+      }
       if (geoWatch !== null) note.append(' ', t('geo.refining'));
     }
     if (state.location.far) {
@@ -603,15 +610,36 @@ function onGeoClick() {
     (err) => {
       stopGeoWatch();
       if (gotFix && err.code !== 1) return renderWhereNote(); // есть точка — оставляем лучшую
-      setWhereMsg(err.code === 1 ? 'geo.denied' : 'geo.unavailable', 'error', { offerPick: true });
+      showGeoFailure(err.code);
     },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
   );
   geoTimer = setTimeout(() => {
     stopGeoWatch();
     if (gotFix) renderWhereNote();
-    else setWhereMsg('geo.unavailable', 'error', { offerPick: true });
+    else showGeoFailure(3); // как TIMEOUT
   }, GEO_MAX_WAIT_MS);
+}
+
+// Разрешение сайту на геопозицию: 'granted' | 'denied' | 'prompt', или null, если браузер не говорит.
+async function geoPermission() {
+  try {
+    return (await navigator.permissions?.query({ name: 'geolocation' }))?.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Включён ли GPS на телефоне, браузер не скажет. Поэтому косвенно: разрешение сайту дано, а точки нет
+// (POSITION_UNAVAILABLE, TIMEOUT или отказ при уже выданном разрешении) — просим проверить настройки телефона.
+// Без Permissions API различаем по коду ошибки: 1 — запрещено, 2 и 3 — не определяется.
+async function showGeoFailure(code) {
+  const { whereMsg, location } = state;
+  const perm = await geoPermission();
+  // Пока ждали ответ, человек мог выбрать ориентир, точку на карте или снова нажать «Моё место».
+  if (state.whereMsg !== whereMsg || state.location !== location || geoWatch !== null) return;
+  const denied = perm === 'denied' || (perm !== 'granted' && code === 1);
+  setWhereMsg(denied ? 'geo.denied' : 'geo.unavailable', 'error', { offerPick: true });
 }
 
 function setWhereMsg(key, kind, { offerPick = false } = {}) {
