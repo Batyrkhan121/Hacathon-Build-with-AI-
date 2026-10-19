@@ -470,6 +470,8 @@ function renderChips() {
 }
 
 function syncRefineOpen() {
+  // v2: «Уточнить» сворачивается и на широком экране (машина времени и фильтры — не на основном экране)
+  if (document.body.classList.contains('v2')) return;
   if (window.matchMedia('(min-width: 900px)').matches) els.refine.open = true;
 }
 

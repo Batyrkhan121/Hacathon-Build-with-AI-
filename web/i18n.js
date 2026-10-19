@@ -8,6 +8,8 @@ const DICT = {
   ru: {
     'app.title': 'Qadam — прогулки по Астане',
     'app.tagline': 'ИИ-помощник для прогулок по Астане',
+    'hero.title': 'Куда пойдём?',
+    'hero.value': '1–3 места рядом: почему туда, сколько идти, открыто ли',
     'app.mock': 'Мок-данные',
     'app.mockTitle': 'Ответ берётся из web/mock/answer_sample.json, а не с сервера',
     'skip': 'К результатам',
@@ -285,6 +287,8 @@ const DICT = {
   kk: {
     'app.title': 'Qadam — Астанада серуен',
     'app.tagline': 'Астанада серуендеуге арналған ЖИ-көмекші',
+    'hero.title': 'Қайда барамыз?',
+    'hero.value': 'Жақын жердегі 1–3 орын: неге барған жөн, қанша жүру керек, ашық па',
     'app.mock': 'Мок-деректер',
     'app.mockTitle': 'Жауап серверден емес, web/mock/answer_sample.json файлынан алынады',
     'skip': 'Нәтижелерге өту',
@@ -561,6 +565,8 @@ const DICT = {
   en: {
     'app.title': 'Qadam — walks in Astana',
     'app.tagline': 'AI walking guide for Astana',
+    'hero.title': 'Where to?',
+    'hero.value': '1–3 places nearby: why go, how far to walk, open or not',
     'app.mock': 'Mock data',
     'app.mockTitle': 'The answer comes from web/mock/answer_sample.json, not from the server',
     'skip': 'Skip to results',

@@ -1880,3 +1880,147 @@ input[type="time"],
     scroll-behavior: auto !important;
   }
 }
+
+/* ================================================================== v2
+   Новый внешний вид поверх текущей вёрстки. Всё — только под body.v2: без класса сайт прежний,
+   откат — убрать class="v2" у <body> в index.html. Палитра — существующие токены; вариант из style.md
+   подставляется переопределением переменных в блоке «.v2 { … }» ниже. */
+
+.v2-only {
+  display: none;
+}
+
+.v2 {
+  /* шкала v2: кегли 13 / 15 / 17 / 21 / 28, отступы 4 / 8 / 12 / 16 / 24 / 32, радиусы 20 / 14 / капсула */
+  --v2-fs-s: 13px;
+  --v2-fs-m: 15px;
+  --v2-fs-l: 17px;
+  --v2-fs-xl: 21px;
+  --v2-fs-hero: 28px;
+  --v2-r-panel: 20px;
+  --v2-r-btn: 14px;
+  --v2-shadow-1: 0 1px 2px rgba(21, 34, 44, 0.06), 0 2px 8px rgba(21, 34, 44, 0.05);
+  --v2-shadow-2: 0 -4px 16px rgba(21, 34, 44, 0.1);
+}
+
+.v2 .v2-only {
+  display: block;
+}
+
+/* --- первый экран: заголовок-вопрос, одна строка ценности, поле и кнопка в одной белой панели */
+.v2 .tagline {
+  display: none; /* ценность говорит строка под заголовком */
+}
+
+.v2 .brand {
+  margin-bottom: 12px;
+}
+
+.v2 .brand h1 {
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .hero {
+  margin: 0 0 16px;
+}
+
+.v2 .hero-title {
+  margin: 0;
+  font-size: var(--v2-fs-hero);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.v2 .hero-value {
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-m);
+  line-height: 1.4;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* Подписи блоков без капса */
+.v2 .label,
+.v2 legend.label {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+/* «Что хотите?» — визуально заголовок-вопрос; подпись поля остаётся для скринридера */
+.v2 .ask > .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Порядок первого экрана: заголовок → панель запроса → сценарии → «Где я» → «Уточнить».
+   form: display: contents — его дети становятся пунктами колонки; DOM и отправка формы прежние. */
+.v2 .controls {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2 .controls > .brand { order: 0; }
+.v2 .controls > .hero { order: 1; }
+.v2 .controls > .ask { display: contents; }
+.v2 .ask > .query-row { order: 2; }
+.v2 .ask > .form-error { order: 3; }
+.v2 .controls > .presets { order: 4; margin-top: 16px; }
+.v2 .ask > .where { order: 5; }
+.v2 .ask > .refine { order: 6; }
+
+.v2 .query-row,
+.v2 .ask .query-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--v2-r-panel);
+  box-shadow: var(--v2-shadow-1);
+}
+
+.v2 .query-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 110, 135, 0.25);
+}
+
+.v2 .query-row textarea {
+  min-height: 52px;
+  padding: 8px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-size: var(--v2-fs-l);
+}
+
+.v2 .query-row textarea:focus-visible {
+  outline: none; /* фокус показывает рамка панели (:focus-within) */
+  box-shadow: none;
+}
+
+.v2 .query-row .btn-primary,
+.v2 .ask .query-row .btn-primary {
+  width: 100%;
+  min-height: 52px;
+  border-radius: var(--v2-r-btn);
+  font-size: var(--v2-fs-l);
+}
+
+/* Телефон: карта на первом экране — не больше 30 % высоты */
+@media (max-width: 899px) {
+  .v2 .map-wrap {
+    height: 30vh;
+    height: 30svh;
+    min-height: 180px;
+  }
+}
