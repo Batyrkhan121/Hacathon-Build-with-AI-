@@ -432,7 +432,9 @@ input:focus-visible {
   border: 1px solid transparent;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal; /* длинные kk-подписи переносятся, а не вылезают за край на 360 px */
+  text-align: center;
+  text-wrap: balance;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
