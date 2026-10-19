@@ -577,7 +577,7 @@ const DICT = {
     'loading.context': 'Taking into account:',
     'query.near': 'Near: {where}',
     'where.change': 'Change',
-    'privacy.line': 'Only a landmark or an area is sent — never your coordinates.',
+    'privacy.line': 'Only a landmark or an area is sent to our server — never your coordinates.',
     'hero.value': '1–3 places nearby: why, how far, open or not',
     'app.mock': 'Mock data',
     'app.mockTitle': 'The answer comes from web/mock/answer_sample.json, not from the server',
