@@ -1193,8 +1193,9 @@ input[type="time"] {
   text-decoration: none;
 }
 
-/* «На карте» / «Маршрут» / «Сайт» — второстепенные ссылки под служебным блоком */
-.card-actions .btn-link {
+/* «На карте» / «Маршрут» / «Сайт» и «Показать на карте» в маршруте — ссылки от края текста, без отступа */
+.card-actions .btn-link,
+.route-foot .btn-link {
   padding-inline: 0;
   margin-right: 12px;
 }
