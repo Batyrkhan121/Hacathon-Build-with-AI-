@@ -25,7 +25,7 @@ from app import pipeline as pipeline_mod
 from app.config import Settings, get_settings
 from app.generate import build_prompt
 from app.llm import LLMUnavailable
-from app.pipeline import Deps, InvalidRequest, UnknownLandmarkError, recommend
+from app.pipeline import TEXTS, Deps, InvalidRequest, UnknownLandmarkError, recommend
 from app.schemas import (
     POI,
     Candidate,
@@ -1446,3 +1446,37 @@ def test_walk_limit_holds_for_graph_minutes(
     ans = recommend(req("кофе", use_llm=False, overrides={"max_walk_min": 5}), graph_deps)
     assert ans.cards and all(c.walk_min > 5 for c in ans.cards)
     assert any("По тротуарам до мест дольше 5 мин" in w for w in ans.warnings)
+
+
+# ------------------- E2: at night, every place over the walking limit -> no walking route
+
+NIGHT_TAXI = {"ru": "лучше на такси", "kk": "такси", "en": "taxi"}
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_night_all_places_over_the_limit_no_route_and_taxi_once(deps: Deps, lang: str) -> None:
+    """E2 live: 02:30, Ginza 29 min and Дастаркан 33 min over the 15-min limit, yet a 6.3 km
+    walking route with 28 crossings was drawn. At night that is bad advice: cards stay,
+    the route goes, the taxi is advised once (not three warnings saying the same)."""
+    ans = recommend(req("куда пойти", use_llm=False, lang=lang,
+                        overrides={"night": True, "max_walk_min": 4}), deps)
+    assert ans.cards and all(c.walk_min > 4 for c in ans.cards)  # straight 5 and 6 min
+    assert ans.route is None
+    taxi = [w for w in ans.warnings if "такси" in w.lower() or "taxi" in w.lower()]
+    assert len(taxi) == 1 and NIGHT_TAXI[lang] in taxi[0].lower() and "4" in taxi[0]
+    assert TEXTS[lang]["night"] not in ans.warnings  # the night tip is refined, not repeated
+
+
+def test_night_with_one_place_within_the_limit_keeps_the_route(deps: Deps) -> None:
+    ans = recommend(req("куда пойти", use_llm=False, overrides={"night": True, "max_walk_min": 5}),
+                    deps)
+    assert any(c.walk_min <= 5 for c in ans.cards) and len(ans.cards) >= 2
+    assert ans.route is not None
+    assert TEXTS["ru"]["night"] in ans.warnings
+
+
+def test_day_all_places_over_the_limit_keeps_the_route(deps: Deps) -> None:
+    ans = recommend(req("куда пойти", use_llm=False, overrides={"max_walk_min": 3}), deps)
+    assert len(ans.cards) >= 2 and all(c.walk_min > 3 for c in ans.cards)  # 4, 5, 6 min
+    assert ans.route is not None
+    assert not any("такси" in w for w in ans.warnings)
