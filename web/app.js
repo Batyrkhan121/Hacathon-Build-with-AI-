@@ -814,7 +814,12 @@ async function init() {
     if (rank === null) return;
     // начало карточки к верху экрана: при «nearest» длинная карточка осталась бы с середины
     view.highlightCard(rank); // подсветка; её прокрутку «nearest» перебивает следующая строка
-    document.getElementById(`card-${rank}`)?.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    const card = document.getElementById(`card-${rank}`);
+    if (!card) return;
+    card.scrollIntoView({ block: 'start', behavior: mapView.reducedMotion() ? 'auto' : 'smooth' });
+    // кнопка прячется вместе с фокусом — переводим его на карточку, а не на body (клавиатура, скринридер)
+    card.setAttribute('tabindex', '-1');
+    card.focus({ preventScroll: true });
   });
   syncRefineOpen();
   window.matchMedia('(min-width: 900px)').addEventListener('change', syncRefineOpen);
