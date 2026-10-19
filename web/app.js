@@ -356,7 +356,11 @@ function scrollMapIntoView(rank) {
 function showBackToCard(rank) {
   state.backRank = rank ?? null;
   els.backToCard.hidden = state.backRank === null;
-  if (state.backRank !== null) els.backToCard.textContent = t('map.backToCard', { n: state.backRank });
+  if (state.backRank === null) return;
+  // стрелка — только визуальная подсказка направления, скринридер читает лишь текст
+  const arrow = Object.assign(document.createElement('span'), { textContent: '↓' });
+  arrow.setAttribute('aria-hidden', 'true');
+  els.backToCard.replaceChildren(arrow, t('map.backToCard', { n: state.backRank }));
 }
 
 function renderPresets() {
