@@ -26,7 +26,7 @@ def test_landmarks_valid(landmarks) -> None:
         assert all(alias == alias.lower() for alias in lm.aliases), lm.id
 
 
-@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json"])
+@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json", "answer_w8.json"])
 def test_mock_answer_valid(name: str) -> None:
     raw = json.loads((ROOT / "web" / "mock" / name).read_text(encoding="utf-8"))
     answer = Answer.model_validate(raw)
