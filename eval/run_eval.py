@@ -86,6 +86,7 @@ class Result:
     search: str | None = None  # "vector" (embed_query returned a vector) | "words" | None
     search_line: str | None = None  # the «поиск: …» line from data_used.filters, verbatim
     route_source: str | None = None  # MiniRoute.path_source: "graph" | "straight"; None = no route
+    wave: int | None = None  # 8 = wave 8 scenario (E13–E18); None = the 16 of the submission
 
 
 Runner = Callable[[RecommendRequest], Outcome]
@@ -475,6 +476,7 @@ def grade(scn: dict[str, Any], out: Outcome, graph_on: bool = True) -> Result:
         latency_ms=out.latency_ms,
         search=search_mode(out),
         search_line=search_line(out),
+        wave=scn.get("wave"),
     )
     if out.error:
         res.failures.append(f"ошибка: {out.error}")
@@ -748,6 +750,16 @@ def search_summary(results: list[Result]) -> str:
     return f"вектор запроса (embed_query) у {vec}, только по словам {words}, неизвестно {unknown}"
 
 
+def group_summary(results: list[Result]) -> str:
+    """«основные 16/16» stays comparable with README, PITCH and the slides; wave 8 apart."""
+    core = [r for r in results if r.wave is None]
+    w8 = [r for r in results if r.wave == 8]
+    parts = [f"основные {sum(r.passed for r in core)}/{len(core)}"]
+    if w8:
+        parts.append(f"волна 8 {sum(r.passed for r in w8)}/{len(w8)}")
+    return ", ".join(parts)
+
+
 def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
     passed = sum(r.passed for r in results)
     lines = [
@@ -755,7 +767,7 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
         "",
         f"- Режим: `{mode}`",
         f"- Запуск: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}",
-        f"- **Итог: {passed}/{len(results)}**",
+        f"- **Итог: {passed}/{len(results)}** ({group_summary(results)})",
         f"- Поиск: {search_summary(results)}",
         f"- Маршруты: {route_summary(results)}",
     ]
@@ -872,6 +884,12 @@ def write_report(
         "mode": mode,
         "passed": sum(r.passed for r in results),
         "total": len(results),
+        "groups": {
+            "core": {"passed": sum(r.passed for r in results if r.wave is None),
+                     "total": sum(r.wave is None for r in results)},
+            "wave8": {"passed": sum(r.passed for r in results if r.wave == 8),
+                      "total": sum(r.wave == 8 for r in results)},
+        },
         "notes": notes,
         "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
         "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
@@ -1166,7 +1184,8 @@ def main(argv: list[str] | None = None) -> int:
     for n in notes:
         print(f"note: {n}")
     print(f"PRIVACY: {privacy_summary(privacy)}")
-    print(f"EVAL {mode}: {passed}/{len(results)} -> {args.out / 'report.md'}")
+    print(f"EVAL {mode}: {passed}/{len(results)} ({group_summary(results)}) "
+          f"-> {args.out / 'report.md'}")
     return 0
 
 

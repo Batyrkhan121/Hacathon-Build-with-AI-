@@ -18,6 +18,9 @@ def mock_answer() -> Answer:
     return Answer.model_validate(json.loads(run_eval.MOCK_PATH.read_text(encoding="utf-8")))
 
 
+W8_IDS = {f"E{i}" for i in range(13, 19)}
+
+
 def test_scenarios_are_22_requests() -> None:
     """16 from the submission (unchanged) + E13–E18 of wave 8; E18 must be a schema 422.
     E12 is the live case example in docs/SCENARIOS.md, not a graded scenario."""
@@ -27,6 +30,7 @@ def test_scenarios_are_22_requests() -> None:
                    + [f"E{i}" for i in range(13, 19)])
     for s in scenarios:
         assert s["expect"], s["id"]
+        assert s.get("wave") == (8 if s["id"] in W8_IDS else None), s["id"]
         if s["expect"].get("reject_required"):
             with pytest.raises(ValidationError):
                 RecommendRequest.model_validate(s["request"])
@@ -44,6 +48,11 @@ def test_mock_mode_writes_reports(tmp_path: Path) -> None:
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "- индекс устарел" in md
     assert f"Итог: {report['passed']}/22" in md
+    # the 16 of the submission stay comparable with README / PITCH / slides
+    assert report["groups"]["core"]["total"] == 16
+    assert report["groups"]["wave8"]["total"] == 6
+    core, w8 = report["groups"]["core"], report["groups"]["wave8"]
+    assert f"основные {core['passed']}/16, волна 8 {w8['passed']}/6" in md
     # the mock answer is a sane walk near EXPO: S1 must pass, kk/en scenarios must not
     by_id = {r["id"]: r for r in report["results"]}
     assert by_id["S1"]["passed"], by_id["S1"]["failures"]
