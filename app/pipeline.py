@@ -870,6 +870,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         summary, by_llm = _template_summary(t, len(cards)), False
     # "open now" never leaks via the summary; model text is checked as model text
     summary = _sanitize_summary(summary, cards, by_llm=by_llm, now=local_time)
+    if by_llm and not summary.strip():  # its only sentence was cut: the template one instead
+        summary = _template_summary(t, len(cards))
 
     answer = Answer(
         request_id=request_id,
