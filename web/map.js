@@ -30,9 +30,9 @@ export function initMap(el) {
   return true;
 }
 
-function stopIcon(rank, ideaSource) {
+function stopIcon(rank, ideaSource, warm = false) {
   return L.divIcon({
-    className: `stop-icon is-${ideaSource}`,
+    className: `stop-icon is-${ideaSource}${warm ? ' is-warm' : ''}`,
     // v2.1 (эталон): золотой шестиугольник с контуром --ink; номер — textContent, без HTML из данных
     html: document.body.classList.contains('v2') ? hexStop(rank) : `<span>${Number(rank)}</span>`,
     iconSize: [30, 34],
@@ -226,7 +226,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   for (const card of answer.cards) {
     const ll = [card.geo.lat, card.geo.lon];
     const marker = L.marker(ll, {
-      icon: stopIcon(card.rank, card.idea_source),
+      icon: stopIcon(card.rank, card.idea_source, Array.isArray(card.tags) && card.tags.includes('indoor')),
       // Цвет метки (золото / лаванда) дублируем словами: «Данные POI» или «Идея ИИ».
       title: markerLabel(card),
       alt: markerLabel(card),

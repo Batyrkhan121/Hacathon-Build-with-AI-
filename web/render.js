@@ -215,6 +215,7 @@ export function renderAnswer(root, answer, ctx) {
     noAi ? h('span', { class: 'pill pill-noai', text: t('answer.noAi') }) : null,
   );
 
+  const warm = renderWarmOffer(answer, ctx);
   const warnings = answer.warnings?.length
     ? h(
         'ul',
@@ -239,11 +240,51 @@ export function renderAnswer(root, answer, ctx) {
       'article',
       { class: 'answer', lang: answer.lang || null },
       head,
+      warm,
       warnings,
       body,
       renderDataUsed(answer, ctx),
       answer.disclaimer ? h('p', { class: 'disclaimer', text: answer.disclaimer }) : null,
     ),
+  );
+}
+
+// 1.3.0, «в тепле»: при морозе — плашка-предложение повторить запрос с меткой warm (разово, без сохранения).
+// Температура и «гулять ок» — из answer.context.weather (может быть null — тогда плашки нет).
+const FROST_C = -10;
+
+function isFrost(weather) {
+  if (!weather || typeof weather.temp_c !== 'number') return false;
+  return weather.temp_c <= FROST_C || (weather.temp_c < 0 && weather.outdoor_ok === false);
+}
+
+function renderWarmOffer(answer, ctx) {
+  const weather = answer.context?.weather;
+  if (!isFrost(weather) || !ctx.onWarm) return null;
+  const req = ctx.request || {};
+  if (req.prefs?.likes?.includes('warm') || req.overrides?.indoor_only) return null; // уже «в тепле»
+  const temp = `${weather.temp_c > 0 ? '+' : weather.temp_c < 0 ? '−' : ''}${Math.abs(Math.round(weather.temp_c))}${' '}°C`;
+  const leg = answer.route?.max_outdoor_leg_min;
+  return h(
+    'div',
+    { class: 'warm-offer', role: 'note' },
+    h('p', { class: 'warm-offer-text', text: t('warm.offer', { temp }) }),
+    leg ? h('p', { class: 'warm-offer-leg', text: t('warm.leg', { min: leg }) }) : null,
+    h('button', { type: 'button', class: 'btn btn-primary warm-offer-btn', onclick: ctx.onWarm }, t('warm.btn')),
+  );
+}
+
+// Тёплая остановка — тег indoor у карточки (нового поля в 1.3.0 нет)
+export function isWarmStop(card) {
+  return Array.isArray(card.tags) && card.tags.includes('indoor');
+}
+
+function warmMark() {
+  return h(
+    'span',
+    { class: 'warm-mark', title: t('warm.mark') },
+    h('span', { class: 'warm-icon', 'aria-hidden': 'true' }),
+    h('span', { class: 'visually-hidden', text: t('warm.mark') }),
   );
 }
 
@@ -375,6 +416,7 @@ function renderRoute(route, byId, ctx, originName) {
             { class: 'tl-name' },
             h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
             h('strong', { text: cardTitle(card) }),
+            isWarmStop(card) ? warmMark() : null,
             h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
           ),
         ),
@@ -441,6 +483,7 @@ function renderCard(card, when, ctx) {
           { class: 'card-title' },
           h('span', { class: 'visually-hidden', text: `${card.rank}. ` }),
           cardTitle(card),
+          isWarmStop(card) ? warmMark() : null,
         ),
         h(
           'p',

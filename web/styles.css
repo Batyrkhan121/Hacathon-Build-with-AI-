@@ -2717,3 +2717,65 @@ body:not(.v2) .submit-row .btn-primary {
 .v2 .route-profile-line {
   font-size: var(--v2-fs-s);
 }
+
+/* «В тепле»: плашка-предложение при морозе */
+.warm-offer {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.warm-offer-text {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.warm-offer-leg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.warm-offer-btn {
+  justify-self: start;
+  min-height: 44px;
+}
+
+/* Значок «в тепле» у тёплой остановки (тег indoor): домик, встроенный SVG */
+.warm-mark {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: -2px;
+}
+
+.warm-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: #b4530a; /* тёплый янтарный, 5,0:1 на белом */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 1 7.4l1 1.2 1-.9V14h4v-4h2v4h4V7.7l1 .9 1-1.2zM11.5 12.5H10.5v-4h-5v4H4.5V6.4L8 3.5l3.5 2.9z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 1 7.4l1 1.2 1-.9V14h4v-4h2v4h4V7.7l1 .9 1-1.2zM11.5 12.5H10.5v-4h-5v4H4.5V6.4L8 3.5l3.5 2.9z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* На карте у тёплой остановки — маленький янтарный кружок с домиком в углу маркера */
+.stop-icon.is-warm {
+  position: relative;
+}
+
+.stop-icon.is-warm::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b4530a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23fff' d='M8 3 3 7.2V13h3.5v-3h3v3H13V7.2z'/%3E%3C/svg%3E") center / 11px no-repeat;
+  box-shadow: 0 0 0 1.5px #fff;
+}

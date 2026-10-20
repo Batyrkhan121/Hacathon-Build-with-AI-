@@ -43,6 +43,7 @@ const state = {
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
   routeProfile: 'fastest', // 1.3.0: fastest | accessible | lit
+  prefs: { likes: [], avoids: [] }, // 1.3.0: «Мои предпочтения» (метки из словаря PrefTag)
   hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
@@ -164,7 +165,24 @@ function whereLabel() {
 
 // ------------------------------------------------------------------ request
 
-function buildRequest(query, useLlm = true) {
+// Разовая поправка запроса (чипы уточнения, «В тепле»): меняет только этот запрос, ничего не сохраняет.
+// patch = { overrides: {...}, likes: [...], avoids: [...] }; метка из likes уходит из avoids и наоборот.
+function mergePrefs(base, patch = {}) {
+  let likes = [...(base?.likes || [])];
+  let avoids = [...(base?.avoids || [])];
+  for (const tag of patch.likes || []) {
+    avoids = avoids.filter((x) => x !== tag);
+    if (!likes.includes(tag)) likes.push(tag);
+  }
+  for (const tag of patch.avoids || []) {
+    if (tag === 'no_bars') continue; // «без баров» — только в likes (контракт 1.3.0)
+    likes = likes.filter((x) => x !== tag);
+    if (!avoids.includes(tag)) avoids.push(tag);
+  }
+  return { likes, avoids };
+}
+
+function buildRequest(query, useLlm = true, patch = {}) {
   const location =
     state.location.type === 'cell' ? { h3_cell: state.location.cell } : { landmark_id: state.location.id };
   const overrides = {};
@@ -179,6 +197,8 @@ function buildRequest(query, useLlm = true) {
     overrides.departure_in_min = state.departure;
   }
   if (state.flags.night) overrides.night = true;
+  Object.assign(overrides, patch.overrides || {});
+  const prefs = mergePrefs(state.prefs, patch);
   return {
     query,
     location,
@@ -188,18 +208,20 @@ function buildRequest(query, useLlm = true) {
     want_route: true,
     use_llm: useLlm,
     route_profile: state.routeProfile,
+    prefs: prefs.likes.length || prefs.avoids.length ? prefs : null,
   };
 }
 
-async function submit({ useLlm = true } = {}) {
-  const query = els.query.value.trim();
+async function submit({ useLlm = true, patch = null } = {}) {
+  // Разовая поправка повторяет прошлый запрос (тот же текст), иначе — текст из поля
+  const query = (patch && state.lastRequest?.query) || els.query.value.trim();
   if (!query) {
     showFormError(t('query.empty'));
     els.query.focus();
     return;
   }
   showFormError('');
-  const body = buildRequest(query, useLlm);
+  const body = buildRequest(query, useLlm, patch || {});
 
   state.inflight?.abort();
   const ctrl = new AbortController();
@@ -325,6 +347,7 @@ function renderAnswer({ redrawMap = true } = {}) {
       submit();
     },
     onEditQuery: () => focusQuery(),
+    onWarm: () => submit({ patch: { likes: ['warm'] } }),
   });
   if (!redrawMap) return;
   const route = answer.route;
