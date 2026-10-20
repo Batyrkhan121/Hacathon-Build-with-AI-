@@ -20,6 +20,8 @@ const FILTER_FLAGS = ['indoor_only'];
 // 1.3.0: словарь меток предпочтений (PrefTag в app/schemas.py); no_bars — только «нравится»
 const PREF_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'no_bars', 'warm', 'night'];
 const PREFS_KEY = 'qadam.prefs.v1';
+const MAX_EXCLUDE = 9; // контракт: exclude_poi_ids до 9 (3 ответа × 3 карточки)
+const MAX_WALK_MIN = 120; // контракт: overrides.max_walk_min ≤ 120
 // 1.3.0: профиль маршрута (request.route_profile); по умолчанию «быстрее»
 const ROUTE_PROFILES = ['fastest', 'accessible', 'lit'];
 const FLAGS = [...MODES, ...FILTER_FLAGS];
@@ -47,6 +49,10 @@ const state = {
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
   routeProfile: 'fastest', // 1.3.0: fastest | accessible | lit
   prefs: { likes: [], avoids: [] }, // 1.3.0: «Мои предпочтения» (метки из словаря PrefTag)
+  // Серия уточнений одного запроса: накопленная разовая поправка (чипы и «В тепле» складываются)
+  // и poi_id всех показанных в серии мест (для «Ещё»). Новый запрос из формы серию сбрасывает.
+  // Нигде не сохраняется.
+  series: { patch: {}, shown: [] },
   hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
@@ -175,7 +181,8 @@ function whereLabel() {
 // ------------------------------------------------------------------ request
 
 // Разовая поправка запроса (чипы уточнения, «В тепле»): меняет только этот запрос, ничего не сохраняет.
-// patch = { overrides: {...}, likes: [...], avoids: [...] }; метка из likes уходит из avoids и наоборот.
+// patch = { overrides: {...}, likes: [...], avoids: [...], exclude: [...] };
+// метка из likes уходит из avoids и наоборот; exclude → exclude_poi_ids (до 9, «Ещё»).
 function mergePrefs(base, patch = {}) {
   let likes = [...(base?.likes || [])];
   let avoids = [...(base?.avoids || [])];
@@ -218,7 +225,20 @@ function buildRequest(query, useLlm = true, patch = {}) {
     use_llm: useLlm,
     route_profile: state.routeProfile,
     prefs: prefs.likes.length || prefs.avoids.length ? prefs : null,
+    exclude_poi_ids: (patch.exclude || []).slice(0, MAX_EXCLUDE),
   };
+}
+
+// Добавить к накопленной поправке серии и повторить последний запрос
+function refine(add) {
+  const p = state.series.patch;
+  state.series.patch = {
+    overrides: { ...(p.overrides || {}), ...(add.overrides || {}) },
+    likes: [...new Set([...(p.likes || []), ...(add.likes || [])])],
+    avoids: [...new Set([...(p.avoids || []), ...(add.avoids || [])])],
+    exclude: add.exclude || p.exclude || [],
+  };
+  submit({ patch: state.series.patch });
 }
 
 async function submit({ useLlm = true, patch = null } = {}) {
@@ -230,6 +250,8 @@ async function submit({ useLlm = true, patch = null } = {}) {
     return;
   }
   showFormError('');
+  // Новый запрос из формы (без поправки) начинает новую серию уточнений
+  if (!patch) state.series = { patch: {}, shown: [] };
   const body = buildRequest(query, useLlm, patch || {});
 
   state.inflight?.abort();
@@ -249,6 +271,10 @@ async function submit({ useLlm = true, patch = null } = {}) {
     if (state.inflight !== ctrl) return;
     state.lastRequest = body;
     state.lastAnswer = answer;
+    // Места этого ответа — в список показанных в серии (для «Ещё»), без повторов
+    for (const c of answer.cards) {
+      if (c.poi_id && !state.series.shown.includes(c.poi_id)) state.series.shown.push(c.poi_id);
+    }
     state.lastError = null;
     renderAnswer();
     setStatus(
@@ -356,10 +382,12 @@ function renderAnswer({ redrawMap = true } = {}) {
       submit();
     },
     onEditQuery: () => focusQuery(),
-    onWarm: () => submit({ patch: { likes: ['warm'] } }),
-    // Чипы уточнения под ответом: разовый повтор запроса, ничего не сохраняется
-    onCloser: (maxWalk) => submit({ patch: { overrides: { max_walk_min: maxWalk } } }),
-    onNoCafe: () => submit({ patch: { avoids: ['coffee'] } }),
+    onWarm: () => refine({ likes: ['warm'] }),
+    // Чипы уточнения под ответом: разовый повтор запроса, поправки серии складываются, ничего не сохраняется
+    onCloser: (maxWalk) => refine({ overrides: { max_walk_min: Math.min(MAX_WALK_MIN, maxWalk) } }),
+    onNoCafe: () => refine({ avoids: ['coffee'] }),
+    // «Ещё»: те же условия, без мест, уже показанных в этой серии
+    onMore: state.series.shown.length < MAX_EXCLUDE ? () => refine({ exclude: [...state.series.shown] }) : null,
   });
   if (!redrawMap) return;
   const route = answer.route;

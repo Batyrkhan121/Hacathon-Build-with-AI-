@@ -280,9 +280,16 @@ function renderWarmOffer(answer, ctx) {
 // 1.3.0, событие: «сегодня в 19:00–21:00», площадка (address), кнопка «Источник» (source_url, только https).
 // «Идёт сейчас» — только при starts_at ≤ сейчас < ends_at; «сейчас» — момент запроса (context.local_time).
 // Часы работы у события не показываем: вместо них — время события.
+const ASTANA_OFFSET_MS = 5 * 3600 * 1000; // Астана = UTC+5
+
 function localParts(iso) {
-  // ISO с +05:00: дата и время Астаны берём прямо из строки, без пересчёта часовых поясов
-  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+  // Переводим момент в UTC+5 (строка может прийти с любым смещением), а не режем ISO-строку
+  const d = new Date(Date.parse(iso) + ASTANA_OFFSET_MS);
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
+    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
+  };
 }
 
 function dayDiff(dateA, dateB) {
@@ -344,13 +351,13 @@ function renderEventBlock(card, ctx) {
   );
 }
 
-// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min, «без кафе» → prefs.avoids coffee.
-// Это разовый повтор запроса, без сохранения. «Ещё» (исключить показанные места) в 1.3.0 не выражается.
+// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min (≤ 120), «без кафе» → prefs.avoids coffee,
+// «ещё» → exclude_poi_ids (показанные в серии места). Разовый повтор запроса, поправки складываются, без сохранения.
 function renderRefineChips(answer, ctx) {
   if (!answer.cards.length || !ctx.onCloser) return null;
   const req = ctx.request || {};
   const maxWalk = Math.max(...answer.cards.map((c) => c.walk_min || 0));
-  const closer = Math.max(5, Math.round(maxWalk * 0.6));
+  const closer = Math.min(120, Math.max(5, Math.round(maxWalk * 0.6)));
   const chips = [];
   if (maxWalk > 5 && closer < maxWalk) {
     chips.push(
@@ -359,6 +366,10 @@ function renderRefineChips(answer, ctx) {
   }
   if (!req.prefs?.avoids?.includes('coffee')) {
     chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
+  }
+  // «Ещё» (exclude_poi_ids): скрыт, когда в серии показано уже 9 мест
+  if (ctx.onMore) {
+    chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onMore }, t('refineChip.more')));
   }
   if (!chips.length) return null;
   return h(
@@ -457,6 +468,8 @@ function hasProfileFacts(route) {
 }
 
 const pct = (x) => Math.round((x || 0) * 100);
+// Доля «освещено» — вниз, как у CORE: «нет данных» не выдаём за «освещено»
+const pctFloor = (x) => Math.floor((x || 0) * 100 + 1e-9);
 
 // 1.3.0, итог маршрута одной строкой без точек-разделителей: «без ступенек, освещено 78 % по данным OSM,
 // нет данных 15 %». Все числа — из ответа (их считает код на сервере). «Без ступенек» — только по графу
@@ -477,7 +490,7 @@ function renderProfileLine(route, ctx) {
     if (!graph || (route.unknown_lit_share ?? 1) >= 0.995) {
       parts.push(t('route.litNoData'));
     } else {
-      parts.push(t('route.litShare', { lit: pct(route.lit_share) }));
+      parts.push(t('route.litShare', { lit: pctFloor(route.lit_share) }));
       if (pct(route.unknown_lit_share) > 0) parts.push(t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }));
     }
   }
