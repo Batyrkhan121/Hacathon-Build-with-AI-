@@ -11,13 +11,14 @@ Flow: pipeline -> data/processed/poi.jsonl (POI) -> store/retrieval (Candidate)
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.3.0"
 # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10;
-# 1.3.0 (wave 8): route_profile and prefs in the request, route profile facts, event cards
+# 1.3.0 (wave 8): route_profile, prefs and exclude_poi_ids in the request, route profile facts,
+# event cards, crossing kind unknown
 MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
@@ -106,6 +107,8 @@ PREF_LABELS_RU: dict[str, str] = {
     "night": "ночные",
 }
 MAX_PREFS = 8
+MAX_EXCLUDE = 9  # «Ещё»: places already shown in this series (3 answers × 3 cards)
+PoiId = Annotated[str, Field(pattern=r"^[a-z_]+:[A-Za-z0-9_./-]+$", max_length=200)]  # as POI.id
 
 
 class GeoPoint(BaseModel):
@@ -246,6 +249,15 @@ class RecommendRequest(BaseModel):
     # 1.3.0, optional (1.2.0 requests stay valid):
     route_profile: RouteProfile = "fastest"
     prefs: UserPrefs | None = Field(default=None, repr=False)  # repr=False: not in logged reprs
+    # «Ещё»: do not show these places again (poi_id of cards shown in this series, events too).
+    # Per request only, never stored; not logged together with the cell or the query.
+    exclude_poi_ids: list[PoiId] = Field(default_factory=list, max_length=MAX_EXCLUDE, repr=False)
+
+    @model_validator(mode="after")
+    def _unique_excludes(self) -> RecommendRequest:
+        if len(set(self.exclude_poi_ids)) != len(self.exclude_poi_ids):
+            raise ValueError("duplicate ids in exclude_poi_ids")
+        return self
 
 
 class QueryIntent(BaseModel):
