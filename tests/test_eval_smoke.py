@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas import Answer, RecommendRequest
 from eval import run_eval
@@ -17,13 +18,20 @@ def mock_answer() -> Answer:
     return Answer.model_validate(json.loads(run_eval.MOCK_PATH.read_text(encoding="utf-8")))
 
 
-def test_scenarios_are_16_valid_requests() -> None:
+def test_scenarios_are_22_requests() -> None:
+    """16 from the submission (unchanged) + E13–E18 of wave 8; E18 must be a schema 422.
+    E12 is the live case example in docs/SCENARIOS.md, not a graded scenario."""
     scenarios = run_eval.load_scenarios()
     ids = [s["id"] for s in scenarios]
-    assert ids == [f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 12)]
+    assert ids == ([f"S{i}" for i in range(1, 6)] + [f"E{i}" for i in range(1, 12)]
+                   + [f"E{i}" for i in range(13, 19)])
     for s in scenarios:
-        RecommendRequest.model_validate(s["request"])
         assert s["expect"], s["id"]
+        if s["expect"].get("reject_required"):
+            with pytest.raises(ValidationError):
+                RecommendRequest.model_validate(s["request"])
+        else:
+            RecommendRequest.model_validate(s["request"])
 
 
 def test_mock_mode_writes_reports(tmp_path: Path) -> None:
@@ -31,11 +39,11 @@ def test_mock_mode_writes_reports(tmp_path: Path) -> None:
     assert code == 0
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["mode"] == "mock"
-    assert report["total"] == 16
+    assert report["total"] == 22
     assert {r["id"] for r in report["results"]} >= {"S1", "E10"}
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "- индекс устарел" in md
-    assert f"Итог: {report['passed']}/16" in md
+    assert f"Итог: {report['passed']}/22" in md
     # the mock answer is a sane walk near EXPO: S1 must pass, kk/en scenarios must not
     by_id = {r["id"]: r for r in report["results"]}
     assert by_id["S1"]["passed"], by_id["S1"]["failures"]
@@ -476,7 +484,7 @@ def test_graph_loop_route_ends_at_start(mock_answer: Answer) -> None:
 def test_report_counts_graph_routes(tmp_path: Path) -> None:
     run_eval.main(["--mock", "--out", str(tmp_path)])
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
-    assert report["routes"] == {"graph": 0, "straight": 16}
+    assert report["routes"] == {"graph": 0, "straight": 21}  # E18 is a 422, no answer
     assert "Маршруты: по графу тротуаров 0" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
 
@@ -518,9 +526,12 @@ def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) ->
 # ------------------------------------------------------------- privacy probes (1.2.0)
 
 
-def test_privacy_probes_schema_rejects_r11_and_raw_coords() -> None:
+PROBE_IDS = ["r11", "raw_coords", "prefs_unknown", "prefs_free_text", "prefs_extra"]
+
+
+def test_privacy_probes_schema_rejects_all() -> None:
     probes = run_eval.run_privacy_probes(None)
-    assert {p["id"] for p in probes} == {"r11", "raw_coords"}
+    assert [p["id"] for p in probes] == PROBE_IDS
     assert all(p["passed"] and p["got"] == "422" for p in probes), probes
 
 
@@ -535,13 +546,175 @@ def test_privacy_probes_over_http() -> None:
     probes = {p["id"]: p for p in run_eval.run_privacy_probes(post)}
     assert not probes["r11"]["passed"] and probes["r11"]["got"] == "200"
     assert probes["raw_coords"]["passed"]
-    assert len(sent) == 2
-    assert "1/2 отклонены" in run_eval.privacy_summary(list(probes.values()))
+    assert not probes["prefs_unknown"]["passed"]
+    assert len(sent) == 5
+    assert "1/5 отклонены" in run_eval.privacy_summary(list(probes.values()))
+
+
+def test_privacy_probe_fails_when_422_echoes_the_input() -> None:
+    def post(body: dict) -> tuple[int, str]:
+        prefs = body.get("prefs") or {}
+        return 422, json.dumps({"detail": f"bad tag {prefs.get('likes')}"})
+
+    probes = {p["id"]: p for p in run_eval.run_privacy_probes(post)}
+    assert not probes["prefs_unknown"]["passed"]
+    assert "повторяет ввод" in probes["prefs_unknown"]["got"]
+    assert probes["r11"]["passed"]  # the fixed text does not contain the cell
 
 
 def test_report_has_privacy_block(tmp_path: Path) -> None:
     run_eval.main(["--mock", "--out", str(tmp_path)])
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
-    assert [p["id"] for p in report["privacy"]] == ["r11", "raw_coords"]
+    assert [p["id"] for p in report["privacy"]] == PROBE_IDS
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "Приватность: 2/2 отклонены с 422" in md
+    assert "Приватность: 5/5 отклонены с 422" in md
+
+
+# ------------------------------------------------------------ wave 8 (contract 1.3.0)
+
+
+def _routed(ans: Answer, **fields) -> Answer:
+    raw = ans.model_dump(mode="json")
+    raw["route"].update(fields)
+    return Answer.model_validate(raw)
+
+
+def test_route_profile_and_facts_expectations(mock_answer: Answer) -> None:
+    exp = {"route_profile": "accessible", "route_facts": True}
+    fails = check_expect(mock_answer, exp)
+    assert any("ожидали accessible" in f for f in fails)
+    assert any("нет фактов 1.3.0" in f for f in fails)
+    ok = _routed(mock_answer, profile="accessible", lit_share=0, unlit_share=0,
+                 unknown_lit_share=1, kerb_lowered=0, kerb_unknown=0, max_outdoor_leg_min=7)
+    assert check_expect(ok, exp) == []
+    assert check_invariants(ok) == []
+
+
+def test_route_facts_must_agree_with_route(mock_answer: Answer) -> None:
+    bad = _routed(mock_answer, lit_share=0.5, unlit_share=0, unknown_lit_share=0.5,
+                  max_outdoor_leg_min=30, kerb_lowered=1, kerb_unknown=0)
+    fails = " ".join(check_invariants(bad))
+    assert "ожидали 0/0/1" in fails  # straight segments carry no lit data
+    assert "max_outdoor_leg_min 30" in fails
+    assert "больше переходов" in fails  # a straight route has no crossings
+
+
+def test_accessible_with_steps_needs_reason_and_lit_is_not_safety(mock_answer: Answer) -> None:
+    bad = _routed(mock_answer, profile="accessible", steps_count=2,
+                  note="Освещённый и безопасный путь")
+    fails = " ".join(check_invariants(bad))
+    assert "в note нет причины" in fails
+    assert "как безопасность" in fails
+    ok = _routed(mock_answer, profile="accessible", steps_count=2,
+                 note="Без ступенек пути нет: на маршруте 2 лестницы")
+    assert check_invariants(ok) == []
+
+
+def test_warm_expectations(mock_answer: Answer) -> None:
+    exp = {"max_outdoor_leg_min": 5, "indoor_cards_min": 3}
+    fails = check_expect(_routed(mock_answer, max_outdoor_leg_min=7), exp)
+    assert any("на улице подряд 7 мин" in f for f in fails)
+    assert any("мест в помещении 2 < 3" in f for f in fails)  # the park is outdoors
+
+
+def _event(ans: Answer, **fields) -> Answer:
+    raw = ans.model_dump(mode="json")
+    raw["cards"][0].update({"kind": "event", "facts_sources": ["manual"],
+                            "source_url": "https://example.org/afisha"})
+    raw["cards"][0].update(fields)
+    raw["route"] = None
+    return Answer.model_validate(raw)
+
+
+def test_event_cards(mock_answer: Answer) -> None:
+    # mock local_time is 20.10 15:30
+    ok = _event(mock_answer, starts_at="2026-10-20T19:00:00+05:00")
+    assert check_invariants(ok) == []
+    assert check_expect(ok, {"event_required": True}) == []
+    assert check_expect(mock_answer, {"event_required": True}) == ["нет карточки события"]
+    past = _event(mock_answer, starts_at="2026-10-20T10:00:00+05:00",
+                  ends_at="2026-10-20T12:00:00+05:00")
+    assert any("уже закончилось" in f for f in check_invariants(past))
+    yesterday = _event(mock_answer, starts_at="2026-10-19T19:00:00+05:00")
+    assert any("раньше запроса" in f for f in check_invariants(yesterday))
+    live = _event(mock_answer, starts_at="2026-10-20T19:00:00+05:00",
+                  why="Концерт идёт сейчас, успеете.")
+    assert any("идёт сейчас" in f for f in check_invariants(live))
+    on_now = _event(mock_answer, starts_at="2026-10-20T15:00:00+05:00",
+                    ends_at="2026-10-20T17:00:00+05:00", why="Выставка идёт сейчас.")
+    assert check_invariants(on_now) == []
+    no_manual = _event(mock_answer, starts_at="2026-10-20T19:00:00+05:00",
+                       facts_sources=["osm"])
+    assert any("ожидали manual" in f for f in check_invariants(no_manual))
+
+
+def test_prefs_shift(mock_answer: Answer) -> None:
+    spec = {"likes_categories": ["museum", "gallery"], "avoid_categories": ["mall"]}
+    base = mock_answer  # museum, park, mall: score 0
+    better = mock_answer.model_copy(deep=True)
+    better.cards[2].category = "gallery"  # mall gone: score 2
+    assert run_eval.check_prefs_shift(better, base, spec) == []
+    assert "не сдвинули" in run_eval.check_prefs_shift(base, base, spec)[0]
+    assert run_eval.check_prefs_shift(better, None, spec) == ["нет ответа без prefs для сравнения"]
+    all_liked = {"likes_categories": ["museum", "park", "mall"]}
+    assert "не различает" in run_eval.check_prefs_shift(base, base, all_liked)[0]
+
+
+def test_run_all_sends_baseline_without_prefs(mock_answer: Answer) -> None:
+    seen: list[RecommendRequest] = []
+
+    def runner(req: RecommendRequest) -> Outcome:
+        seen.append(req)
+        return Outcome(answer=mock_answer)
+
+    scn = {"id": "X", "title": "x", "request": {
+        "query": "гулять", "location": {"landmark_id": "expo"},
+        "prefs": {"likes": ["museums"]}},
+        "expect": {"prefs_shift": {"likes_categories": ["gallery"]}}}
+    [res] = run_eval.run_all([scn], runner)
+    assert [r.prefs is not None for r in seen] == [True, False]
+    assert any("не сдвинули" in f for f in res.failures)
+
+
+def test_prefs_in_log_with_place_is_caught() -> None:
+    req = {"query": "гулять рядом", "location": {"landmark_id": "expo"},
+           "prefs": {"likes": ["museums"], "avoids": ["coffee"]}}
+    ok = ["recommend id=ab12 res=lm cards=3 ms=40", "prefs: likes=1 avoids=1"]
+    assert run_eval.check_prefs_not_logged(ok, req) == []
+    assert run_eval.check_prefs_not_logged(["recommend landmark=expo prefs=museums"], req)
+    assert run_eval.check_prefs_not_logged(["query='гулять рядом' tags=coffee"], req)
+    assert run_eval.check_prefs_not_logged(None, req) == []  # --url: logs not visible
+
+
+def test_capture_logs_sees_info_records() -> None:
+    import logging
+
+    with run_eval.capture_logs() as lines:
+        logging.getLogger("qadam.test").info("recommend id=%s", "x1")
+    assert lines == ["recommend id=x1"]
+
+
+def test_reject_required_scenario(mock_answer: Answer) -> None:
+    scn = {"id": "X", "title": "x", "request": {
+        "query": "кофе", "location": {"landmark_id": "expo"}, "prefs": {"likes": ["history"]}},
+        "expect": {"reject_required": True, "reject_body_forbid": ["history"]}}
+
+    def answer(req: RecommendRequest) -> Outcome:
+        return Outcome(answer=mock_answer)
+
+    [res] = run_eval.run_all([scn], answer)
+    assert res.passed, res.failures  # in-process: the schema rejection is the 422
+    sent: list[dict] = []
+
+    def raw_post(body: dict) -> tuple[int, str]:
+        sent.append(body)
+        return 422, '{"detail":[{"msg":"Неверный формат запроса."}]}'
+
+    [res] = run_eval.run_all([scn], answer, raw_post=raw_post)
+    assert res.passed and sent[0]["prefs"] == {"likes": ["history"]}
+    [res] = run_eval.run_all([scn], answer, raw_post=lambda body: (422, "unknown tag history"))
+    assert any("повторяет ввод" in f for f in res.failures)
+    [res] = run_eval.run_all([scn], answer, raw_post=lambda body: (200, "{}"))
+    assert not res.passed
+    answered = grade(scn, Outcome(answer=mock_answer))
+    assert "ожидали 422, а пришёл ответ" in answered.failures

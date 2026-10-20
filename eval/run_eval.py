@@ -19,12 +19,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import math
 import re
 import statistics
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +48,12 @@ HOURS_MARKERS = ("нет данных", "не подтвержд", "провер
                  "дерек жоқ", "тексеріңіз")
 KK_LETTERS = set("әғқңөұүһі")
 SENTENCE_END = re.compile(r"[.!?…]+(?:\s|$)")
+# 1.3.0: lit=yes is OSM data, not a safety promise; an accessible route with steps says why
+SAFETY_WORDS = ("безопасн", "safe", "қауіпсіз")
+STEPS_MARKERS = ("ступен", "лестниц", "step", "stair", "баспалдақ")
+LIVE_MARKERS = ("идёт сейчас", "идет сейчас", "уже идёт", "уже идет", "happening now",
+                "on now", "қазір өтіп")
+PREFS_LOG_MARKERS = ("prefs", "likes", "avoids")
 
 
 # --------------------------------------------------------------------- outcomes
@@ -60,6 +68,9 @@ class Outcome:
     error: str | None = None  # crash, 5xx, invalid JSON — always a failure
     latency_ms: int = 0
     search: str | None = None  # "vector" | "words"; None = unknown (see search_mode)
+    baseline: Answer | None = None  # the same request without prefs (expect.prefs_shift)
+    log_lines: list[str] | None = None  # in-process only: log records written during the run
+    reject_body: str | None = None  # --url only: the 422 body (must not echo the input)
 
 
 @dataclass
@@ -141,6 +152,98 @@ def check_invariants(ans: Answer) -> list[str]:
     if ans.route is not None and not set(ans.route.stop_ids) <= set(ids):
         fails.append("маршрут ведёт в места не из карточек")
     fails += check_graph_route(ans)
+    fails += check_route_facts(ans)
+    fails += check_event_cards(ans)
+    return fails
+
+
+# ------------------------------------------------------ wave 8 (contract 1.3.0)
+
+
+def check_route_facts(ans: Answer) -> list[str]:
+    """1.3.0 route facts, when present, must agree with the route itself."""
+    route = ans.route
+    if route is None:
+        return []
+    fails: list[str] = []
+    shares = (route.lit_share, route.unlit_share, route.unknown_lit_share)
+    if route.path_source == "straight" and route.unknown_lit_share is not None \
+            and route.unknown_lit_share < 0.98:
+        fails.append(f"прямые отрезки, а доли освещённости {shares}, ожидали 0/0/1")
+    if route.max_outdoor_leg_min is not None and route.legs:
+        longest = max(leg.walk_min for leg in route.legs)
+        if route.max_outdoor_leg_min > longest:
+            fails.append(f"max_outdoor_leg_min {route.max_outdoor_leg_min} > самого длинного "
+                         f"отрезка {longest} мин")
+    if route.kerb_lowered is not None and route.kerb_unknown is not None \
+            and len(route.crossings) < 50 \
+            and route.kerb_lowered + route.kerb_unknown > len(route.crossings):
+        fails.append(f"бордюров {route.kerb_lowered}+{route.kerb_unknown} больше переходов "
+                     f"{len(route.crossings)}")
+    note = route.note.lower()
+    if route.profile == "accessible" and route.steps_count > 0 \
+            and not any(m in note for m in STEPS_MARKERS):
+        fails.append(f"без ступенек, но ступеней {route.steps_count}, а в note нет причины")
+    if any(w in note for w in SAFETY_WORDS):
+        fails.append(f"в note маршрута освещённость подана как безопасность: «{route.note[:80]}»")
+    return fails
+
+
+def check_event_cards(ans: Answer) -> list[str]:
+    """Event cards: source «manual», not past, «идёт сейчас» only while it is on."""
+    now = ans.context.local_time
+    fails: list[str] = []
+    for c in ans.cards:
+        if c.kind != "event" or c.starts_at is None:
+            continue
+        if "manual" not in c.facts_sources:
+            fails.append(f"{c.poi_id}: у события facts_sources {c.facts_sources}, ожидали manual")
+        if c.ends_at is not None and c.ends_at <= now:
+            fails.append(f"{c.poi_id}: событие уже закончилось ({c.ends_at:%d.%m %H:%M})")
+        if c.ends_at is None and c.starts_at.astimezone(now.tzinfo).date() < now.date():
+            fails.append(f"{c.poi_id}: событие было {c.starts_at:%d.%m}, раньше запроса")
+        on_now = c.ends_at is not None and c.starts_at <= now < c.ends_at
+        text = f"{_card_text(c)} {c.open_note}".lower()
+        if not on_now and any(m in text for m in LIVE_MARKERS):
+            fails.append(f"{c.poi_id}: «идёт сейчас», хотя starts_at–ends_at этого не дают")
+    return fails
+
+
+def _prefs_score(ans: Answer, likes: list[str], avoids: list[str]) -> int:
+    return sum((c.category in likes) - (c.category in avoids) for c in ans.cards)
+
+
+def check_prefs_shift(ans: Answer, base: Answer | None, spec: dict[str, Any]) -> list[str]:
+    """Prefs must change the pick: more cards in liked categories, fewer in avoided ones,
+    than the same request without prefs."""
+    if base is None:
+        return ["нет ответа без prefs для сравнения"]
+    likes, avoids = spec.get("likes_categories", []), spec.get("avoid_categories", [])
+    got, was = _prefs_score(ans, likes, avoids), _prefs_score(base, likes, avoids)
+    if got > was:
+        return []
+    cats = [c.category for c in ans.cards]
+    base_cats = [c.category for c in base.cards]
+    if was == len(base.cards) and base.cards:
+        return [f"сценарий не различает: и без prefs все карточки по вкусу ({base_cats})"]
+    return [f"prefs не сдвинули подбор: с prefs {cats}, без {base_cats}"]
+
+
+def check_prefs_not_logged(lines: list[str] | None, req: dict[str, Any]) -> list[str]:
+    """No log record may carry prefs together with the cell, the landmark or the query."""
+    if lines is None:
+        return []  # --url / mock: server logs are not visible to eval
+    prefs = req.get("prefs") or {}
+    tags = [t for t in (*prefs.get("likes", []), *prefs.get("avoids", []))]
+    loc = req.get("location") or {}
+    where = [v for v in (loc.get("h3_cell"), loc.get("landmark_id"), req.get("query")) if v]
+    fails = []
+    for line in lines:
+        low = line.lower()
+        has_prefs = any(m in low for m in PREFS_LOG_MARKERS) or any(
+            re.search(rf"\b{re.escape(t)}\b", low) for t in tags)
+        if has_prefs and any(w.lower() in low for w in where):
+            fails.append(f"prefs в логе вместе с местом или запросом: «{line[:80]}»")
     return fails
 
 
@@ -297,6 +400,29 @@ def check_expect(ans: Answer, exp: dict[str, Any], graph_on: bool = True) -> lis
         text = " ".join([ans.summary, *ans.warnings]).lower()
         if not any(s.lower() in text for s in exp["text_any"]):
             fails.append(f"в summary/warnings нет ни одного из {exp['text_any']}")
+    # 1.3.0: route profile, route facts, «в тепле», events
+    if "route_profile" in exp:
+        if ans.route is None:
+            fails.append(f"нет маршрута: профиль {exp['route_profile']} не проверить")
+        elif ans.route.profile != exp["route_profile"]:
+            fails.append(f"маршрут {ans.route.profile}, ожидали {exp['route_profile']}")
+    if exp.get("route_facts") and ans.route is not None:
+        r = ans.route
+        missing = [name for name, v in (
+            ("доли освещённости", r.lit_share), ("бордюры", r.kerb_lowered),
+            ("max_outdoor_leg_min", r.max_outdoor_leg_min)) if v is None]
+        if missing:
+            fails.append(f"в маршруте нет фактов 1.3.0: {', '.join(missing)}")
+    if "max_outdoor_leg_min" in exp and ans.route is not None:
+        got = ans.route.max_outdoor_leg_min
+        if got is None or got > exp["max_outdoor_leg_min"]:
+            fails.append(f"на улице подряд {got} мин, ожидали ≤ {exp['max_outdoor_leg_min']}")
+    if "indoor_cards_min" in exp:
+        indoor = sum("indoor" in c.tags for c in ans.cards)
+        if indoor < exp["indoor_cards_min"]:
+            fails.append(f"мест в помещении {indoor} < {exp['indoor_cards_min']}")
+    if exp.get("event_required") and not any(c.kind == "event" for c in ans.cards):
+        fails.append("нет карточки события")
     # ranking probes (eval/probes.yaml, T70): what comes first matters, not just what is there
     top = ans.cards[0] if ans.cards else None
     if "top1_categories_any" in exp and top is not None:
@@ -354,8 +480,12 @@ def grade(scn: dict[str, Any], out: Outcome, graph_on: bool = True) -> Result:
         res.failures.append(f"ошибка: {out.error}")
         return res
     if out.rejected:
-        if not exp.get("reject_ok"):
+        if not (exp.get("reject_ok") or exp.get("reject_required")):
             res.failures.append("запрос отклонён (422), а ожидали ответ")
+        echoed = [s for s in exp.get("reject_body_forbid", [])
+                  if out.reject_body is not None and s.lower() in out.reject_body.lower()]
+        if echoed:
+            res.failures.append(f"ответ 422 повторяет ввод: {echoed}")
         res.passed = not res.failures
         return res
     ans = out.answer
@@ -363,12 +493,18 @@ def grade(scn: dict[str, Any], out: Outcome, graph_on: bool = True) -> Result:
     res.cards = len(ans.cards)
     res.generation = ans.data_used.generation
     res.route_source = ans.route.path_source if ans.route is not None else None
-    if exp.get("reject_ok"):
+    if exp.get("reject_required"):
+        res.failures.append("ожидали 422, а пришёл ответ")
+    elif exp.get("reject_ok"):
         if ans.cards or not ans.warnings:
             res.failures.append("ожидали 422 или 0 карточек с понятным предупреждением")
     else:
         res.failures += check_invariants(ans)
         res.failures += check_expect(ans, exp, graph_on)
+        if "prefs_shift" in exp:
+            res.failures += check_prefs_shift(ans, out.baseline, exp["prefs_shift"])
+        if scn["request"].get("prefs"):
+            res.failures += check_prefs_not_logged(out.log_lines, scn["request"])
     res.passed = not res.failures
     return res
 
@@ -428,16 +564,46 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
     def run(req: RecommendRequest) -> Outcome:
         got_vector.clear()
         t0 = time.perf_counter()
-        try:
-            ans = recommend(req, deps)
-            return Outcome(answer=ans, latency_ms=_ms(t0),
-                           search="vector" if any(got_vector) else "words")
-        except (KeyError, ValueError, ValidationError):
-            return Outcome(rejected=True, latency_ms=_ms(t0))
-        except Exception as exc:  # noqa: BLE001 — a crash is a failed scenario
-            return Outcome(error=f"{type(exc).__name__}: {exc}", latency_ms=_ms(t0))
+        with capture_logs() as lines:
+            try:
+                ans = recommend(req, deps)
+                out = Outcome(answer=ans, latency_ms=_ms(t0),
+                              search="vector" if any(got_vector) else "words")
+            except (KeyError, ValueError, ValidationError):
+                out = Outcome(rejected=True, latency_ms=_ms(t0))
+            except Exception as exc:  # noqa: BLE001 — a crash is a failed scenario
+                out = Outcome(error=f"{type(exc).__name__}: {exc}", latency_ms=_ms(t0))
+        out.log_lines = lines
+        return out
 
     return run, notes
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, sink: list[str]) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.sink = sink
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.sink.append(record.getMessage())
+        except Exception:  # noqa: BLE001 — a bad log call must not fail the scenario
+            self.sink.append(str(record.msg))
+
+
+@contextmanager
+def capture_logs() -> Iterator[list[str]]:
+    """Every log record written during one in-process request, INFO included."""
+    lines: list[str] = []
+    root = logging.getLogger()
+    handler, level = _ListHandler(lines), root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        yield lines
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
 
 
 def url_runner(
@@ -472,7 +638,8 @@ def url_runner(
         notes.append("LLM на сервере выключена: ответы шаблонные")
 
     def run(req: RecommendRequest) -> Outcome:
-        body = req.model_dump(mode="json", exclude_none=True)
+        # exclude_unset: fields the scenario did not set keep the server's defaults
+        body = req.model_dump(mode="json", exclude_none=True, exclude_unset=True)
         t0 = time.perf_counter()
         try:
             resp = http.post(f"{base}/api/recommend", json=body)
@@ -480,7 +647,7 @@ def url_runner(
             return Outcome(error=f"сеть: {type(exc).__name__}", latency_ms=_ms(t0))
         ms = _ms(t0)
         if resp.status_code == 422:
-            return Outcome(rejected=True, latency_ms=ms)
+            return Outcome(rejected=True, latency_ms=ms, reject_body=resp.text)
         if resp.status_code != 200:
             return Outcome(error=f"HTTP {resp.status_code}", latency_ms=ms)
         try:
@@ -498,7 +665,12 @@ def _ms(t0: float) -> int:
 # ----------------------------------------------------------------------- report
 
 
-def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = False) -> list[Result]:
+def run_all(
+    scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = False,
+    raw_post: RawPostFn | None = None,
+) -> list[Result]:
+    """raw_post (--url): bodies the schema rejects (expect.reject_required) go to the server
+    as is, so the 422 comes from the API; in-process the schema rejection is that 422."""
     outcomes: list[Outcome] = []
     for scn in scenarios:
         data = dict(scn["request"])
@@ -507,9 +679,16 @@ def run_all(scenarios: list[dict[str, Any]], runner: Runner, no_llm: bool = Fals
         try:
             req = RecommendRequest.model_validate(data)
         except ValidationError as exc:
-            outcomes.append(Outcome(error=f"сценарий не по схеме: {exc}"))
+            if (scn.get("expect") or {}).get("reject_required"):
+                outcomes.append(_raw_outcome(raw_post, data))
+            else:
+                outcomes.append(Outcome(error=f"сценарий не по схеме: {exc}"))
             continue
-        outcomes.append(runner(req))
+        out = runner(req)
+        if "prefs_shift" in (scn.get("expect") or {}) and out.answer is not None:
+            base = runner(req.model_copy(update={"prefs": None}))
+            out.baseline = base.answer
+        outcomes.append(out)
     graph_on = graph_used(outcomes)
     return [grade(scn, out, graph_on) for scn, out in zip(scenarios, outcomes, strict=True)]
 
@@ -597,23 +776,52 @@ def render_md(mode: str, results: list[Result], notes: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-# ------------------------------------------------------------ privacy probes (1.2.0)
+# ------------------------------------------------- privacy probes (1.2.0, prefs 1.3.0)
 
-# Bodies sent as is (not through RecommendRequest): the server itself must reject them with 422.
-PRIVACY_PROBES: list[tuple[str, str, dict[str, Any]]] = [
+_PROBE_LOC = {"landmark_id": "expo"}
+# Bodies sent as is (not through RecommendRequest): the server itself must reject them with 422,
+# and the 422 body must not repeat what was sent (the 4th item: strings it must not contain).
+PRIVACY_PROBES: list[tuple[str, str, dict[str, Any], tuple[str, ...]]] = [
     ("r11", "ячейка H3 r11 (мельче r10)",
-     {"query": "кофе рядом", "location": {"h3_cell": "8b2153806d12fff"}}),
+     {"query": "кофе рядом", "location": {"h3_cell": "8b2153806d12fff"}}, ("8b2153806d12fff",)),
     ("raw_coords", "сырые координаты lat/lon",
-     {"query": "кофе рядом", "location": {"lat": 51.0894, "lon": 71.4161}}),
+     {"query": "кофе рядом", "location": {"lat": 51.0894, "lon": 71.4161}}, ("51.0894",)),
+    ("prefs_unknown", "метка prefs не из словаря",
+     {"query": "кофе рядом", "location": _PROBE_LOC, "prefs": {"likes": ["history"]}},
+     ("history",)),
+    ("prefs_free_text", "свободный текст в prefs",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["тихо, у воды, без людей"]}}, ("у воды",)),
+    ("prefs_extra", "лишнее поле в prefs (история)",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["quiet"], "history": ["coffee"]}}, ("history",)),
 ]
-PostFn = Callable[[dict[str, Any]], int]  # sends one body, returns the HTTP status (-1 = no answer)
+# sends one body; returns the HTTP status (-1 = no answer) or (status, response text)
+PostFn = Callable[[dict[str, Any]], "int | tuple[int, str]"]
+RawPostFn = PostFn
+
+
+def _status_text(got: int | tuple[int, str]) -> tuple[int, str | None]:
+    return got if isinstance(got, tuple) else (got, None)
+
+
+def _raw_outcome(post: RawPostFn | None, body: dict[str, Any]) -> Outcome:
+    """A body the schema rejects: in-process that is the 422; with --url ask the server."""
+    if post is None:
+        return Outcome(rejected=True)
+    t0 = time.perf_counter()
+    status, text = _status_text(post(body))
+    if status == 422:
+        return Outcome(rejected=True, latency_ms=_ms(t0), reject_body=text)
+    return Outcome(error=f"HTTP {status}" if status >= 0 else "нет ответа", latency_ms=_ms(t0))
 
 
 def run_privacy_probes(post: PostFn | None) -> list[dict[str, Any]]:
     """Each probe must be rejected with 422. post=None: check the request schema in-process
     (the API validates with the same model, so a schema rejection is a 422 there)."""
     out = []
-    for pid, title, body in PRIVACY_PROBES:
+    for pid, title, body, secrets in PRIVACY_PROBES:
+        echoed: list[str] = []
         if post is None:
             try:
                 RecommendRequest.model_validate(body)
@@ -621,9 +829,13 @@ def run_privacy_probes(post: PostFn | None) -> list[dict[str, Any]]:
             except ValidationError:
                 got = "422"
         else:
-            status = post(body)
+            status, text = _status_text(post(body))
             got = "нет ответа" if status < 0 else str(status)
-        out.append({"id": pid, "title": title, "got": got, "passed": got == "422"})
+            echoed = [s for s in secrets if text is not None and s.lower() in text.lower()]
+            if echoed:
+                got += " (ответ повторяет ввод)"
+        out.append({"id": pid, "title": title, "got": got,
+                     "passed": got == "422" and not echoed})
     return out
 
 
@@ -632,11 +844,12 @@ def url_post(base_url: str, timeout_s: float = 30.0) -> PostFn:
 
     endpoint = base_url.rstrip("/") + "/api/recommend"
 
-    def post(body: dict[str, Any]) -> int:
+    def post(body: dict[str, Any]) -> tuple[int, str]:
         try:
-            return httpx.post(endpoint, json=body, timeout=timeout_s).status_code
+            resp = httpx.post(endpoint, json=body, timeout=timeout_s)
+            return resp.status_code, resp.text
         except httpx.HTTPError:
-            return -1
+            return -1, ""
 
     return post
 
@@ -935,7 +1148,8 @@ def main(argv: list[str] | None = None) -> int:
     if runner is None:
         results = [grade(s, Outcome(error=notes[0])) for s in scenarios]
     else:
-        results = run_all(scenarios, runner, no_llm=args.no_llm)
+        raw_post = url_post(args.url) if args.url else None
+        results = run_all(scenarios, runner, no_llm=args.no_llm, raw_post=raw_post)
 
     wants_graph = [
         s["id"] for s in scenarios if (s.get("expect") or {}).get("route_source") == "graph"

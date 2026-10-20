@@ -295,3 +295,112 @@
     text_any: ["почти ничего", "не советуем", "не успе", "мало мест"]
     forbid_open_claim_without_high: true
     lang: ru
+
+# ---------------------------------------------------------------- волна 8 (контракт 1.3.0)
+# Даты — вторник 20.10.2026: погоды нет (запрос «в прошлое» — машина времени, Open-Meteo
+# не спрашиваем), поэтому мороз задан текстом и меткой prefs "warm", а не погодой.
+
+- id: E13
+  title: "Без ступенек (профиль accessible)"
+  request:
+    query: "Я на коляске, хочу пройтись по двум-трём местам рядом без ступенек"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-20T13:00:00+05:00"
+    lang: ru
+    route_profile: accessible
+  expected_type: "маршрут profile=accessible; если без лестниц не вышло — ступени посчитаны и причина в note; бордюры и доли освещённости посчитаны кодом"
+  expect:
+    min_cards: 2
+    max_cards: 3
+    route: required
+    route_profile: accessible
+    route_facts: true
+    wheelchair_honest: true
+    forbid_open_claim_without_high: true
+    lang: ru
+
+- id: E14
+  title: "Ночь: по освещённым улицам (профиль lit)"
+  request:
+    query: "Поздно вечером хочу пройтись к паре мест по освещённым улицам"
+    location: {landmark_id: baiterek}
+    at: "2026-10-20T22:30:00+05:00"
+    lang: ru
+    route_profile: lit
+  expected_type: "маршрут profile=lit с долями lit/unlit/нет данных; «освещено» — данные OSM, не «безопасно»; ночью только подтверждённо открытые места"
+  expect:
+    max_cards: 3
+    route: required
+    route_profile: lit
+    route_facts: true
+    night_safe: true
+    text_forbid: ["безопасный маршрут", "безопасная дорога", "безопасные улицы", "освещено и безопасно"]
+    forbid_open_claim_without_high: true
+    lang: ru
+
+- id: E15
+  title: "Мороз: в тепле (prefs warm)"
+  request:
+    query: "На улице мороз −20, хочу погулять пару часов, но почти всё время в тепле"
+    location: {landmark_id: khan_shatyr}
+    at: "2026-10-20T16:00:00+05:00"
+    lang: ru
+    prefs: {likes: [warm]}
+  expected_type: "места в помещении (тег indoor), отрезки на улице короткие (max_outdoor_leg_min)"
+  expect:
+    min_cards: 2
+    max_cards: 3
+    route: required
+    route_facts: true
+    max_outdoor_leg_min: 10
+    indoor_cards_min: 2
+    forbid_open_claim_without_high: true
+    lang: ru
+
+- id: E16
+  title: "Событие сегодня рядом"
+  request:
+    query: "Что сегодня вечером интересного рядом — концерт, спектакль, выставка?"
+    location: {landmark_id: astana_opera}
+    at: "2026-10-24T17:00:00+05:00"
+    lang: ru
+  # Дата и ориентир подбираются под data/events.json (T122): событие в тот же день рядом.
+  expected_type: "карточка kind=event: starts_at с поясом, source_url, facts_sources manual; «идёт сейчас» только при starts_at ≤ сейчас < ends_at; прошедших нет"
+  expect:
+    min_cards: 1
+    max_cards: 3
+    event_required: true
+    labels_required: true
+    forbid_open_claim_without_high: true
+    lang: ru
+
+- id: E17
+  title: "Предпочтения меняют подбор"
+  request:
+    query: "Есть два часа, хочу погулять рядом"
+    location: {landmark_id: expo}
+    at: "2026-10-20T15:00:00+05:00"
+    lang: ru
+    prefs: {likes: [museums, no_bars], avoids: [coffee]}
+  # eval шлёт тот же запрос без prefs и сравнивает: музеев/галерей больше, кафе меньше.
+  expected_type: "с prefs подбор сдвигается к музеям, без баров и меньше кафе; prefs не в логе вместе с местом и запросом"
+  expect:
+    min_cards: 1
+    max_cards: 3
+    categories_forbid: [bar, nightlife]
+    prefs_shift: {likes_categories: [museum, gallery], avoid_categories: [cafe]}
+    forbid_open_claim_without_high: true
+    lang: ru
+
+- id: E18
+  title: "Неизвестная метка prefs → 422"
+  request:
+    query: "Кофе рядом"
+    location: {landmark_id: expo}
+    at: "2026-10-20T15:00:00+05:00"
+    lang: ru
+    prefs: {likes: [history]}
+  expected_type: "422 с фиксированным текстом, метка в ответе не повторяется"
+  expect:
+    reject_required: true
+    reject_body_forbid: ["history"]
