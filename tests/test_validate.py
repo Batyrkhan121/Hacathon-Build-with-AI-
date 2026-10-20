@@ -826,3 +826,19 @@ def test_live_claim_guard() -> None:
         assert has_live_claim(text), text
     for text in ("Начало в 19:00.", "Starts at 19:00.", "Идёт по набережной."):
         assert not has_live_claim(text), text
+
+
+def test_llm_summary_live_claim_follows_the_event_cards() -> None:
+    """Review BLOCK 1: the model summary may say «идёт сейчас» only while every event is on."""
+    e = _event()
+    card = template_cards([_event_cand(e)], intent(), ctx(), events={e.id: e})[0]
+    text = "Квартет уже идёт совсем рядом."
+    assert sanitize_summary(text, [card], llm=True, now=ctx().local_time) == ""
+    assert sanitize_summary(text, [card], llm=True) == ""  # no time given: not confirmed
+    on = datetime(2026, 10, 20, 19, 30, tzinfo=ASTANA_TZ)
+    live = template_cards([_event_cand(e, on)], intent(),
+                          ctx().model_copy(update={"local_time": on}), events={e.id: e})[0]
+    assert sanitize_summary(text, [live], llm=True, now=on) == text
+    run = _event(starts="2026-10-01T10:00:00+05:00", ends="2026-11-30T18:00:00+05:00")
+    run_card = template_cards([_event_cand(run)], intent(), ctx(), events={run.id: run})[0]
+    assert sanitize_summary(text, [run_card], llm=True, now=ctx().local_time) == ""

@@ -196,6 +196,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "маршрут: без ступенек",
         "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
         "f_profile_auto": " (коляска)",
+        "f_profile_req_accessible": "запрошен маршрут без ступенек",
+        "f_profile_req_lit": "запрошен маршрут по освещённым улицам",
+        "f_warm_between": "в тепле: между местами до {v} мин пешком",
         "f_prefs_likes": "предпочтения: {v}", "f_prefs_avoids": "избегать: {v}",
         "f_excluded": "без уже показанных мест: {n}",
         "summary_no_more": "Других подходящих мест рядом нет: уже показанные не "
@@ -279,6 +282,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "маршрут: баспалдақсыз",
         "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
         "f_profile_auto": " (арба)",
+        "f_profile_req_accessible": "баспалдақсыз маршрут сұралды",
+        "f_profile_req_lit": "жарықтандырылған көшелермен маршрут сұралды",
+        "f_warm_between": "жылыда: орындар арасы {v} минутқа дейін жаяу",
         "f_prefs_likes": "қалауыңыз: {v}", "f_prefs_avoids": "аулақ болу: {v}",
         "f_excluded": "көрсетілген орындарсыз: {n}",
         "summary_no_more": "Жақын жерде басқа лайықты орын жоқ: көрсетілгендерін "
@@ -360,6 +366,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "route: step-free",
         "f_profile_lit": "route: along lit streets (OSM data)",
         "f_profile_auto": " (wheelchair)",
+        "f_profile_req_accessible": "step-free route requested",
+        "f_profile_req_lit": "route along lit streets requested",
+        "f_warm_between": "warm: up to {v} min on foot between places",
         "f_prefs_likes": "likes: {v}", "f_prefs_avoids": "avoid: {v}",
         "f_excluded": "excluding places already shown: {n}",
         "summary_no_more": "No other suitable places nearby: the ones already shown "
@@ -590,8 +599,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     warm = warm_reason(req, wx)
     warm_indoor = False  # the indoor filter was set by warm mode (not by the person)
     if warm is not None:
-        cap = plan_update.get("max_walk_min", intent.max_walk_min)
-        plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
+        if intent.max_walk_min is None:  # an explicit limit (text or UI) is kept as asked
+            cap = plan_update.get("max_walk_min")
+            plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
         plan_update["must_tags"] = [x for x in intent.must_tags if x not in WARM_DROP_TAGS]
         if intent.indoor == "any":
             plan_update["indoor"], warm_indoor = "indoor", True
@@ -845,8 +855,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                   night_taxi=night_taxi))
     if summary is None:
         summary = _template_summary(t, len(cards))
-    if not cards and exclude and not no_time:
-        summary = t["summary_no_more"]
+    if not cards and exclude and not candidates and not failed and not no_time:
+        summary = t["summary_no_more"]  # an honestly empty pick, not a failed search
     if no_time:
         summary = t["summary_leave_now"]
     elif at_airport and intent.tourist and _sights(candidates) < 2 and not _food_only(intent):
@@ -859,7 +869,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         log.info("request %s: model summary names a raw tag: template summary", request_id)
         summary, by_llm = _template_summary(t, len(cards)), False
     # "open now" never leaks via the summary; model text is checked as model text
-    summary = _sanitize_summary(summary, cards, by_llm=by_llm)
+    summary = _sanitize_summary(summary, cards, by_llm=by_llm, now=local_time)
 
     answer = Answer(
         request_id=request_id,
@@ -884,6 +894,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None,
                              profile=profile, profile_auto=profile_auto,
+                             profile_applied=_profile_applied(mini_route, profile),
                              prefs=req.prefs, warm=warm, excluded=len(exclude),
                              temp_c=wx.temp_c if wx is not None else None),
             sources=_sources(cards, wx is not None),
@@ -1074,15 +1085,21 @@ def _untag_whys(cards: list[Card], candidates: list[Candidate], intent: QueryInt
     return out
 
 
-def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool) -> str:
-    """validate.sanitize_summary(summary, cards, llm=...) when QUALITY's version takes `llm`
-    (stricter for model text); the older two-argument version otherwise."""
+def _sanitize_summary(summary: str, cards: list[Card], *, by_llm: bool,
+                      now: datetime | None = None) -> str:
+    """validate.sanitize_summary(summary, cards, llm=..., now=...) with what the version takes:
+    `llm` (stricter for model text), `now` (T123: «идёт сейчас» about events)."""
     fn = validate.sanitize_summary
     try:
-        takes_llm = "llm" in inspect.signature(fn).parameters
+        params = inspect.signature(fn).parameters
     except (TypeError, ValueError):
-        takes_llm = False
-    return fn(summary, cards, llm=by_llm) if takes_llm else fn(summary, cards)
+        params = {}  # type: ignore[assignment]
+    kw: dict[str, object] = {}
+    if "llm" in params:
+        kw["llm"] = by_llm
+    if "now" in params:
+        kw["now"] = now
+    return fn(summary, cards, **kw)
 
 
 def _sights(candidates: list[Candidate]) -> int:
@@ -1096,11 +1113,13 @@ def _food_only(intent: QueryIntent) -> bool:
 
 def _night_sure(c: Candidate, by_event: dict[str, events.Event] | None = None,
                 now: datetime | None = None) -> bool:
-    """Open now by the data, or marked as working late / round the clock; an event: on now
-    or starting within EVENT_NIGHT_SOON_MIN."""
+    """Open now by the data, or marked as working late / round the clock; an event: a session
+    on now or starting within EVENT_NIGHT_SOON_MIN (a run of many days never)."""
     event = (by_event or {}).get(c.poi.id)
     if event is not None and now is not None:
-        soon = event.starts_at - now <= timedelta(minutes=EVENT_NIGHT_SOON_MIN)
+        if not events.is_session(event):  # a run (exhibition): its night hours are unknown
+            return False
+        soon = timedelta(0) <= event.starts_at - now <= timedelta(minutes=EVENT_NIGHT_SOON_MIN)
         return events.is_live(event, now) or soon
     return c.hours.status == "open" or bool({"late_open", "24_7"} & set(c.poi.tags))
 
@@ -1281,6 +1300,14 @@ def warm_cluster(candidates: list[Candidate]) -> list[Candidate]:
 def _temp(value: float | None) -> str:
     """«−20 °C» with a real minus sign."""
     return "" if value is None else f"{round(value):+d} °C".replace("-", "\u2212")
+
+
+def _profile_applied(mini_route: MiniRoute | None, profile: RouteProfile) -> bool:
+    """The route really follows the profile: on the graph, planned with it, and «без
+    ступенек» without stairs. Otherwise the panel says the profile was only asked for."""
+    if mini_route is None or mini_route.path_source != "graph" or mini_route.profile != profile:
+        return False
+    return not (profile == "accessible" and mini_route.steps_count > 0)
 
 
 def route_profile(asked: RouteProfile, intent: QueryIntent) -> tuple[RouteProfile, bool]:
@@ -1474,6 +1501,7 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              semantic_reason: str | None = None, claude_picked: bool = False,
              index_stale: bool = False, hours_dropped: dict[str, int] | None = None,
              profile: RouteProfile = "fastest", profile_auto: bool = False,
+             profile_applied: bool = True,
              prefs: UserPrefs | None = None, warm: str | None = None,
              temp_c: float | None = None, excluded: int = 0) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
@@ -1504,14 +1532,17 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if intent.must_tags:
         tags = TAG_NAMES[lang]
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
-    if profile != "fastest":
-        out.append(t[f"f_profile_{profile}"] + (t["f_profile_auto"] if profile_auto else ""))
+    if profile != "fastest":  # «запрошен …» when the route was straight / had to take stairs
+        key = f"f_profile_{profile}" if profile_applied else f"f_profile_req_{profile}"
+        out.append(t[key] + (t["f_profile_auto"] if profile_auto else ""))
     line = _prefs_line(t, prefs, lang)
     if line:
         out.append(line)
     if warm is not None:  # what the code did: indoor stops, short walks outside
         frost = warm == "frost" and temp_c is not None
-        out.append(t["f_warm"].format(v=WARM_MAX_LEG_MIN)
+        # an explicit walk limit over WARM_MAX_LEG_MIN was kept: only «between places» holds
+        key = "f_warm" if (intent.max_walk_min or 0) <= WARM_MAX_LEG_MIN else "f_warm_between"
+        out.append(t[key].format(v=WARM_MAX_LEG_MIN)
                    + (t["f_warm_frost"].format(t=_temp(temp_c)) if frost else ""))
     if excluded:  # «Ещё»: a count only, the ids stay out of the answer text
         out.append(t["f_excluded"].format(n=excluded))

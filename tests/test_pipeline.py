@@ -1528,13 +1528,14 @@ def _recording_plan_route(calls: list[dict[str, Any]]):  # type: ignore[no-untyp
 
 @pytest.mark.usefixtures("core_fakes")
 @pytest.mark.parametrize(("profile", "overrides", "want", "line"), [
+    # no graph here: the route is straight, so the panel says the profile was only asked for
     ("fastest", None, "fastest", None),
-    ("lit", None, "lit", "маршрут: по освещённым улицам (данные OSM)"),
-    ("accessible", None, "accessible", "маршрут: без ступенек"),
+    ("lit", None, "lit", "запрошен маршрут по освещённым улицам"),
+    ("accessible", None, "accessible", "запрошен маршрут без ступенек"),
     # the wheelchair switch turns the default into a step-free way, and the panel says why
-    ("fastest", {"wheelchair": True}, "accessible", "маршрут: без ступенек (коляска)"),
+    ("fastest", {"wheelchair": True}, "accessible", "запрошен маршрут без ступенек (коляска)"),
     # an explicit choice stays (Mode.wheelchair forbids stairs on "lit" too)
-    ("lit", {"wheelchair": True}, "lit", "маршрут: по освещённым улицам (данные OSM)"),
+    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут по освещённым улицам"),
 ])
 def test_route_profile_is_passed_without_the_graph(
     deps: Deps, monkeypatch: pytest.MonkeyPatch, profile: str,
@@ -1545,12 +1546,13 @@ def test_route_profile_is_passed_without_the_graph(
     a = recommend(req("кофе", use_llm=False, route_profile=profile, overrides=overrides), deps)
     assert a.route is not None and calls
     assert calls[-1]["profile"] == want and calls[-1]["lang"] == "ru"
-    profile_lines = [f for f in a.data_used.filters if f.startswith("маршрут:")]
+    profile_lines = [f for f in a.data_used.filters if "маршрут" in f]
     assert profile_lines == ([line] if line else [])
 
 
 @pytest.mark.parametrize(("lang", "line"), [
-    ("kk", "маршрут: баспалдақсыз (арба)"), ("en", "route: step-free (wheelchair)")])
+    ("kk", "баспалдақсыз маршрут сұралды (арба)"),
+    ("en", "step-free route requested (wheelchair)")])
 def test_route_profile_line_follows_the_answer_language(deps: Deps, lang: str, line: str) -> None:
     a = recommend(req("кофе", use_llm=False, lang=lang, overrides={"wheelchair": True}), deps)
     assert line in a.data_used.filters
@@ -1586,6 +1588,25 @@ def test_graph_route_and_card_minutes_use_the_profile(
     assert a.route is not None and a.route.path_source == "graph"
     assert a.route.profile == profile  # the profile the route was really planned with
     assert modes and set(modes) == {profile}  # card minutes: the same Mode(profile=...)
+    line = {"accessible": "маршрут: без ступенек",
+            "lit": "маршрут: по освещённым улицам (данные OSM)"}[profile]
+    assert line in a.data_used.filters  # on the graph, without stairs: really applied
+
+
+def test_accessible_with_stairs_is_only_asked_for(deps: Deps, tmp_path: Path,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    real = route.plan_route
+
+    def with_steps(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"steps_count": 2}) if got else got
+
+    monkeypatch.setattr(route, "plan_route", with_steps)
+    a = recommend(req("кофе", use_llm=False, route_profile="accessible"),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert "запрошен маршрут без ступенек" in a.data_used.filters
+    assert "маршрут: без ступенек" not in a.data_used.filters
 
 
 def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2055,3 +2076,69 @@ def test_more_keeps_the_ids_out_of_the_retrieve_reasons(deps: Deps,
     seen.clear()
     recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1"]), deps)
     assert seen and seen[0] == frozenset({"test:poi/1"})
+
+
+
+# ---------------------------------------------- review de49d92: events, frost limit, «Ещё»
+
+
+def test_llm_summary_cannot_say_on_now_about_an_event_that_is_not_on(deps: Deps,
+                                                                    tmp_path: Path) -> None:
+    """Review BLOCK 1: «Джазовый вечер уже идёт совсем рядом.» while the card says 19:00."""
+    say = "Джазовый вечер уже идёт совсем рядом."
+    llm = FakeLLM(summary=say)
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    a = recommend(req(MORE_Q), d)
+    assert a.data_used.generation == "llm" and any(c.kind == "event" for c in a.cards)
+    assert "идёт" not in a.summary.lower()
+    on = recommend(req(MORE_Q, at="2026-10-19T19:30:00+05:00"), d)  # 19:00–21:00: on now
+    ev_cards = [c for c in on.cards if c.kind == "event"]
+    assert ev_cards and all(c.open_note.startswith("Идёт сейчас") for c in ev_cards)
+    assert on.summary == say  # true while it is on
+
+
+def test_llm_event_card_takes_the_visit_minutes_from_the_event(deps: Deps,
+                                                               tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])  # FakeLLM says 20–30 min
+    a = recommend(req(MORE_Q), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == "llm"
+    assert (c.visit_min_low, c.visit_min_high) == (120, 120)  # the 2-hour session
+
+
+RUN_RECORD = {"starts": "2026-10-01T10:00:00+05:00", "ends": "2026-11-30T18:00:00+05:00"}
+
+
+def test_a_run_of_many_days_is_not_on_now_and_not_night_sure(deps: Deps, tmp_path: Path
+                                                             ) -> None:
+    """Review BLOCK 2: an exhibition 01.10–30.11 at 23:00 is not «идёт сейчас: 10:00–18:00»
+    and does not pass the night filter as «surely on»."""
+    run = _event_record("expo-run", category="museum", title={"ru": "Выставка"}, **RUN_RECORD)
+    d = _events_deps(deps, tmp_path, [run])
+    day = recommend(req("выставка", use_llm=False), d)
+    c = next(c for c in day.cards if c.kind == "event")
+    assert c.open_note.startswith("Проходит до 30.11 18:00, часы работы площадки не указаны")
+    assert "проходит до 30.11 18:00" in c.why and "идёт сейчас" not in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (60, 120)  # the museum estimate, not 300
+    night = recommend(req("куда сходить", use_llm=False, at="2026-10-19T23:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in night.cards)
+
+
+def test_an_explicit_walk_limit_survives_warm_mode(deps: Deps,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(weather, "get_weather", _frost(-20))
+    a = recommend(req("куда сходить", use_llm=False, overrides={"max_walk_min": 30}), deps)
+    assert "пешком до 30 мин" in a.data_used.filters  # not cut to 10 silently
+    assert "в тепле: между местами до 10 мин пешком (мороз −20 °C)" in a.data_used.filters
+    capped = recommend(req("куда сходить", use_llm=False), deps)
+    assert "пешком до 10 мин" in capped.data_used.filters
+
+
+def test_no_more_summary_only_for_an_honestly_empty_pick(deps: Deps,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(retrieval, "retrieve", _boom)
+    a = recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1"]), deps)
+    assert a.cards == []
+    assert a.summary != TEXTS["ru"]["summary_no_more"]  # a failed search is not «no more»
+    assert TEXTS["ru"]["search_error"] in a.warnings

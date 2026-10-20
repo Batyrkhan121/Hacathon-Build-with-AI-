@@ -10,6 +10,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from app import events as ev
@@ -665,17 +666,28 @@ def _facts_from_card(card: Card) -> _Facts:
 # ------------------------------------------------------------------ public
 
 
-def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> str:
+def _event_on_now(card: Card, now: datetime | None) -> bool:
+    """The same rule as app.events.is_live, from the card: a session on now (both times)."""
+    if now is None or card.starts_at is None or card.ends_at is None:
+        return False
+    return (card.starts_at <= now < card.ends_at
+            and card.ends_at - card.starts_at <= ev.SESSION_MAX)
+
+
+def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False,
+                     now: datetime | None = None) -> str:
     """Remove "open now" style sentences unless every card is open/high.
 
     finalize() never sees DraftResponse.summary; the pipeline calls this on it.
     llm=True (the summary was written by the model): also drop sentences with prices, phones,
-    links, addresses or numbers / times not found on the cards, and keep one short sentence.
+    links, addresses or numbers / times not found on the cards, and keep one short sentence;
+    T123: «идёт сейчас» stays only when every event card is on at `now` (the request time).
     The pipeline's own template summaries (counts, airport times) use the default llm=False.
     """
     all_open = bool(cards) and all(
         c.open_status == "open" and c.open_confidence == "high" for c in cards
     )
+    live_ok = all(_event_on_now(c, now) for c in cards if c.kind == "event")
     if not llm:
         sentences = _sentences(summary)
         kept = [s for s in sentences if all_open or not _sentence_claims_open(s)]
@@ -683,7 +695,7 @@ def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> s
     facts = _Facts(frozenset({float(len(cards))}), frozenset(), (), True, True)
     for card in cards:
         facts = facts.merge(_facts_from_card(card))
-    text = _guard_text(summary, facts, allow_open=all_open)[0]
+    text = _guard_text(summary, facts, allow_open=all_open, allow_live=live_ok)[0]
     return _trim(_first_sentences(text, 1), MAX_SUMMARY_CHARS)
 
 
@@ -734,10 +746,12 @@ def finalize(
         if generic is not None:
             seen.add(generic)
 
+        event = events.get(poi_id)
         low, high = sorted((item.visit_min_low, item.visit_min_high))
+        if event is not None:  # the event times beat the model's guess (a 2-hour concert)
+            low, high = ev.visit_minutes(event, ctx.local_time) or (low, high)
         facts = _facts_for(cand, (low, high), intent, _title(cand.poi, intent.lang))
         allow_open = cand.hours.status == "open" and cand.hours.confidence == "high"
-        event = events.get(poi_id)
         live = event is None or ev.is_live(event, ctx.local_time)
         why, why_claim, why_facts = _guard_text(item.why, facts, allow_open, live)
         todo, todo_claim, todo_facts = _guard_text(item.what_to_do, facts, allow_open, live)

@@ -11,8 +11,10 @@ Owner: FEATURES lane (T123). Contract 1.3.0, format: docs/ARCHITECTURE.md, secti
     at midnight, a morning one is not shown in the evening;
   * starting today (the local day of the request) or within AHEAD_H hours (late evening: the
     night's events after midnight) — a walk assistant, not a calendar for next month.
-- is_live(event, now): «идёт сейчас» only when starts_at ≤ now < ends_at and both are known;
-  otherwise the card says «начало в ЧЧ:ММ» (with the date when it is not today).
+- is_live(event, now): «идёт сейчас» only for a session (at most SESSION_MAX long) with
+  starts_at ≤ now < ends_at, both known. A longer event (a run: an exhibition 01.10–30.11) is
+  never «on now» — its daily hours are not known — it «runs until 30.11 18:00». Otherwise the
+  card says «начало в ЧЧ:ММ». A time on another day than today always carries its date.
 - as_poi / verdict: an event enters the search as a POI (id = event id, sources ["manual"]) with
   an hours verdict unknown/low whose note is the event time written by the code.
 Times are compared tz-aware; the text shows local time (UTC+5, app.hours.ASTANA_TZ).
@@ -38,6 +40,7 @@ log = logging.getLogger(__name__)
 EVENT_PREFIX = "event:"
 NO_END_MIN = 120  # an event without ends_at is taken to last this long (and not past 24:00)
 AHEAD_H = 6  # besides today: events starting within this many hours (after midnight)
+SESSION_MAX = timedelta(hours=12)  # longer = a run (exhibition): daily hours not known
 DATA_CONFIDENCE = 0.8  # checked by a person against the organiser's page (pipeline.events)
 FORBIDDEN_HOSTS = ("2gis", "yandex", "ya.ru")  # their terms forbid storing (CLAUDE.md)
 
@@ -142,9 +145,23 @@ def current(events: Sequence[Event], now: datetime) -> list[Event]:
     return sorted((e for e in events if is_current(e, now)), key=lambda e: (e.starts_at, e.id))
 
 
+def is_session(event: Event) -> bool:
+    """One sitting (a concert, a show): no ends_at (then NO_END_MIN) or at most SESSION_MAX
+    long. A longer event (an exhibition 01.10–30.11) is a run: its daily hours are not known."""
+    return event.ends_at is None or event.ends_at - event.starts_at <= SESSION_MAX
+
+
 def is_live(event: Event, now: datetime) -> bool:
-    """«Идёт сейчас»: only with both times known and starts_at ≤ now < ends_at."""
-    return event.ends_at is not None and event.starts_at <= now < event.ends_at
+    """«Идёт сейчас»: a session with both times known and starts_at ≤ now < ends_at. A run is
+    never «on now» (at 23:00 the exhibition hall may be closed): it «runs until …»."""
+    return (event.ends_at is not None and is_session(event)
+            and event.starts_at <= now < event.ends_at)
+
+
+def is_running(event: Event, now: datetime) -> bool:
+    """A run (not a session) that has started and is not over: «проходит до 30.11 18:00»."""
+    return (event.ends_at is not None and not is_session(event)
+            and event.starts_at <= now < event.ends_at)
 
 
 def is_event_id(poi_id: str) -> bool:
@@ -152,21 +169,27 @@ def is_event_id(poi_id: str) -> bool:
 
 
 _TEXTS: dict[str, dict[str, str]] = {
-    "ru": {"live": "Идёт сейчас: {start}–{end}", "start": "Начало в {start}",
-           "start_day": "Начало {day} в {start}", "end": "окончание в {end}",
+    "ru": {"live": "Идёт сейчас: {start}–{end}",
+           "run": "Проходит до {end}, часы работы площадки не указаны",
+           "start": "Начало в {start}", "start_day": "Начало {day} в {start}",
+           "end": "окончание в {end}", "end_day": "окончание {day} в {end}",
            "src": "по данным источника, проверьте перед визитом",
-           "reason_live": "идёт сейчас, до {end}", "reason_start": "начало в {start}",
-           "reason_start_day": "начало {day} в {start}"},
-    "kk": {"live": "Қазір өтіп жатыр: {start}–{end}", "start": "Басталуы: {start}",
-           "start_day": "Басталуы: {day}, {start}", "end": "аяқталуы: {end}",
+           "reason_live": "идёт сейчас, до {end}", "reason_run": "проходит до {end}",
+           "reason_start": "начало в {start}", "reason_start_day": "начало {day} в {start}"},
+    "kk": {"live": "Қазір өтіп жатыр: {start}–{end}",
+           "run": "{end} дейін өтеді, алаңның жұмыс уақыты көрсетілмеген",
+           "start": "Басталуы: {start}", "start_day": "Басталуы: {day}, {start}",
+           "end": "аяқталуы: {end}", "end_day": "аяқталуы: {day}, {end}",
            "src": "дереккөз бойынша, барар алдында тексеріңіз",
-           "reason_live": "қазір өтіп жатыр, {end} дейін", "reason_start": "басталуы: {start}",
-           "reason_start_day": "басталуы: {day}, {start}"},
-    "en": {"live": "On now: {start}–{end}", "start": "Starts at {start}",
-           "start_day": "Starts {day} at {start}", "end": "ends at {end}",
+           "reason_live": "қазір өтіп жатыр, {end} дейін", "reason_run": "{end} дейін өтеді",
+           "reason_start": "басталуы: {start}", "reason_start_day": "басталуы: {day}, {start}"},
+    "en": {"live": "On now: {start}–{end}",
+           "run": "Runs until {end}; venue hours not listed",
+           "start": "Starts at {start}", "start_day": "Starts {day} at {start}",
+           "end": "ends at {end}", "end_day": "ends {day} at {end}",
            "src": "per the source, check before you go",
-           "reason_live": "on now, until {end}", "reason_start": "starts at {start}",
-           "reason_start_day": "starts {day} at {start}"},
+           "reason_live": "on now, until {end}", "reason_run": "runs until {end}",
+           "reason_start": "starts at {start}", "reason_start_day": "starts {day} at {start}"},
 }
 
 
@@ -178,35 +201,58 @@ def _day(value: datetime) -> str:
     return f"{value.astimezone(ASTANA_TZ):%d.%m}"
 
 
+def _today(value: datetime, now: datetime) -> bool:
+    return value.astimezone(ASTANA_TZ).date() == now.astimezone(ASTANA_TZ).date()
+
+
+def _clock(value: datetime, now: datetime) -> str:
+    """«19:00» today, «30.11 18:00» on another day (local time): a time is never shown
+    without its date when the date is not today."""
+    return _hm(value) if _today(value, now) else f"{_day(value)} {_hm(value)}"
+
+
+def _dated(t: dict[str, str], key: str, value: datetime, now: datetime) -> str:
+    """t[key] for today, t[key + "_day"] with the date otherwise."""
+    name = "start" if key.endswith("start") else "end"
+    if _today(value, now):
+        return t[key].format(**{name: _hm(value)})
+    return t[f"{key}_day"].format(**{name: _hm(value)}, day=_day(value))
+
+
 def note(event: Event, now: datetime, lang: Lang) -> str:
     """The card's open_note for an event, written by the code (never «open now»)."""
     t = _TEXTS.get(lang, _TEXTS["ru"])
     if is_live(event, now):
         assert event.ends_at is not None
-        text = t["live"].format(start=_hm(event.starts_at), end=_hm(event.ends_at))
+        text = t["live"].format(start=_clock(event.starts_at, now),
+                                end=_clock(event.ends_at, now))
+    elif is_running(event, now):
+        assert event.ends_at is not None
+        text = t["run"].format(end=_clock(event.ends_at, now))
     else:
-        same_day = event.starts_at.astimezone(ASTANA_TZ).date() == now.astimezone(ASTANA_TZ).date()
-        text = (t["start"] if same_day else t["start_day"]).format(
-            start=_hm(event.starts_at), day=_day(event.starts_at))
+        text = _dated(t, "start", event.starts_at, now)
         if event.ends_at is not None:
-            text += "; " + t["end"].format(end=_hm(event.ends_at))
+            text += "; " + _dated(t, "end", event.ends_at, now)
     return f"{text} — {t['src']}."
 
 
 def reason(event: Event, now: datetime, lang: Lang) -> str:
-    """Short reason for the template why: «начало в 19:00» / «идёт сейчас, до 21:00»."""
+    """Short reason for the template why: «начало в 19:00» / «идёт сейчас, до 21:00» /
+    «проходит до 30.11 18:00»."""
     t = _TEXTS.get(lang, _TEXTS["ru"])
     if is_live(event, now):
         assert event.ends_at is not None
-        return t["reason_live"].format(end=_hm(event.ends_at))
-    same_day = event.starts_at.astimezone(ASTANA_TZ).date() == now.astimezone(ASTANA_TZ).date()
-    key = "reason_start" if same_day else "reason_start_day"
-    return t[key].format(start=_hm(event.starts_at), day=_day(event.starts_at))
+        return t["reason_live"].format(end=_clock(event.ends_at, now))
+    if is_running(event, now):
+        assert event.ends_at is not None
+        return t["reason_run"].format(end=_clock(event.ends_at, now))
+    return _dated(t, "reason_start", event.starts_at, now)
 
 
 def visit_minutes(event: Event, now: datetime) -> tuple[int, int] | None:
-    """(low, high) on site from the event times (what is left of it), None when not known."""
-    if event.ends_at is None:
+    """(low, high) on site from the times of a session (what is left of it); None for a run
+    or without ends_at (the category estimate is used then)."""
+    if event.ends_at is None or not is_session(event):
         return None
     left = (event.ends_at - max(now, event.starts_at)).total_seconds() / 60
     minutes = max(5, min(300, round(left)))

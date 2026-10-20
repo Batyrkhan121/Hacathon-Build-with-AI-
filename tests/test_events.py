@@ -191,7 +191,7 @@ def test_visit_minutes_from_the_event_times() -> None:
     assert events.visit_minutes(event(), at("21:00")) == (30, 30)  # what is left of it
     assert events.visit_minutes(event(ends=None), at("17:00")) is None
     long = event(starts="2026-10-01T10:00:00+05:00", ends="2026-11-30T18:00:00+05:00")
-    assert events.visit_minutes(long, at("17:00")) == (300, 300)
+    assert events.visit_minutes(long, at("17:00")) is None  # a run: the category estimate
 
 
 # ------------------------------------------------------------- as a search record
@@ -216,3 +216,42 @@ def test_place_line_without_venue_or_address() -> None:
     assert event(venue=None, address=None).place_line() is None
     assert event(venue="Астана Опера, ул. Кунаева, 1").place_line() == (
         "Астана Опера, ул. Кунаева, 1")  # the address is already in the venue line
+
+
+# ------------------------------------------- review: runs of many days, dates on other days
+
+RUN = {"starts": "2026-10-01T10:00:00+05:00", "ends": "2026-11-30T18:00:00+05:00"}
+
+
+@pytest.mark.parametrize(("now", "lang", "text"), [
+    ("23:00", "ru", "Проходит до 30.11 18:00, часы работы площадки не указаны" + CHECK_RU),
+    ("12:00", "ru", "Проходит до 30.11 18:00, часы работы площадки не указаны" + CHECK_RU),
+    ("23:00", "kk", "30.11 18:00 дейін өтеді, алаңның жұмыс уақыты көрсетілмеген" + CHECK_KK),
+    ("23:00", "en", "Runs until 30.11 18:00; venue hours not listed" + CHECK_EN),
+])
+def test_a_run_of_many_days_is_never_on_now(now: str, lang: str, text: str) -> None:
+    """An exhibition 01.10–30.11 at 23:00: not «идёт сейчас: 10:00–18:00» (review BLOCK 2)."""
+    e = event(**RUN)
+    assert not events.is_session(e) and not events.is_live(e, at(now))
+    assert events.is_running(e, at(now))
+    note = events.note(e, at(now), lang)  # type: ignore[arg-type]
+    assert note == text
+    assert not has_live_claim(note) and not has_open_claim(note)
+    assert events.reason(e, at(now), "ru") == "проходит до 30.11 18:00"
+    assert events.reason(e, at(now), "en") == "runs until 30.11 18:00"
+
+
+def test_times_on_another_day_carry_the_date() -> None:
+    late = event(starts="2026-10-24T22:00:00+05:00", ends="2026-10-25T01:00:00+05:00")
+    assert events.note(late, at("23:00"), "ru") == "Идёт сейчас: 22:00–25.10 01:00" + CHECK_RU
+    assert events.reason(late, at("23:00"), "ru") == "идёт сейчас, до 25.10 01:00"
+    after_midnight = at("00:30", day=25)
+    assert events.note(late, after_midnight, "en") == "On now: 24.10 22:00–01:00" + CHECK_EN
+    future_run = event(starts="2026-10-25T10:00:00+05:00", ends="2026-11-30T18:00:00+05:00")
+    assert events.note(future_run, at("23:00"), "ru") == (
+        "Начало 25.10 в 10:00; окончание 30.11 в 18:00" + CHECK_RU)
+    assert events.note(future_run, at("23:00"), "kk") == (
+        "Басталуы: 25.10, 10:00; аяқталуы: 30.11, 18:00" + CHECK_KK)
+    assert events.note(future_run, at("23:00"), "en") == (
+        "Starts 25.10 at 10:00; ends 30.11 at 18:00" + CHECK_EN)
+    assert events.reason(future_run, at("23:00"), "ru") == "начало 25.10 в 10:00"
