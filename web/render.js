@@ -216,6 +216,7 @@ export function renderAnswer(root, answer, ctx) {
   );
 
   const warm = renderWarmOffer(answer, ctx);
+  const noCafe = renderNoCafeConflict(answer, ctx);
   const warnings = answer.warnings?.length
     ? h(
         'ul',
@@ -243,6 +244,7 @@ export function renderAnswer(root, answer, ctx) {
       { class: 'answer', lang: answer.lang || null },
       head,
       warm,
+      noCafe,
       warnings,
       body,
       renderRefineChips(answer, ctx),
@@ -378,6 +380,14 @@ function renderRefineChips(answer, ctx) {
     h('span', { class: 'refine-chips-label', text: t('refineChip.label') }),
     chips,
   );
+}
+
+// «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть — значит, кофе просили
+// в самом запросе и сервер отдал приоритет запросу. Говорим об этом прямо, а не молча.
+function renderNoCafeConflict(answer, ctx) {
+  const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('coffee');
+  if (!avoidsCoffee || !answer.cards.some((c) => c.category === 'cafe')) return null;
+  return h('p', { class: 'warning no-cafe-conflict', role: 'note', text: t('noCafe.conflict') });
 }
 
 // Тёплая остановка — тег indoor у карточки (нового поля в 1.3.0 нет)
