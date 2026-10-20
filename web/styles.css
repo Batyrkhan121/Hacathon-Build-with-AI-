@@ -2779,3 +2779,55 @@ body:not(.v2) .submit-row .btn-primary {
   background: #b4530a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23fff' d='M8 3 3 7.2V13h3.5v-3h3v3H13V7.2z'/%3E%3C/svg%3E") center / 11px no-repeat;
   box-shadow: 0 0 0 1.5px #fff;
 }
+
+/* Карточка события: «Событие · сегодня в 19:00–21:00», площадка, кнопка «Источник» */
+.event-block {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.event-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.event-now {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--open-bg);
+  color: var(--open-ink);
+  font-size: 13px;
+}
+
+.event-venue {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.event-source {
+  justify-self: start;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+.v2 .card > .event-block {
+  order: 2; /* после «Почему» и фактов */
+  margin-top: 12px;
+}
