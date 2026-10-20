@@ -2142,3 +2142,30 @@ def test_no_more_summary_only_for_an_honestly_empty_pick(deps: Deps,
     assert a.cards == []
     assert a.summary != TEXTS["ru"]["summary_no_more"]  # a failed search is not «no more»
     assert TEXTS["ru"]["search_error"] in a.warnings
+
+
+def test_a_cut_one_sentence_llm_summary_falls_back_to_the_template(deps: Deps,
+                                                                   tmp_path: Path) -> None:
+    """Review nit: the model summary was one «идёт сейчас» sentence, cut -> not an empty
+    summary but the template one."""
+    llm = FakeLLM(summary="Джазовый вечер уже идёт совсем рядом.")
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    a = recommend(req(MORE_Q), d)
+    assert a.data_used.generation == "llm"
+    assert a.summary == TEXTS["ru"]["summary_n"].format(n=len(a.cards))
+    llm.summary = "Тут открыто сейчас."  # an «open now» claim without open/high
+    b = recommend(req("кофе"), deps_with(llm, deps))
+    assert b.summary.strip() and "открыто сейчас" not in b.summary
+
+
+def deps_with(llm: FakeLLM, deps: Deps) -> Deps:
+    return Deps(store=deps.store, llm=llm, settings=deps.settings)
+
+
+def test_llm_run_card_gets_the_category_visit_estimate(deps: Deps, tmp_path: Path) -> None:
+    run = _event_record("expo-run", category="museum", title={"ru": "Выставка"}, **RUN_RECORD)
+    a = recommend(req("выставка"), _events_deps(deps, tmp_path, [run]))  # FakeLLM: 20–30 min
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == "llm"
+    assert (c.visit_min_low, c.visit_min_high) == (60, 120)  # the museum estimate

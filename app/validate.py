@@ -748,8 +748,10 @@ def finalize(
 
         event = events.get(poi_id)
         low, high = sorted((item.visit_min_low, item.visit_min_high))
-        if event is not None:  # the event times beat the model's guess (a 2-hour concert)
-            low, high = ev.visit_minutes(event, ctx.local_time) or (low, high)
+        if event is not None:  # the event times beat the model's guess (a 2-hour concert);
+            # a run (an exhibition of many days) gets the category estimate, as in the template
+            run = None if ev.is_session(event) else _visit_minutes(event.category, intent)
+            low, high = ev.visit_minutes(event, ctx.local_time) or run or (low, high)
         facts = _facts_for(cand, (low, high), intent, _title(cand.poi, intent.lang))
         allow_open = cand.hours.status == "open" and cand.hours.confidence == "high"
         live = event is None or ev.is_live(event, ctx.local_time)
