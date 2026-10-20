@@ -53,7 +53,10 @@ SAFETY_WORDS = ("безопасн", "safe", "қауіпсіз")
 STEPS_MARKERS = ("ступен", "лестниц", "step", "stair", "баспалдақ")
 LIVE_MARKERS = ("идёт сейчас", "идет сейчас", "уже идёт", "уже идет", "happening now",
                 "on now", "қазір өтіп")
-PREFS_LOG_MARKERS = ("prefs", "likes", "avoids")
+# prefs reach a log line only through a field name: a dump of the request or of UserPrefs, or
+# an f-string with the field (repr(RecommendRequest) leaves prefs out, repr=False). Bare tag
+# words are not searched: night, coffee, kids are also the parser's own tags (must_tags).
+PREFS_LOG_MARKERS = ("prefs", "likes", "avoids", "userprefs")
 
 
 # --------------------------------------------------------------------- outcomes
@@ -69,7 +72,8 @@ class Outcome:
     latency_ms: int = 0
     search: str | None = None  # "vector" | "words"; None = unknown (see search_mode)
     baseline: Answer | None = None  # the same request without prefs (expect.prefs_shift)
-    log_lines: list[str] | None = None  # in-process only: log records written during the run
+    # in-process only: (logger name, message) of every log record written during the run
+    log_lines: list[tuple[str, str]] | None = None
     reject_body: str | None = None  # --url only: the 422 body (must not echo the input)
 
 
@@ -163,12 +167,20 @@ def check_invariants(ans: Answer) -> list[str]:
 
 GRAPH_PATH = ROOT / "data" / "processed" / "walk_graph.npz"
 NODE_CROSSING, NODE_SIGNALS, NODE_UNMARKED, NODE_MARKINGS_KNOWN = 1, 2, 8, 32
+# The crossing check compares with the LOCAL graph file. main() turns it off for --url
+# (the server may run another graph) unless --graph-check says the graph is the same.
+CROSSING_GRAPH: Path | None = GRAPH_PATH
 _node_flags_cache: dict[Path, dict[tuple[float, float], int] | None] = {}
+_graph_load_errors: dict[Path, str] = {}
 
 
-def crossing_node_flags(path: Path = GRAPH_PATH) -> dict[tuple[float, float], int] | None:
-    """Flags of the crossing nodes of the walk graph by their point (None: no graph file).
+def crossing_node_flags(path: Path | None = None) -> dict[tuple[float, float], int] | None:
+    """Flags of the crossing nodes of the walk graph by their point. None: the check is off,
+    or no file / unreadable file (see crossing_check_note). Default path: CROSSING_GRAPH.
     The route puts a crossing node at the node's own float32 coordinates."""
+    path = path if path is not None else CROSSING_GRAPH
+    if path is None:
+        return None
     if path not in _node_flags_cache:
         try:
             import numpy as np
@@ -179,9 +191,27 @@ def crossing_node_flags(path: Path = GRAPH_PATH) -> dict[tuple[float, float], in
             idx = np.nonzero(flags & NODE_CROSSING)[0]
             _node_flags_cache[path] = {
                 (round(lat[i], 6), round(lon[i], 6)): int(flags[i]) for i in idx}
-        except (OSError, KeyError, ValueError):
+        except FileNotFoundError:
             _node_flags_cache[path] = None
+            _graph_load_errors[path] = "нет файла"
+        except Exception as exc:  # noqa: BLE001 — a broken file is reported, not raised
+            _node_flags_cache[path] = None
+            _graph_load_errors[path] = f"файл не читается ({type(exc).__name__})"
     return _node_flags_cache[path]
+
+
+def crossing_check_note(url_mode: bool) -> str | None:
+    """One report line when the crossing check did not run, or ran against a local file."""
+    if CROSSING_GRAPH is None:
+        return ("переходы «зебра» не сверены с графом: --url, у сервера может быть другой "
+                "граф (включить: --graph-check, если граф тот же)")
+    crossing_node_flags()
+    err = _graph_load_errors.get(CROSSING_GRAPH)
+    if err:
+        return f"переходы «зебра» не сверены с графом: {CROSSING_GRAPH.name} — {err}"
+    if url_mode:
+        return f"переходы «зебра» сверены с локальным {CROSSING_GRAPH.name} (--graph-check)"
+    return None
 
 
 def check_crossing_kinds(ans: Answer, nodes: dict[tuple[float, float], int] | None) -> list[str]:
@@ -273,21 +303,22 @@ def check_prefs_shift(ans: Answer, base: Answer | None, spec: dict[str, Any]) ->
     return [f"prefs не сдвинули подбор: с prefs {cats}, без {base_cats}"]
 
 
-def check_prefs_not_logged(lines: list[str] | None, req: dict[str, Any]) -> list[str]:
-    """No log record may carry prefs together with the cell, the landmark or the query."""
-    if lines is None:
+def check_prefs_not_logged(
+    records: list[tuple[str, str]] | None, req: dict[str, Any]
+) -> list[str]:
+    """No log record may carry prefs together with the cell, the landmark or the query.
+    The report names the record number and the logger only: the line itself may hold the
+    query and the cell, so it is never copied."""
+    if records is None:
         return []  # --url / mock: server logs are not visible to eval
-    prefs = req.get("prefs") or {}
-    tags = [t for t in (*prefs.get("likes", []), *prefs.get("avoids", []))]
     loc = req.get("location") or {}
     where = [v for v in (loc.get("h3_cell"), loc.get("landmark_id"), req.get("query")) if v]
     fails = []
-    for line in lines:
+    for n, (logger, line) in enumerate(records, 1):
         low = line.lower()
-        has_prefs = any(m in low for m in PREFS_LOG_MARKERS) or any(
-            re.search(rf"\b{re.escape(t)}\b", low) for t in tags)
-        if has_prefs and any(w.lower() in low for w in where):
-            fails.append(f"prefs в логе вместе с местом или запросом: «{line[:80]}»")
+        if any(m in low for m in PREFS_LOG_MARKERS) and any(w.lower() in low for w in where):
+            fails.append(f"prefs в логе вместе с местом или запросом: запись №{n}, "
+                         f"логгер {logger}")
     return fails
 
 
@@ -626,21 +657,21 @@ def inprocess_runner(no_llm: bool) -> tuple[Runner | None, list[str]]:
 
 
 class _ListHandler(logging.Handler):
-    def __init__(self, sink: list[str]) -> None:
+    def __init__(self, sink: list[tuple[str, str]]) -> None:
         super().__init__(level=logging.DEBUG)
         self.sink = sink
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.sink.append(record.getMessage())
+            self.sink.append((record.name, record.getMessage()))
         except Exception:  # noqa: BLE001 — a bad log call must not fail the scenario
-            self.sink.append(str(record.msg))
+            self.sink.append((record.name, str(record.msg)))
 
 
 @contextmanager
-def capture_logs() -> Iterator[list[str]]:
-    """Every log record written during one in-process request, INFO included."""
-    lines: list[str] = []
+def capture_logs() -> Iterator[list[tuple[str, str]]]:
+    """(logger, message) of every record written during one in-process request, INFO too."""
+    lines: list[tuple[str, str]] = []
     root = logging.getLogger()
     handler, level = _ListHandler(lines), root.level
     root.addHandler(handler)
@@ -792,6 +823,14 @@ def search_summary(results: list[Result]) -> str:
     words = sum(r.search == "words" for r in results)
     unknown = sum(r.search is None for r in results)
     return f"вектор запроса (embed_query) у {vec}, только по словам {words}, неизвестно {unknown}"
+
+
+CORE_MEASURE_NOTE = (
+    "«основные» — те же 16 запросов, что 16/16 в README и PITCH, но с проверками волны 8 "
+    "(факты маршрута 1.3.0, «зебра» только при известной разметке, события). Против сервера "
+    "сдачи (контракт 1.2.0) это другая мера, чем 16/16 сдачи: сравнивать только с прогонами "
+    "этой же версии eval"
+)
 
 
 def group_summary(results: list[Result]) -> str:
@@ -1171,6 +1210,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--smoke", action="store_true", help="run team queries, no grading")
     ap.add_argument("--queries", type=Path, default=QUERIES_PATH, help="CSV for --smoke")
     ap.add_argument("--note", action="append", default=[], help="extra line for the report header")
+    ap.add_argument("--graph-check", action="store_true",
+                    help="with --url: check crossings against the local walk graph too")
     args = ap.parse_args(argv)
 
     notes: list[str] = []
@@ -1186,6 +1227,8 @@ def main(argv: list[str] | None = None) -> int:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
         runner, notes = inprocess_runner(args.no_llm)
     notes = notes + args.note
+    global CROSSING_GRAPH
+    CROSSING_GRAPH = None if args.url and not args.graph_check else GRAPH_PATH
 
     if args.smoke:
         if not args.queries.is_file():
@@ -1220,6 +1263,10 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("граф тротуаров в этом прогоне не используется (WALK_GRAPH=false или "
                      "нет файла графа): ожидание route_source=graph пропущено для "
                      + ", ".join(wants_graph))
+    graph_note = crossing_check_note(bool(args.url))
+    if graph_note:
+        notes.append(graph_note)
+    notes.append(CORE_MEASURE_NOTE)
     privacy = run_privacy_probes(url_post(args.url) if args.url else None)
     write_report(args.out, mode, results, notes, privacy)
     passed = sum(r.passed for r in results)
