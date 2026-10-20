@@ -1244,7 +1244,7 @@
   "nurly_zhol": 50317,
   "palace_peace": 28324
  },
- "created_at": "2026-10-20T14:58:31+05:00",
+ "created_at": "2026-10-20T15:14:25+05:00",
  "ways_used": 35275,
  "ways_excluded": 0,
  "nodes_missing_coords": 0,
@@ -1259,6 +1259,7 @@
  "kerbs_raised": 16,
  "crossings_kerb_lowered": 63,
  "crossings_kerb_raised": 8,
+ "crossings_marked": 1329,
  "crossing_edges": 4535,
  "steps_edges": 258,
  "lit_edges": 2720,
@@ -1293,7 +1294,8 @@
   "traffic_signals": 2,
   "kerb_lowered": 4,
   "unmarked_crossing": 8,
-  "kerb_raised": 16
+  "kerb_raised": 16,
+  "markings_known": 32
  },
  "edge_flag_bits": {
   "steps": 1,
@@ -1303,7 +1305,7 @@
   "crossing": 16,
   "unlit": 32
  },
- "file_bytes": 910969,
+ "file_bytes": 911288,
  "license": "ODbL 1.0, © участники OpenStreetMap",
  "nodes_bbox": [
   50.99325,

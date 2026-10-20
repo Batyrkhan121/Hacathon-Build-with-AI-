@@ -19,6 +19,7 @@ from pipeline.walk_graph import (
     EDGE_STEPS,
     NODE_CROSSING,
     NODE_KERB,
+    NODE_MARKED,
     NODE_SIGNALS,
     NODE_UNMARKED,
     NPZ_KEYS,
@@ -104,7 +105,9 @@ def test_split_compress_largest_component_and_single_edges(built) -> None:
 def test_node_and_edge_flags(built) -> None:
     graph, stats = built
     flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
-    assert flags[3] == NODE_CROSSING and flags[4] == NODE_SIGNALS and flags[5] == NODE_KERB
+    # node 3: crossing=zebra -> markings known (bit 32, wave 8)
+    assert flags[3] == NODE_CROSSING | NODE_MARKED and flags[4] == NODE_SIGNALS
+    assert flags[5] == NODE_KERB
     # node 6 also takes the lowered kerb of its crossing way 5-6 (wave 8)
     assert flags[6] == NODE_CROSSING | NODE_UNMARKED | NODE_KERB and flags[1] == 0
 
@@ -271,7 +274,9 @@ def test_new_middle_node_approach_segments_and_second_carriageway() -> None:
     k = ids.index(new[0])
     assert graph.node_lat[k] == pytest.approx(LAT0 + DLAT, abs=1e-6)  # between 81 and 83
     assert stats["crossing_nodes_added"] == 1
-    assert flags[95] == NODE_CROSSING and flags[94] == NODE_CROSSING and flags[91] == 0
+    # crossing=uncontrolled on 94 and on the way to road node 95: marked
+    marked = NODE_CROSSING | NODE_MARKED
+    assert flags[95] == marked and flags[94] == marked and flags[91] == 0
     assert graph.edge_flags[edge_index(graph, 91, 92)] == EDGE_FOOTWAY
     assert graph.edge_flags[edge_index(graph, 90, 91)] == EDGE_FOOTWAY | EDGE_CROSSING
     assert stats["crossing_approach_segments"] == 1

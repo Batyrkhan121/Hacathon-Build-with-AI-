@@ -91,7 +91,7 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
         "largest_component_share": 0.9712, "crossings": 80, "unmarked_crossings": 12,
         "signals": 20, "kerbs_lowered": 9, "crossings_from_way_tags": 6,
         "crossings_kerb_lowered": 5, "kerbs_raised": 2, "crossings_kerb_raised": 1,
-        "unlit_edges": 30,
+        "unlit_edges": 30, "crossings_marked": 40,
         "crossing_nodes_added": 2, "steps_edges": 4, "lit_edges": 700,
         "crossing_edges": 60, "poi_total": 100, "poi_snapped": 40, "poi_snapped_share": 0.4,
         "poi_snap_median_m": 18.0, "landmarks_total": 9, "landmarks_snapped": 7,
@@ -107,6 +107,7 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
     for piece in ("Узлов: 1200; рёбер: 1500", "97.1% узлов", "Переходов: 80",
                   "footway=crossing у 6 узлов (из них 2 новых", "светофоров: 20",
                   "лестницами: 4", "(из них переходов 5)", "неосвещённых (lit=no): 30",
+                  "с известной разметкой 40",
                   "40 из 100 (40.0%)", "медиана 18 м", "ориентиров: 7 из 9",
                   "2.5 МБ; лицензия: ODbL 1.0", "за границей bbox: 3",
                   "разных снимков: 2026-05-31, 2026-10-18",
@@ -154,3 +155,14 @@ def test_report_warm_places_wheelchair_coverage_and_events() -> None:
     assert "Граф не совпал" not in text
     assert "Граф не совпал" in build_report(
         pois, [PAYLOAD], LANDMARKS, walk_coverage=cov | {"same_graph_as_npz": False})
+
+
+def test_a_failing_events_check_does_not_stop_the_report(monkeypatch) -> None:
+    import pipeline.events
+    from pipeline.report import events_summary
+
+    def crash(now=None):
+        raise OSError("poi.jsonl is gone")
+
+    monkeypatch.setattr(pipeline.events, "check_files", crash)
+    assert events_summary() == {"errors": ["проверка событий не выполнилась: poi.jsonl is gone"]}

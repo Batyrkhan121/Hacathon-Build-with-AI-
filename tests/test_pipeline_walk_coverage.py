@@ -11,6 +11,7 @@ from pipeline.walk_graph import (
     NODE_CROSSING,
     NODE_KERB,
     NODE_KERB_HIGH,
+    NODE_MARKED,
     NODE_SIGNALS,
     NODE_UNMARKED,
     build_graph,
@@ -62,15 +63,14 @@ def test_lit_class_reads_the_npz_bits(flags: int, expected: str) -> None:
     assert lit_class(flags) == expected
 
 
-@pytest.mark.parametrize(("flags", "tags", "expected"), [
-    (NODE_SIGNALS | NODE_UNMARKED, {"crossing": "traffic_signals"}, "signals"),
-    (NODE_UNMARKED, {"crossing": "unmarked"}, "unmarked"),
-    (0, {"crossing": "uncontrolled"}, "marked"),
-    (0, {"crossing:markings": "zebra"}, "marked"),
-    (0, {}, "unknown"),
+@pytest.mark.parametrize(("flags", "expected"), [
+    (NODE_SIGNALS | NODE_UNMARKED | NODE_MARKED, "signals"),
+    (NODE_UNMARKED, "unmarked"),
+    (NODE_MARKED, "marked"),
+    (0, "unknown"),
 ])
-def test_crossing_class(flags: int, tags: dict, expected: str) -> None:
-    assert crossing_class(flags, tags) == expected
+def test_crossing_class_reads_the_npz_bits(flags: int, expected: str) -> None:
+    assert crossing_class(NODE_CROSSING | flags) == expected
 
 
 @pytest.mark.parametrize(("flags", "expected"), [
@@ -87,6 +87,9 @@ def test_graph_bits_lit_no_and_kerbs_of_the_crossing_way() -> None:
     assert flags[2] & NODE_CROSSING and flags[2] & NODE_KERB_HIGH and not flags[2] & NODE_KERB
     assert flags[12] & NODE_KERB and not flags[12] & NODE_KERB_HIGH  # flush on its way
     assert not flags[3] & (NODE_KERB | NODE_KERB_HIGH)  # no kerb data
+    # markings: node 2 from its marked way; 3 has lights only, 12 no type at all
+    assert flags[2] & NODE_MARKED and not flags[3] & NODE_MARKED
+    assert flags[12] == NODE_CROSSING | NODE_KERB and stats["crossings_marked"] == 1
     assert flags[11] & NODE_KERB_HIGH and flags[10] & NODE_KERB  # the kerb nodes themselves
     assert stats["unlit_edges"] == 1 and stats["crossings_kerb_lowered"] == 1
     assert stats["crossings_kerb_raised"] == 1

@@ -110,7 +110,10 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         f"{meta.get('total_length_km', '—')} км; в крупнейшей связной компоненте "
         f"{100 * (meta.get('largest_component_share') or 0):.1f}% узлов (остальные отброшены).",
         f"- Переходов: {meta.get('crossings', 0)} (из них нерегулируемых без разметки "
-        f"{meta.get('unmarked_crossings', 0)}); светофоров: {meta.get('signals', 0)}; "
+        f"{meta.get('unmarked_crossings', 0)}"
+        + (f", с известной разметкой {meta['crossings_marked']}"
+           if "crossings_marked" in meta else "")
+        + f"); светофоров: {meta.get('signals', 0)}; "
         f"узлов с понижённым бордюром: {meta.get('kerbs_lowered', 0)}"
         + (f" (из них переходов {meta['crossings_kerb_lowered']}), с непониженным: "
            f"{meta.get('kerbs_raised', 0)} (переходов {meta.get('crossings_kerb_raised', 0)})"
@@ -197,8 +200,9 @@ def walk_coverage_lines(cov: Mapping) -> list[str]:
         "",
         "Освещённость и бордюр — биты npz (edge 2/32, node 4/16), как их видит маршрут; нет "
         "бита — «нет данных», а не «да». Бордюр перехода — kerb=* на его узле и на узлах линии "
-        "footway=crossing. Тип перехода «не указан» в npz не отличим от разметки (бит 1 без "
-        f"2 и 8). Ступеней с тегами пандуса (ramp*): {steps['with_ramp_tags']} из "
+        "footway=crossing. Тип перехода — тоже по битам (2 светофор, 8 без разметки, 32 "
+        "разметка известна); без них тип неизвестен, и маршрут не называет такой переход "
+        f"«зеброй». Ступеней с тегами пандуса (ramp*): {steps['with_ramp_tags']} из "
         f"{steps['edges']}.",
     ]
     if cov.get("same_graph_as_npz") is False:
@@ -445,8 +449,17 @@ def missing_astana_chunks(raw_dir: Path) -> list[str]:
     return [c.name for c in area_chunks("astana") if not (raw_dir / f"osm_{c.name}.json").exists()]
 
 
-def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) -> Path:
+def events_summary() -> dict:
+    """pipeline.events summary; a failing check is an error line, not a failed report."""
     from pipeline import events
+
+    try:
+        return events.check_files().summary()
+    except Exception as exc:  # noqa: BLE001 - the report must still be written
+        return {"errors": [f"проверка событий не выполнилась: {exc}"]}
+
+
+def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) -> Path:
     from pipeline.build_index import index_status
 
     settings = get_settings()
@@ -468,7 +481,7 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
         pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
         outlines_meta=(outlines or {}).get("qadam"), walk_meta=processed("walk_graph_meta.json"),
         walk_coverage=processed("walk_coverage.json"),
-        events=events.check_files().summary() if area == "astana" else None,
+        events=events_summary() if area == "astana" else None,
     )
     out.write_text(text, encoding="utf-8")
     return out
