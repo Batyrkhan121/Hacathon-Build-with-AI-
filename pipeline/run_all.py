@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, etalon, fetch_osm, normalize, overrides, report
+from pipeline import build_index, etalon, events, fetch_osm, normalize, overrides, report
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -103,6 +103,9 @@ def run(
     )
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
+    # hand-added events: checked and bound to the fresh POI -> data/events.json
+    checked = events.run()
+    log.info("events: %d upcoming, %d errors", len(checked.events), len(checked.errors))
 
     if skip_enrich:
         notes.append("Обогащение описаниями пропущено (--skip-enrich).")

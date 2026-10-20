@@ -80,6 +80,12 @@ OUTDOOR_CATEGORIES: frozenset[str] = frozenset({"park", "playground", "viewpoint
 INDOOR_VALUES = frozenset({"aquarium", "sports_centre", "coworking_space"})
 OUTDOOR_VALUES = frozenset({"zoo", "theme_park"})
 INDOOR_TAG_VALUES = frozenset({"yes", "room", "area", "corridor"})
+# «в тепле»: indoor places anyone may walk into to warm up, by OSM category: shop=mall,
+# tourism=museum, amenity=library|cafe|theatre|cinema (amenity=ice_cream is "cafe" here too).
+# Narrower than indoor: restaurants and bars want an order, places of worship are not for it
+WARM_CATEGORIES: frozenset[str] = frozenset(
+    {"mall", "museum", "library", "cafe", "theatre", "cinema"}
+)
 KIDS_VALUES = frozenset({"playground", "zoo", "aquarium", "theme_park", "water_park"})
 LOCAL_CUISINES = frozenset({"kazakh", "central_asian", "uzbek", "uyghur"})
 HISTORY_MUSEUMS = frozenset({"history", "local", "military", "archaeological", "historic"})
