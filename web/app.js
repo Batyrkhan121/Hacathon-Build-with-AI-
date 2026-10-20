@@ -17,6 +17,9 @@ const BUDGETS = [30, 60, 120];
 // Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
+// 1.3.0: словарь меток предпочтений (PrefTag в app/schemas.py); no_bars — только «нравится»
+const PREF_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'no_bars', 'warm', 'night'];
+const PREFS_KEY = 'qadam.prefs.v1';
 // 1.3.0: профиль маршрута (request.route_profile); по умолчанию «быстрее»
 const ROUTE_PROFILES = ['fastest', 'accessible', 'lit'];
 const FLAGS = [...MODES, ...FILTER_FLAGS];
@@ -68,6 +71,10 @@ const els = {
   presets: $('presets'),
   budgetChips: $('budget-chips'),
   profileChips: $('profile-chips'),
+  prefsLikes: $('prefs-likes'),
+  prefsAvoids: $('prefs-avoids'),
+  prefsCount: $('prefs-count'),
+  prefsClear: $('prefs-clear'),
   refine: $('refine'),
   refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
@@ -348,6 +355,9 @@ function renderAnswer({ redrawMap = true } = {}) {
     },
     onEditQuery: () => focusQuery(),
     onWarm: () => submit({ patch: { likes: ['warm'] } }),
+    // Чипы уточнения под ответом: разовый повтор запроса, ничего не сохраняется
+    onCloser: (maxWalk) => submit({ patch: { overrides: { max_walk_min: maxWalk } } }),
+    onNoCafe: () => submit({ patch: { avoids: ['coffee'] } }),
   });
   if (!redrawMap) return;
   const route = answer.route;
@@ -870,9 +880,74 @@ function syncLangButtons() {
   mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
 }
 
+// «Мои предпочтения»: только localStorage этого браузера (решение пользователя), без истории.
+// Чтение отбрасывает всё, чего нет в словаре: неизвестная метка дала бы 422.
+function loadPrefs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    const pick = (list, allowNoBars) =>
+      [...new Set(Array.isArray(list) ? list : [])].filter(
+        (x) => PREF_TAGS.includes(x) && (allowNoBars || x !== 'no_bars'),
+      );
+    const likes = pick(raw?.likes, true).slice(0, 8);
+    const avoids = pick(raw?.avoids, false)
+      .filter((x) => !likes.includes(x))
+      .slice(0, 8);
+    return { likes, avoids };
+  } catch {
+    return { likes: [], avoids: [] };
+  }
+}
+
+function savePrefs() {
+  try {
+    if (state.prefs.likes.length || state.prefs.avoids.length) {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs));
+    } else {
+      localStorage.removeItem(PREFS_KEY);
+    }
+  } catch {
+    /* приватный режим: предпочтения живут до перезагрузки */
+  }
+}
+
+function togglePref(list, tag) {
+  const other = list === 'likes' ? 'avoids' : 'likes';
+  const on = state.prefs[list].includes(tag);
+  state.prefs[list] = on ? state.prefs[list].filter((x) => x !== tag) : [...state.prefs[list], tag];
+  if (!on) state.prefs[other] = state.prefs[other].filter((x) => x !== tag);
+  savePrefs();
+  renderPrefs();
+  filtersChanged();
+}
+
+function renderPrefs() {
+  els.prefsLikes.replaceChildren(
+    ...PREF_TAGS.map((tag) => chip(t(`pref.${tag}`), state.prefs.likes.includes(tag), () => togglePref('likes', tag))),
+  );
+  els.prefsAvoids.replaceChildren(
+    ...PREF_TAGS.filter((tag) => tag !== 'no_bars').map((tag) =>
+      chip(t(`pref.${tag}`), state.prefs.avoids.includes(tag), () => togglePref('avoids', tag)),
+    ),
+  );
+  const n = state.prefs.likes.length + state.prefs.avoids.length;
+  els.prefsCount.replaceChildren();
+  if (n) {
+    const dot = Object.assign(document.createElement('span'), { textContent: `· ${n}` });
+    dot.setAttribute('aria-hidden', 'true');
+    const sr = Object.assign(document.createElement('span'), {
+      className: 'visually-hidden',
+      textContent: `(${t('refine.picked', { n })})`,
+    });
+    els.prefsCount.append(dot, sr);
+  }
+  els.prefsClear.disabled = n === 0;
+}
+
 function renderAll() {
   renderPresets();
   renderChips();
+  renderPrefs();
   renderLandmarkSelect();
   renderWhereNote();
   showBackToCard(state.backRank);
@@ -889,6 +964,13 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  state.prefs = loadPrefs();
+  els.prefsClear.addEventListener('click', () => {
+    state.prefs = { likes: [], avoids: [] };
+    savePrefs();
+    renderPrefs();
+    filtersChanged();
+  });
   // v2.1: «Где я» свёрнуто за «Изменить»; поле подписано заголовком «Куда пойдём?»
   els.whereToggle.addEventListener('click', () => {
     const open = !els.whereBox.classList.contains('is-open');

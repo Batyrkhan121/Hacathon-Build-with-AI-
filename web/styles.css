@@ -2831,3 +2831,87 @@ body:not(.v2) .submit-row .btn-primary {
   order: 2; /* после «Почему» и фактов */
   margin-top: 12px;
 }
+
+/* «Мои предпочтения» — тот же вид, что «Уточнить», но открывается и на широком экране сам по себе */
+.prefs {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.prefs > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.prefs > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prefs > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.prefs[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.prefs[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.prefs-count {
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+.prefs > .prefs-group {
+  margin: 12px 14px 0;
+}
+
+.prefs-note {
+  margin: 12px 14px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.prefs-clear {
+  margin: 8px 14px 12px;
+  min-height: 44px;
+}
+
+/* Чипы уточнения под ответом */
+.refine-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.refine-chips-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.v2 .refine-chips .chip {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: var(--v2-fs-m);
+}

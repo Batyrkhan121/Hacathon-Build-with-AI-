@@ -128,6 +128,24 @@
             <p class="hint" data-i18n="when.hint">Машина времени для демо, время Астаны (UTC+5)</p>
           </fieldset>
           </details>
+
+          <!-- 1.3.0: «Мои предпочтения» — метки из словаря, хранятся только в localStorage этого браузера -->
+          <details class="prefs" id="prefs">
+            <summary>
+              <span data-i18n="prefs.title">Мои предпочтения</span>
+              <span class="prefs-count" id="prefs-count"></span>
+            </summary>
+            <fieldset class="prefs-group">
+              <legend class="label" data-i18n="prefs.likes">Нравится</legend>
+              <div class="chips" id="prefs-likes"></div>
+            </fieldset>
+            <fieldset class="prefs-group">
+              <legend class="label" data-i18n="prefs.avoids">Не хочу</legend>
+              <div class="chips" id="prefs-avoids"></div>
+            </fieldset>
+            <p class="prefs-note" data-i18n="prefs.note">Хранится только в этом телефоне. С запросом уходят только метки, сервер их не сохраняет.</p>
+            <button type="button" class="btn btn-ghost prefs-clear" id="prefs-clear" data-i18n="prefs.clear">Очистить</button>
+          </details>
         </form>
       </section>
 

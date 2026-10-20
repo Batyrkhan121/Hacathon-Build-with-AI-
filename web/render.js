@@ -245,6 +245,7 @@ export function renderAnswer(root, answer, ctx) {
       warm,
       warnings,
       body,
+      renderRefineChips(answer, ctx),
       renderDataUsed(answer, ctx),
       answer.disclaimer ? h('p', { class: 'disclaimer', text: answer.disclaimer }) : null,
     ),
@@ -340,6 +341,31 @@ function renderEventBlock(card, ctx) {
           t('event.source'),
         )
       : null,
+  );
+}
+
+// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min, «без кафе» → prefs.avoids coffee.
+// Это разовый повтор запроса, без сохранения. «Ещё» (исключить показанные места) в 1.3.0 не выражается.
+function renderRefineChips(answer, ctx) {
+  if (!answer.cards.length || !ctx.onCloser) return null;
+  const req = ctx.request || {};
+  const maxWalk = Math.max(...answer.cards.map((c) => c.walk_min || 0));
+  const closer = Math.max(5, Math.round(maxWalk * 0.6));
+  const chips = [];
+  if (maxWalk > 5 && closer < maxWalk) {
+    chips.push(
+      h('button', { type: 'button', class: 'chip', onclick: () => ctx.onCloser(closer) }, t('refineChip.closer')),
+    );
+  }
+  if (!req.prefs?.avoids?.includes('coffee')) {
+    chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
+  }
+  if (!chips.length) return null;
+  return h(
+    'div',
+    { class: 'refine-chips', role: 'group', 'aria-label': t('refineChip.aria') },
+    h('span', { class: 'refine-chips-label', text: t('refineChip.label') }),
+    chips,
   );
 }
 
