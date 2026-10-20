@@ -21,7 +21,15 @@ import numpy as np
 
 from app.geo import haversine_m, walk_minutes
 from app.hours import evaluate_hours
-from app.schemas import POI, Candidate, HoursVerdict, Lang, QueryIntent, SearchContext
+from app.schemas import (
+    POI,
+    Candidate,
+    HoursVerdict,
+    Lang,
+    QueryIntent,
+    SearchContext,
+    UserPrefs,
+)
 from app.store import Store
 
 log = logging.getLogger(__name__)
@@ -69,6 +77,31 @@ GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
 # T70 step 15: the user named tags (coffee, power_outlets, quiet …) and the place has none of
 # them -> it must not ride on proximity / popularity / MMR diversity past places that match
 NO_TAG_MATCH_PENALTY = -0.10
+# T123 (contract 1.3.0): prefs for one request, only PrefTag labels (ARCHITECTURE §5 table).
+# likes: a soft plus per matching label, avoids: a penalty (never a filter), no_bars (a like
+# only): no bar / nightlife at all. score_parts["prefs"] keeps the sum for explain().
+PREF_CATEGORIES: dict[str, frozenset[str]] = {
+    "coffee": frozenset({"cafe"}),
+    "museums": frozenset({"museum", "gallery"}),
+    "parks": frozenset({"park"}),
+}
+PREF_TAGS: dict[str, frozenset[str]] = {
+    "quiet": frozenset({"quiet"}),
+    "coffee": frozenset({"coffee"}),
+    "kids": frozenset({"kids"}),
+    "night": frozenset({"night", "late_open", "24_7"}),
+}
+NO_BARS_CATEGORIES = frozenset({"bar", "nightlife"})
+# «в тепле»: indoor places anyone may walk into to warm up; the same list as
+# pipeline.normalize.WARM_CATEGORIES (DATA, tested equal): restaurants and bars want an order
+WARM_CATEGORIES = frozenset({"mall", "museum", "library", "cafe", "theatre", "cinema"})
+# A like is an explicit taste: a liked gallery at the edge of the radius (proximity ~0.2) must
+# get past a closer fast food that is open (≈ +0.15 of proximity and hours): +0.25 does that
+# and is still below a query match (0.55 x relevance), so «кофе рядом» stays about coffee.
+PREF_LIKE_BONUS = 0.25  # one liked label matched
+PREF_LIKE_MAX = 0.30  # several liked labels on one place add up to this
+PREF_AVOID_PENALTY = -0.25  # one avoided label; several add up to PREF_AVOID_MAX
+PREF_AVOID_MAX = -0.35
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -266,6 +299,11 @@ REASONS: dict[str, dict[str, str]] = {
         "kk": "жұмыс уақыты көрсетілмеген",
         "en": "opening hours not listed",
     },
+    "prefs_like": {
+        "ru": "по вашим предпочтениям",
+        "kk": "қалауыңызға сай",
+        "en": "matches your preferences",
+    },
 }
 _TAG_REASON_KEY = {"walk": "walk_tag"}
 
@@ -370,6 +408,37 @@ def _kids_ok(poi: POI) -> bool:
     return bool(poi.kids_friendly) or "kids" in poi.tags or poi.category in KIDS_CATEGORIES
 
 
+def warm_stop(poi: POI) -> bool:
+    """A place to warm up on the way: indoor and of a WARM_CATEGORIES kind."""
+    return poi.category in WARM_CATEGORIES and _is_indoor(poi) is True
+
+
+def pref_match(poi: POI, label: str) -> bool:
+    """Does the place carry this PrefTag (ARCHITECTURE §5)? no_bars: the place is a bar."""
+    if label == "warm":
+        return warm_stop(poi)
+    if label == "no_bars":
+        return poi.category in NO_BARS_CATEGORIES
+    if label == "kids" and poi.kids_friendly:
+        return True
+    return (poi.category in PREF_CATEGORIES.get(label, frozenset())
+            or bool(PREF_TAGS.get(label, frozenset()) & set(poi.tags)))
+
+
+def _passes_prefs(poi: POI, prefs: UserPrefs | None) -> bool:
+    return prefs is None or "no_bars" not in prefs.likes or not pref_match(poi, "no_bars")
+
+
+def _prefs_fit(poi: POI, prefs: UserPrefs | None) -> float:
+    """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty."""
+    if prefs is None:
+        return 0.0
+    liked = sum(pref_match(poi, label) for label in prefs.likes if label != "no_bars")
+    avoided = sum(pref_match(poi, label) for label in prefs.avoids)
+    return (min(PREF_LIKE_MAX, liked * PREF_LIKE_BONUS)
+            + max(PREF_AVOID_MAX, avoided * PREF_AVOID_PENALTY))
+
+
 def _bad_weather(ctx: SearchContext) -> bool | None:
     return None if ctx.weather is None else not ctx.weather.outdoor_ok
 
@@ -418,13 +487,15 @@ def _passes_hours(poi: POI, verdict: HoursVerdict, intent: QueryIntent) -> bool:
     return _hours_drop_reason(poi, verdict, intent) is None
 
 
-def hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
-    """How many places in the radius (after profile filters) the hours filter removed, by
-    reason: closed, closed_partial (today not described in OSM), closing_soon, night.
-    For the pipeline's filters panel (FEATURES); retrieve() itself stays unchanged."""
+def hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext, *,
+                  prefs: UserPrefs | None = None) -> dict[str, int]:
+    """How many places in the radius (after profile and prefs filters) the hours filter
+    removed, by reason: closed, closed_partial (today not described in OSM), closing_soon,
+    night. For the pipeline's filters panel (FEATURES); retrieve() itself stays unchanged."""
     counts = {"closed": 0, "closed_partial": 0, "closing_soon": 0, "night": 0}
     for poi in store.pois:
-        if haversine_m(ctx.origin, poi.geo) > ctx.radius_m or not _passes_profile(poi, intent):
+        if (haversine_m(ctx.origin, poi.geo) > ctx.radius_m or not _passes_profile(poi, intent)
+                or not _passes_prefs(poi, prefs)):
             continue
         reason = _hours_drop_reason(poi, evaluate_hours(poi.opening_hours, ctx.local_time),
                                     intent)
@@ -513,6 +584,7 @@ def _score(
     verdict: HoursVerdict,
     semantic: float | None,
     query_stems: frozenset[str],
+    prefs: UserPrefs | None = None,
 ) -> tuple[float, dict[str, float]]:
     lexical = _lexical(intent, query_stems, poi_text(poi))
     relevance = lexical if semantic is None else (
@@ -536,6 +608,10 @@ def _score(
     if intent.wheelchair and _access(poi) == "unknown":
         parts["penalty"] = WHEELCHAIR_UNKNOWN_PENALTY
         score += WHEELCHAIR_UNKNOWN_PENALTY
+    fit = _prefs_fit(poi, prefs)
+    if fit:
+        parts["prefs"] = fit
+        score += fit
     return round(score, 4), {k: round(float(v), 4) for k, v in parts.items()}
 
 
@@ -635,6 +711,8 @@ def explain(
         labels = (MISSING_TAG_WORDS[t] for t in missing)
         what = ", ".join(label.get(lang, label["ru"]) for label in labels)
         keys.append(("no_data", {"what": what}))
+    if cand.score_parts.get("prefs", 0.0) > 0:  # T123: a liked label matched (no labels here)
+        keys.append(("prefs_like", {}))
     if intent.with_kids and (poi.kids_friendly or "kids" in poi.tags):  # data, not a guess
         keys.append(("kids", {}))
     if intent.wheelchair:
@@ -700,6 +778,8 @@ def retrieve(
     ctx: SearchContext,
     query_vec: np.ndarray | None,
     k: int = 8,
+    *,
+    prefs: UserPrefs | None = None,
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -710,6 +790,8 @@ def retrieve(
     deterministic reasons in Russian (e.g. "есть кофе", "≈6 мин пешком").
     Final order is MMR (score vs. redundancy); Candidate.score keeps the raw weighted score.
     Unnamed places with the same generic name are kept once (the best one).
+    T123 `prefs` (contract 1.3.0): likes add PREF_LIKE_BONUS, avoids PREF_AVOID_PENALTY
+    (score_parts["prefs"]), likes "no_bars" drops bar / nightlife.
     """
     if k <= 0 or not store.pois:
         return []
@@ -718,7 +800,8 @@ def retrieve(
     passed: list[tuple[int, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
-        if distance > ctx.radius_m or not _passes_profile(poi, intent):
+        if (distance > ctx.radius_m or not _passes_profile(poi, intent)
+                or not _passes_prefs(poi, prefs)):
             continue
         # the note is written in the user's language by app.hours (FEATURES, T73)
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
@@ -741,7 +824,7 @@ def retrieve(
         elif semantic is not None and median is not None:
             sem = median
             info["no_vector"] = 1.0
-        score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems)
+        score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems, prefs)
         parts.update(info)
         pool.append(
             Candidate(

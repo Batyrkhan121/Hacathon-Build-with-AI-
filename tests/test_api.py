@@ -511,3 +511,38 @@ def test_default_deps_are_loaded_in_lifespan(
     with TestClient(app) as c:
         assert c.get("/api/health").json()["poi_count"] == 14
     assert calls == [1]
+
+
+# ------------------------------------------------------ T123: prefs through HTTP, never logged
+
+
+def test_prefs_answer_through_http_and_stay_out_of_the_logs(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    from .test_pipeline import ALL_PREFS, _pref_leaks
+
+    with caplog.at_level(logging.DEBUG):
+        ok = client.post("/api/recommend", json=body(query="тихое место", prefs=ALL_PREFS,
+                                                     route_profile="lit", use_llm=False))
+        cell = h3.latlng_to_cell(51.0894, 71.4161, 10)
+        ok_cell = client.post("/api/recommend", json=body(location={"h3_cell": cell},
+                                                          prefs=ALL_PREFS))
+    assert ok.status_code == 200 and ok_cell.status_code == 200
+    assert any(f.startswith("предпочтения:") for f in ok.json()["data_used"]["filters"])
+    assert "POST /api/recommend -> 200" in caplog.text
+    assert _pref_leaks(caplog.records) == []
+
+
+@pytest.mark.parametrize("prefs", [
+    {"likes": ["history"]},  # not a PrefTag (E18)
+    {"likes": ["тихо, у воды, без людей"]},  # free text
+    {"likes": ["quiet"], "history": ["coffee"]},  # an extra field
+    {"avoids": ["no_bars"]},  # no_bars is a like
+])
+def test_bad_prefs_are_422_without_echo(client: TestClient, caplog: pytest.LogCaptureFixture,
+                                        prefs: dict[str, object]) -> None:
+    with caplog.at_level(logging.INFO):
+        r = client.post("/api/recommend", json=body(prefs=prefs))
+    assert r.status_code == 422
+    for text in (r.text, caplog.text):
+        assert "history" not in text and "у воды" not in text and "no_bars" not in text

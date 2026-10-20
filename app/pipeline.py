@@ -48,6 +48,7 @@ from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
 from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
+    PREF_LABELS_RU,
     TAG_VOCAB,
     Answer,
     Candidate,
@@ -61,6 +62,7 @@ from app.schemas import (
     RecommendRequest,
     RouteProfile,
     SearchContext,
+    UserPrefs,
 )
 from app.store import Store
 
@@ -182,6 +184,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "маршрут: без ступенек",
         "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
         "f_profile_auto": " (коляска)",
+        "f_prefs_likes": "предпочтения: {v}", "f_prefs_avoids": "избегать: {v}",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -257,6 +260,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "маршрут: баспалдақсыз",
         "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
         "f_profile_auto": " (арба)",
+        "f_prefs_likes": "қалауыңыз: {v}", "f_prefs_avoids": "аулақ болу: {v}",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -329,6 +333,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_accessible": "route: step-free",
         "f_profile_lit": "route: along lit streets (OSM data)",
         "f_profile_auto": " (wheelchair)",
+        "f_prefs_likes": "likes: {v}", "f_prefs_avoids": "avoid: {v}",
     },
 }
 
@@ -384,6 +389,16 @@ TAG_NAMES: dict[str, dict[str, str]] = {
            "local_cuisine": "local cuisine", "live_music": "live music", "walk": "walk",
            "water": "waterside", "architecture": "architecture", "history": "history",
            "art": "art", "shopping": "shopping", "sport": "sport", "food": "food"},
+}
+
+
+# T123: prefs labels in the "data used" panel (ru = schemas.PREF_LABELS_RU)
+PREF_NAMES: dict[str, dict[str, str]] = {
+    "ru": dict(PREF_LABELS_RU),
+    "kk": {"quiet": "тыныш", "coffee": "кофе", "kids": "баламен", "museums": "мұражайлар",
+           "parks": "саябақтар", "no_bars": "барсыз", "warm": "жылыда", "night": "түнгі"},
+    "en": {"quiet": "quiet", "coffee": "coffee", "kids": "with kids", "museums": "museums",
+           "parks": "parks", "no_bars": "no bars", "warm": "warm", "night": "night"},
 }
 
 
@@ -576,20 +591,25 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     wide_pool = llm is not None and llm.available and query_vec is None
     pool_k = LLM_POOL_K if wide_pool else TOP_K
 
+    # T123: prefs re-rank and filter the search (retrieval); labels only, never logged
+    search_prefs = req.prefs if req.prefs and (req.prefs.likes or req.prefs.avoids) else None
+
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
     search_intent = plan_intent
     if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
         candidates, failed = [], False
     else:
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
+                                       prefs=search_prefs)
     if short_walks:  # "two cards beat a third one 48 minutes away"
         candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
     if not candidates and not failed and not no_time and not short_walks:
         wider = min(round(ctx.radius_m * WIDEN_FACTOR), MAX_RADIUS_M)
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
-            candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
+            candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
+                                           prefs=search_prefs)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     if plan_intent.night and not no_time:
@@ -600,7 +620,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
             far_ctx = ctx.model_copy(update={"radius_m": min(
                 round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
-            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k)
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k,
+                                     prefs=search_prefs)
             sure = [c for c in more if _night_sure(c)]
             if sure:
                 search_intent, ctx = far_intent, far_ctx
@@ -609,14 +630,15 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = sure
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
+                                       prefs=search_prefs)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
-    dropped = {} if no_time else _hours_dropped(store, search_intent, ctx)
+    dropped = {} if no_time else _hours_dropped(store, search_intent, ctx, search_prefs)
     if candidates and _query_unmatched(store, search_intent, ctx, candidates):
         warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
@@ -679,7 +701,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if candidates and llm is not None:
         draft = None
         try:
-            draft = draft_cards(search_intent, ctx, gen_candidates, llm)
+            draft = draft_cards(search_intent, ctx, gen_candidates, llm, prefs=search_prefs)
         except LLMUnavailable:
             reason = llm.last_error or "bug"
             log.info("request %s: generation fell back to templates (%s)", request_id, reason)
@@ -783,7 +805,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None,
-                             profile=profile, profile_auto=profile_auto),
+                             profile=profile, profile_auto=profile_auto,
+                             prefs=req.prefs),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -893,13 +916,15 @@ def index_problem(settings: Settings, store: Store) -> str | None:
     return "index_missing"
 
 
-def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext) -> dict[str, int]:
+def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext,
+                   prefs: UserPrefs | None = None) -> dict[str, int]:
     """retrieval.hours_dropped (QUALITY) for the panel; absent or broken -> {}."""
     fn = getattr(retrieval, "hours_dropped", None)
     if fn is None:
         return {}
     try:
-        return {str(k): int(v) for k, v in dict(fn(store, intent, ctx)).items()}
+        counts = fn(store, intent, ctx, prefs=prefs) if prefs else fn(store, intent, ctx)
+        return {str(k): int(v) for k, v in dict(counts).items()}
     except Exception as exc:  # noqa: BLE001 - a panel line never kills the answer
         log.error("hours_dropped failed (%s)\n%s", type(exc).__name__, _frames(exc))
         return {}
@@ -1076,10 +1101,14 @@ def _safe_radius(intent: QueryIntent) -> int:
 
 def _retrieve(
     store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None,
-    k: int = TOP_K,
+    k: int = TOP_K, *, prefs: UserPrefs | None = None,
 ) -> tuple[list[Candidate], bool]:
+    """(candidates, failed). Wave 8 keywords go to retrieve only when set (1.2.0 calls stay)."""
+    extra: dict[str, object] = {}
+    if prefs is not None:
+        extra["prefs"] = prefs
     try:
-        return retrieval.retrieve(store, intent, ctx, query_vec, k=k), False
+        return retrieval.retrieve(store, intent, ctx, query_vec, k=k, **extra), False
     except Exception as exc:  # noqa: BLE001 - an empty answer beats a 500
         # data problem (bad index / record) vs a bug in the code: both need a fix, not a retry
         kind = "data" if isinstance(exc, (ValueError, KeyError, IndexError)) else "bug"
@@ -1277,13 +1306,14 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              night_by_clock: bool = False, semantic: bool = False,
              semantic_reason: str | None = None, claude_picked: bool = False,
              index_stale: bool = False, hours_dropped: dict[str, int] | None = None,
-             profile: RouteProfile = "fastest", profile_auto: bool = False
-             ) -> list[str]:
+             profile: RouteProfile = "fastest", profile_auto: bool = False,
+             prefs: UserPrefs | None = None) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran.
     `airport` = minutes to departure when the flight rule shaped the time budget.
     `profile` = the route profile asked (the default "fastest" is not listed); `profile_auto`:
-    switched to "accessible" by the wheelchair."""
+    switched to "accessible" by the wheelchair. `prefs`: the person's likes / avoids, labels
+    only (shown in the answer, never logged)."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
     if intent.time_budget_min and airport is not None:
         out.append(t["f_budget_airport"].format(v=intent.time_budget_min, b=airport,
@@ -1308,6 +1338,9 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
     if profile != "fastest":
         out.append(t[f"f_profile_{profile}"] + (t["f_profile_auto"] if profile_auto else ""))
+    line = _prefs_line(t, prefs, lang)
+    if line:
+        out.append(line)
     if semantic:
         out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:
@@ -1323,6 +1356,17 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if not use_llm:
         out.append(t["f_no_ai"])
     return out
+
+
+def _prefs_line(t: dict[str, str], prefs: UserPrefs | None, lang: Lang) -> str | None:
+    """«предпочтения: музеи, без баров; избегать: кофе» in the answer language."""
+    if prefs is None:
+        return None
+    names = PREF_NAMES[lang]
+    parts = [t[key].format(v=", ".join(names[x] for x in tags))
+             for key, tags in (("f_prefs_likes", prefs.likes), ("f_prefs_avoids", prefs.avoids))
+             if tags]
+    return "; ".join(parts) or None
 
 
 def _sources(cards: list[Card], has_weather: bool) -> list[str]:

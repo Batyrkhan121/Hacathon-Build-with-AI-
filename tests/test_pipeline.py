@@ -1593,3 +1593,125 @@ def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(route, "plan_walk", spy)
     recommend(req("прогулка на 60 минут", use_llm=False, overrides={"wheelchair": True}), deps)
     assert got == ["accessible"]
+
+
+# ---------------------------------------------- T123: prefs -> search, panel, prompt, never logs
+
+PREFS = {"likes": ["museums", "no_bars"], "avoids": ["coffee"]}
+
+
+def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                             ) -> None:
+    install_core_fakes(monkeypatch)
+    seen: list[Any] = []
+
+    def spy(store, intent, ctx, query_vec, k=8, **kw):  # type: ignore[no-untyped-def]
+        seen.append(kw.get("prefs"))
+        return fake_retrieve(store, intent, ctx, query_vec, k)
+
+    monkeypatch.setattr(retrieval, "retrieve", spy)
+    a = recommend(req("куда сходить", use_llm=False, prefs=PREFS), deps)
+    assert seen and seen[0] is not None and seen[0].likes == ["museums", "no_bars"]
+    assert "предпочтения: музеи, без баров; избегать: кофе" in a.data_used.filters
+    seen.clear()
+    plain = recommend(req("куда сходить", use_llm=False, prefs={}), deps)
+    assert seen == [None]  # nothing to apply: the 1.2.0 call
+    assert not any("предпочтения" in f or "избегать" in f for f in plain.data_used.filters)
+
+
+@pytest.mark.parametrize(("lang", "prefs", "line"), [
+    ("kk", PREFS, "қалауыңыз: мұражайлар, барсыз; аулақ болу: кофе"),
+    ("en", PREFS, "likes: museums, no bars; avoid: coffee"),
+    ("en", {"avoids": ["night"]}, "avoid: night"),
+    ("ru", {"likes": ["warm", "kids"]}, "предпочтения: в тепле, с ребёнком"),
+])
+def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: dict[str, Any],
+                                                line: str) -> None:
+    a = recommend(req("куда сходить", use_llm=False, lang=lang, prefs=prefs), deps)
+    assert line in a.data_used.filters
+
+
+def test_prefs_shift_the_pick_on_the_real_core(deps: Deps) -> None:
+    plain = recommend(req("куда сходить", use_llm=False), deps)
+    liked = recommend(req("куда сходить", use_llm=False,
+                          prefs={"likes": ["parks", "no_bars"], "avoids": ["coffee"]}), deps)
+    before, after = [c.category for c in plain.cards], [c.category for c in liked.cards]
+    assert "park" not in before and "cafe" in before
+    assert after[0] == "park" and "cafe" not in after
+    assert not {"bar", "nightlife"} & set(after)
+    assert "по вашим предпочтениям" in liked.cards[0].why
+
+
+def test_prefs_go_to_the_card_prompt_as_codes(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                              ) -> None:
+    prompts: list[str] = []
+    llm = deps.llm
+    real = llm.generate_structured  # type: ignore[union-attr]
+
+    def spy(**kw: Any) -> Any:
+        prompts.append(kw["prompt"])
+        return real(**kw)
+
+    monkeypatch.setattr(llm, "generate_structured", spy)
+    recommend(req("куда сходить", prefs=PREFS), deps)
+    card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
+    assert '"likes": [\n   "museums",\n   "no_bars"\n  ]' in card_prompt
+    assert '"avoids": [\n   "coffee"\n  ]' in card_prompt
+
+
+# Every PrefTag code and its labels in ru / kk / en: none of them may show up in a log record
+# (the strict form of the rule «never together with the cell, the landmark or the query»).
+PREF_LOG_MARKERS = sorted(
+    {*pipeline_mod.PREF_NAMES["ru"], *(v for names in pipeline_mod.PREF_NAMES.values()
+                                       for v in names.values()), "prefs", "likes", "avoids"},
+    key=len, reverse=True)
+ALL_PREFS = {"likes": ["quiet", "museums", "parks", "no_bars", "warm", "night"],
+             "avoids": ["coffee", "kids"]}
+
+
+def _pref_leaks(records: list[logging.LogRecord]) -> list[str]:
+    out = []
+    for r in records:
+        text = (r.getMessage() + " " + (r.exc_text or "")).lower()
+        hits = [m for m in PREF_LOG_MARKERS if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+        if hits:
+            out.append(f"{r.name}: {hits}: {text[:120]}")
+    return out
+
+
+def _boom(*args: Any, **kw: Any) -> Any:
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("location", [
+    {"landmark_id": "expo"}, {"h3_cell": h3.latlng_to_cell(51.0894, 71.4161, 10)}])
+@pytest.mark.parametrize("failure", [None, "retrieve", "route", "finalize", "llm", "template"])
+def test_prefs_never_reach_the_logs(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                    caplog: pytest.LogCaptureFixture,
+                                    location: dict[str, str], failure: str | None) -> None:
+    """T123 main check (EVAL's probe is extra): prefs are labels for one answer; no log record
+    carries them, so none carries them next to the cell, the landmark or the query."""
+    if failure == "retrieve":
+        monkeypatch.setattr(retrieval, "retrieve", _boom)
+    elif failure == "route":
+        monkeypatch.setattr(route, "plan_route", _boom)
+    elif failure == "finalize":
+        monkeypatch.setattr(validate, "finalize", _boom)
+    elif failure == "template":
+        monkeypatch.setattr(validate, "template_cards", _boom)
+    elif failure == "llm":
+        deps = Deps(store=deps.store, llm=FakeLLM(fail=LLMUnavailable("down")),
+                    settings=deps.settings)
+    query = "тихое место погулять с видом"
+    body = {"query": query, "location": location, "at": DAYTIME, "prefs": ALL_PREFS}
+    request = RecommendRequest.model_validate(body)
+    with caplog.at_level(logging.DEBUG):
+        a = recommend(request, deps)
+        logging.getLogger("app").info("request %r", request)  # even a careless repr is clean
+    assert caplog.records  # the request line at least
+    assert _pref_leaks(caplog.records) == []
+    where = [query, location.get("landmark_id"), location.get("h3_cell")]
+    for r in caplog.records:  # and the request line has no query / cell / landmark either
+        if r.getMessage().startswith("recommend id="):
+            assert not any(w and w in r.getMessage() for w in where)
+    assert a.data_used.filters  # while the answer itself may say them

@@ -775,3 +775,107 @@ def test_hours_dropped_counts_reasons(synthetic_pois: list[POI]) -> None:
     out = retrieve(store, intent(), make_ctx(at=MON_NOON, radius=1500), None, k=50)
     in_radius = [p for p in synthetic_pois if haversine_m(ORIGIN, p.geo) <= 1500]
     assert len(out) + sum(monday.values()) == len(in_radius)
+
+
+# ------------------------------------------------- T123: prefs (contract 1.3.0), labels only
+
+
+def _prefs(likes: list[str] | None = None, avoids: list[str] | None = None):  # type: ignore[no-untyped-def]
+    from app.schemas import UserPrefs
+
+    return UserPrefs(likes=likes or [], avoids=avoids or [])
+
+
+def test_like_lifts_a_liked_place_past_a_closer_one() -> None:
+    from app.retrieval import PREF_LIKE_BONUS
+
+    cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee", "indoor"])
+    museum = make_poi("museum", "museum", dlat=0.007, tags=["indoor", "history"])
+    store = make_store([cafe, museum])
+    plain = retrieve(store, intent(), make_ctx(), None)
+    assert ids(plain)[0] == cafe.id  # closer wins without prefs
+    liked = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(["museums"]))
+    assert ids(liked)[0] == museum.id
+    top = liked[0]
+    assert top.score_parts["prefs"] == PREF_LIKE_BONUS
+    assert "по вашим предпочтениям" in top.matched  # a reason, without naming the label
+    assert "prefs" not in liked[1].score_parts
+
+
+def test_avoid_is_a_penalty_not_a_filter() -> None:
+    from app.retrieval import PREF_AVOID_PENALTY
+
+    cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee", "indoor"])
+    park = make_poi("park", "park", dlat=0.006, tags=["walk", "outdoor"])
+    store = make_store([cafe, park])
+    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    assert ids(out) == [park.id, cafe.id]  # still there, just lower
+    assert out[1].score_parts["prefs"] == PREF_AVOID_PENALTY
+    only = retrieve(make_store([cafe]), intent(), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    assert ids(only) == [cafe.id]
+
+
+def test_no_bars_drops_bars_and_nightlife() -> None:
+    bar = make_poi("bar", "bar", dlat=0.001)
+    club = make_poi("club", "nightlife", dlat=0.0012)
+    cafe = make_poi("cafe", "cafe", dlat=0.002)
+    store = make_store([bar, club, cafe])
+    assert set(ids(retrieve(store, intent(), make_ctx(), None))) == {bar.id, club.id, cafe.id}
+    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(["no_bars"]))
+    assert ids(out) == [cafe.id]
+    assert "prefs" not in out[0].score_parts  # no_bars is a filter, not a plus
+    late = datetime(2026, 10, 20, 12, 0, tzinfo=ASTANA_TZ)
+    closed_bar = make_poi("bar2", "bar", dlat=0.001, opening_hours="Mo-Su 18:00-02:00")
+    assert sum(hours_dropped(make_store([closed_bar]), intent(), make_ctx(at=late)).values()) == 1
+    counts = hours_dropped(make_store([closed_bar]), intent(), make_ctx(at=late),
+                           prefs=_prefs(["no_bars"]))
+    assert sum(counts.values()) == 0  # the panel does not count what no_bars removed
+
+
+@pytest.mark.parametrize(("label", "poi", "match"), [
+    ("quiet", {"category": "library", "tags": ["quiet"]}, True),
+    ("coffee", {"category": "cafe"}, True),
+    ("coffee", {"category": "restaurant", "tags": ["coffee"]}, True),
+    ("kids", {"category": "museum", "kids_friendly": True}, True),
+    ("kids", {"category": "museum", "tags": ["kids"]}, True),
+    ("museums", {"category": "gallery"}, True),
+    ("museums", {"category": "theatre"}, False),
+    ("parks", {"category": "park"}, True),
+    ("night", {"category": "bar", "tags": ["late_open"]}, True),
+    ("night", {"category": "cafe", "tags": ["24_7"]}, True),
+    ("warm", {"category": "mall", "tags": ["indoor"]}, True),
+    ("warm", {"category": "cafe"}, True),  # a cafe is indoor by its category
+    ("warm", {"category": "restaurant", "tags": ["indoor"]}, False),  # wants an order
+    ("warm", {"category": "museum", "indoor": False}, False),  # an open-air museum
+    ("warm", {"category": "park"}, False),
+    ("no_bars", {"category": "nightlife"}, True),
+])
+def test_pref_labels_follow_the_architecture_table(label: str, poi: dict, match: bool) -> None:
+    from app.retrieval import pref_match
+
+    kwargs = dict(poi)
+    category = kwargs.pop("category")
+    assert pref_match(make_poi("x", category, **kwargs), label) is match
+
+
+def test_warm_categories_are_the_data_lane_list() -> None:
+    from app.retrieval import WARM_CATEGORIES
+    from pipeline.normalize import WARM_CATEGORIES as DATA_WARM
+
+    assert WARM_CATEGORIES == DATA_WARM
+
+
+def test_empty_prefs_change_nothing(synthetic_pois: list[POI]) -> None:
+    store = make_store(synthetic_pois)
+    plain = retrieve(store, intent("кофе"), make_ctx(), None)
+    empty = retrieve(store, intent("кофе"), make_ctx(), None, prefs=_prefs())
+    assert [(c.poi.id, c.score) for c in plain] == [(c.poi.id, c.score) for c in empty]
+
+
+def test_query_categories_stay_hard_with_likes() -> None:
+    """«кофе рядом» with likes museums: the query filter wins, the like only re-ranks."""
+    cafe = make_poi("cafe", "cafe", dlat=0.001)
+    museum = make_poi("museum", "museum", dlat=0.001)
+    out = retrieve(make_store([cafe, museum]), intent("кофе", categories=["cafe"]), make_ctx(),
+                   None, prefs=_prefs(["museums"]))
+    assert ids(out) == [cafe.id]
