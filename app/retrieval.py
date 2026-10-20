@@ -380,6 +380,11 @@ def poi_text(poi: POI) -> str:
     return " ".join(parts)
 
 
+def is_indoor(poi: POI) -> bool | None:
+    """True / False by the record (indoor flag, tags, category); None = not known."""
+    return _is_indoor(poi)
+
+
 def _is_indoor(poi: POI) -> bool | None:
     if poi.indoor is not None:
         return poi.indoor

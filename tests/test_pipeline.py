@@ -1715,3 +1715,108 @@ def test_prefs_never_reach_the_logs(deps: Deps, monkeypatch: pytest.MonkeyPatch,
         if r.getMessage().startswith("recommend id="):
             assert not any(w and w in r.getMessage() for w in where)
     assert a.data_used.filters  # while the answer itself may say them
+
+
+# ------------------------------------------- T123: «в тепле» — indoor stops, short walks outside
+
+WARM_LINE = "в тепле: на улице до 10 мин подряд"
+
+
+def _frost(temp_c: float):  # type: ignore[no-untyped-def]
+    def get(origin: GeoPoint, at: datetime) -> WeatherInfo:
+        return WeatherInfo(temp_c=temp_c, summary=f"{temp_c:+.0f}°C", outdoor_ok=temp_c > -10,
+                           fetched_at=datetime(2026, 10, 19, 10, 0, tzinfo=UTC))
+    return get
+
+
+def test_warm_like_gives_indoor_stops_close_together(deps: Deps) -> None:
+    by_id = deps.store.by_id
+    plain = recommend(req("погулять", use_llm=False), deps)
+    assert any(not retrieval.is_indoor(by_id[c.poi_id]) for c in plain.cards)  # park, view
+    a = recommend(req("погулять", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    # indoor by the record (the test cafe has no "indoor" tag; OSM data always has it)
+    assert len(a.cards) >= 2 and all(retrieval.is_indoor(by_id[c.poi_id]) for c in a.cards)
+    assert a.route is not None and a.route.max_outdoor_leg_min is not None
+    assert a.route.max_outdoor_leg_min <= 10
+    assert all(c.walk_min <= 10 for c in a.cards)
+    assert WARM_LINE in a.data_used.filters and "в помещении" in a.data_used.filters
+    assert t_no_match() not in a.warnings  # «погулять» is not unmatched in the warm
+
+
+def t_no_match() -> str:
+    return TEXTS["ru"]["no_match"]
+
+
+def test_warm_by_the_indoor_switch_and_by_frost(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                                ) -> None:
+    switch = recommend(req("куда сходить", use_llm=False, overrides={"indoor_only": True}), deps)
+    assert WARM_LINE in switch.data_used.filters
+    assert not any(f.startswith("предпочтения") for f in switch.data_used.filters)
+    monkeypatch.setattr(weather, "get_weather", _frost(-20))
+    frost = recommend(req("куда сходить", use_llm=False), deps)
+    assert f"{WARM_LINE} (мороз −20 °C)" in frost.data_used.filters
+    assert all(retrieval.is_indoor(deps.store.by_id[c.poi_id]) for c in frost.cards)
+    en = recommend(req("where to go", use_llm=False, lang="en"), deps)
+    assert "warm: up to 10 min outside at a time (frost −20 °C)" in en.data_used.filters
+    kk = recommend(req("қайда баруға болады", use_llm=False, lang="kk"), deps)
+    assert "жылыда: далада қатарынан 10 минутқа дейін (аяз −20 °C)" in kk.data_used.filters
+    # the person avoids «в тепле»: frost does not switch it on
+    no = recommend(req("куда сходить", use_llm=False, prefs={"avoids": ["warm"]}), deps)
+    assert not any(f.startswith("в тепле:") for f in no.data_used.filters)
+    monkeypatch.setattr(weather, "get_weather", _frost(-9))
+    mild = recommend(req("куда сходить", use_llm=False), deps)
+    assert not any(f.startswith("в тепле:") for f in mild.data_used.filters)
+
+
+def test_warm_has_no_walk_loop(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A place at the start (inside the mall you stand in) is a fine warm stop; plan_walk would
+    skip it (AT_ORIGIN_M) and send the person out to a far one."""
+    calls: list[int] = []
+    real = route.plan_walk
+    monkeypatch.setattr(route, "plan_walk", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    a = recommend(req("прогулка на 60 минут", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    assert calls == [] and a.cards
+    assert a.route is None or a.route.legs[-1].to_id != "origin"
+
+
+def test_warm_cluster_keeps_stops_within_a_short_walk(synthetic_pois: list[POI]) -> None:
+    by_id = {p.id: p for p in synthetic_pois}
+
+    def cand(pid: str) -> Candidate:
+        return Candidate(poi=by_id[pid], distance_m=100, walk_min=2, score=0.5,
+                         hours=HoursVerdict(status="unknown", confidence="low", note="-"))
+
+    # 7 mall, 1 cafe, 9 restaurant: close together; 2 cafe 600 m east; 4 park outdoor
+    picked = pipeline_mod.warm_cluster([cand(i) for i in (
+        "test:poi/7", "test:poi/4", "test:poi/2", "test:poi/1", "test:poi/9")])
+    ids = [c.poi.id for c in picked]
+    assert ids[0] == "test:poi/7" and "test:poi/4" not in ids  # outdoor out: enough indoor
+    for a in picked:
+        for b in picked:
+            assert geo.walk_minutes(geo.haversine_m(a.poi.geo, b.poi.geo)) <= 10
+    # one indoor place only: outdoor ones stay in the pool, the far mall still goes
+    alone = pipeline_mod.warm_cluster([cand("test:poi/4"), cand("test:poi/7")])
+    assert [c.poi.id for c in alone] == ["test:poi/4"]
+
+
+def test_warm_with_too_few_indoor_places_says_so(deps: Deps) -> None:
+    only_outdoor = [p for p in deps.store.pois if p.category in ("park", "viewpoint", "monument",
+                                                                   "playground")]
+    store = make_store(only_outdoor, deps.store.landmarks)
+    a = recommend(req("куда сходить", use_llm=False, prefs={"likes": ["warm"]}),
+                  Deps(store=store, llm=deps.llm, settings=deps.settings))
+    assert a.cards
+    assert TEXTS["ru"]["warm_outdoor"] in a.warnings
+
+
+def test_warm_long_walk_outside_is_told(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = route.plan_route
+
+    def long_leg(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"max_outdoor_leg_min": 14}) if got else got
+
+    monkeypatch.setattr(route, "plan_route", long_leg)
+    a = recommend(req("куда сходить", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    assert a.route is not None
+    assert TEXTS["ru"]["warm_long_leg"].format(n=14) in a.warnings

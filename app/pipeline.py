@@ -63,6 +63,7 @@ from app.schemas import (
     RouteProfile,
     SearchContext,
     UserPrefs,
+    WeatherInfo,
 )
 from app.store import Store
 
@@ -109,6 +110,14 @@ MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
 MIN_YEAR, MAX_YEAR = 2000, 2100  # sane range for the demo "time machine" (`at`)
 WIDEN_FACTOR = 1.5
 MAX_RADIUS_M = 5000  # SearchContext.radius_m upper bound
+# T123 «в тепле» (warm mode): prefs likes "warm", the UI switch indoor_only, or frost by the
+# weather. Stops are indoor (warm stops — retrieval.WARM_CATEGORIES — first), each within
+# WARM_MAX_LEG_MIN of the start and of each other, so route.max_outdoor_leg_min stays short
+# (E15: ≤ 10). No walk loop: the person stays in the warm, a place at the start is a stop too.
+WARM_MAX_LEG_MIN = 10
+FROST_C = -10.0  # air temperature by Open-Meteo at or below this is «мороз»; wind not counted
+WARM_MIN_INDOOR = 2  # fewer indoor candidates than this -> outdoor places come back, said so
+WARM_DROP_TAGS = frozenset({"walk", "outdoor"})  # «погулять» in the warm is not a park walk
 
 TEXTS: dict[str, dict[str, str]] = {
     "ru": {
@@ -185,6 +194,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
         "f_profile_auto": " (коляска)",
         "f_prefs_likes": "предпочтения: {v}", "f_prefs_avoids": "избегать: {v}",
+        "f_warm": "в тепле: на улице до {v} мин подряд", "f_warm_frost": " (мороз {t})",
+        "warm_outdoor": "Рядом мало мест в помещении — показаны и места на улице.",
+        "warm_long_leg": "Самый длинный отрезок по улице — {n} мин: тёплых мест ближе "
+                         "в данных нет, оденьтесь теплее.",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -261,6 +274,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
         "f_profile_auto": " (арба)",
         "f_prefs_likes": "қалауыңыз: {v}", "f_prefs_avoids": "аулақ болу: {v}",
+        "f_warm": "жылыда: далада қатарынан {v} минутқа дейін",
+        "f_warm_frost": " (аяз {t})",
+        "warm_outdoor": "Жақын жерде жабық орындар аз — далада орындар да көрсетілді.",
+        "warm_long_leg": "Көшедегі ең ұзақ кесінді — {n} мин: деректерде жақынырақ жылы "
+                         "орын жоқ, жылырақ киініңіз.",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -334,6 +352,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "route: along lit streets (OSM data)",
         "f_profile_auto": " (wheelchair)",
         "f_prefs_likes": "likes: {v}", "f_prefs_avoids": "avoid: {v}",
+        "f_warm": "warm: up to {v} min outside at a time", "f_warm_frost": " (frost {t})",
+        "warm_outdoor": "Few indoor places nearby — outdoor places are shown too.",
+        "warm_long_leg": "The longest walk outside is {n} min: there is no warm place "
+                         "closer in the data, dress warmly.",
     },
 }
 
@@ -551,13 +573,22 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if ("max_walk_min" not in plan_update and intent.max_walk_min is None and plan_budget
             and geo.ONE_WAY_SHARE * float(plan_budget) > MAX_ONE_WAY_WALK_MIN):
         plan_update["max_walk_min"] = MAX_ONE_WAY_WALK_MIN
+    # T123 «в тепле»: indoor stops close to the start and to each other (see WARM_MAX_LEG_MIN)
+    wx = weather.get_weather(origin, local_time)
+    warm = warm_reason(req, wx)
+    warm_indoor = False  # the indoor filter was set by warm mode (not by the person)
+    if warm is not None:
+        cap = plan_update.get("max_walk_min", intent.max_walk_min)
+        plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
+        plan_update["must_tags"] = [x for x in intent.must_tags if x not in WARM_DROP_TAGS]
+        if intent.indoor == "any":
+            plan_update["indoor"], warm_indoor = "indoor", True
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
     no_time = walk_budget is not None and walk_budget < MIN_WALK_LEFT_MIN
 
     # 3. context (the area label is in the answer language: the LLM and the panel read it)
     lm_here = store.landmarks.get(landmark_id) if landmark_id else None
     area_label = _localized_area(intent.lang, lm_here, h3_cell, area_label)
-    wx = weather.get_weather(origin, local_time)
     ctx = SearchContext(
         origin=origin,
         h3_cell=h3_cell,
@@ -591,8 +622,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     wide_pool = llm is not None and llm.available and query_vec is None
     pool_k = LLM_POOL_K if wide_pool else TOP_K
 
-    # T123: prefs re-rank and filter the search (retrieval); labels only, never logged
-    search_prefs = req.prefs if req.prefs and (req.prefs.likes or req.prefs.avoids) else None
+    # T123: prefs re-rank and filter the search (retrieval); labels only, never logged.
+    # Warm mode adds "warm" to the likes: warm stops first, whatever switched it on.
+    search_prefs = _search_prefs(req.prefs, warm=warm is not None)
 
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
@@ -638,8 +670,23 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = [c for c in candidates if _night_sure(c)] or candidates
         if candidates:
             warn.append(t["relaxed"])
+    if warm_indoor and len(candidates) < WARM_MIN_INDOOR and not failed and not no_time:
+        # too few indoor places around: outdoor ones come back, and the person is told
+        wider_intent = search_intent.model_copy(update={"indoor": "any"})
+        more, failed = _retrieve(store, wider_intent, ctx, query_vec, pool_k,
+                                 prefs=search_prefs)
+        if short_walks:
+            more = [c for c in more if c.walk_min <= HUB_MAX_WALK_MIN]
+        if plan_intent.night:
+            more = [c for c in more if _night_sure(c)] or more
+        if len(more) > len(candidates):
+            search_intent, candidates = wider_intent, more
+            warn.append(t["warm_outdoor"])
     dropped = {} if no_time else _hours_dropped(store, search_intent, ctx, search_prefs)
-    if candidates and _query_unmatched(store, search_intent, ctx, candidates):
+    # warm mode drops the walk tags on purpose: «погулять» then is not an unmatched query
+    asked_intent = (search_intent if warm is None
+                    else search_intent.model_copy(update={"must_tags": intent.must_tags}))
+    if candidates and _query_unmatched(store, asked_intent, ctx, candidates):
         warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
@@ -654,7 +701,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
     # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
     walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
-                 and not intent.tourist and not plan_intent.night)
+                 and not intent.tourist and not plan_intent.night and warm is None)
     gen_candidates = candidates
     if walk_loop and req.want_route and len(candidates) >= 2:
         try:
@@ -691,6 +738,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             gen_candidates = within
         else:
             warn.append(t["graph_over_limit"].format(v=plan_intent.max_walk_min))
+    if warm is not None:  # short walks outside between the stops too
+        gen_candidates = warm_cluster(gen_candidates)
 
     # 6. cards
     cards: list[Card] = []
@@ -755,6 +804,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                      mode=walk_mode, graph_note=graph_note, profile=profile)
     if route_broke:
         warn.append(t["route_failed"])
+    if (warm is not None and mini_route is not None and mini_route.max_outdoor_leg_min
+            and mini_route.max_outdoor_leg_min > WARM_MAX_LEG_MIN):
+        warn.append(t["warm_long_leg"].format(n=mini_route.max_outdoor_leg_min))
 
     # 8. warnings, data used, answer
     if failed and not cards:
@@ -806,7 +858,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None,
                              profile=profile, profile_auto=profile_auto,
-                             prefs=req.prefs),
+                             prefs=req.prefs, warm=warm,
+                             temp_c=wx.temp_c if wx is not None else None),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -1116,6 +1169,51 @@ def _retrieve(
         return [], True
 
 
+def warm_reason(req: RecommendRequest, wx: WeatherInfo | None) -> str | None:
+    """Why «в тепле» is on: "like" (prefs likes warm), "indoor" (the UI switch indoor_only),
+    "frost" (air temperature ≤ FROST_C by Open-Meteo), or None. Never when the person avoids
+    "warm"; text like «в тепле» only sets the indoor filter (query_parser), as before."""
+    prefs = req.prefs
+    if prefs is not None and "warm" in prefs.avoids:
+        return None
+    if prefs is not None and "warm" in prefs.likes:
+        return "like"
+    if req.overrides is not None and req.overrides.indoor_only:
+        return "indoor"
+    if wx is not None and wx.temp_c <= FROST_C:
+        return "frost"
+    return None
+
+
+def _search_prefs(prefs: UserPrefs | None, *, warm: bool) -> UserPrefs | None:
+    """The prefs retrieval applies: the person's labels, plus "warm" in warm mode."""
+    likes, avoids = (list(prefs.likes), list(prefs.avoids)) if prefs is not None else ([], [])
+    if warm and "warm" not in likes:
+        likes.append("warm")
+    if not likes and not avoids:
+        return None
+    return UserPrefs(likes=likes, avoids=avoids)  # type: ignore[arg-type]
+
+
+def warm_cluster(candidates: list[Candidate]) -> list[Candidate]:
+    """Best first, then every candidate within WARM_MAX_LEG_MIN on foot (straight × 1,3, as
+    on the cards) of all the kept ones: any 2–3 of them make a route with short walks outside.
+    Only indoor places when there are enough of them."""
+    indoor = [c for c in candidates if retrieval.is_indoor(c.poi) is True]
+    pool = indoor if len(indoor) >= WARM_MIN_INDOOR else candidates
+    kept: list[Candidate] = []
+    for cand in pool:
+        if all(geo.walk_minutes(geo.haversine_m(cand.poi.geo, k.poi.geo)) <= WARM_MAX_LEG_MIN
+               for k in kept):
+            kept.append(cand)
+    return kept
+
+
+def _temp(value: float | None) -> str:
+    """«−20 °C» with a real minus sign."""
+    return "" if value is None else f"{round(value):+d} °C".replace("-", "\u2212")
+
+
 def route_profile(asked: RouteProfile, intent: QueryIntent) -> tuple[RouteProfile, bool]:
     """(profile to plan with, switched on by the wheelchair?). A wheelchair (the UI switch or
     the text) wants a step-free way: the default "fastest" becomes "accessible", and the
@@ -1307,7 +1405,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              semantic_reason: str | None = None, claude_picked: bool = False,
              index_stale: bool = False, hours_dropped: dict[str, int] | None = None,
              profile: RouteProfile = "fastest", profile_auto: bool = False,
-             prefs: UserPrefs | None = None) -> list[str]:
+             prefs: UserPrefs | None = None, warm: str | None = None,
+             temp_c: float | None = None) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran.
     `airport` = minutes to departure when the flight rule shaped the time budget.
@@ -1341,6 +1440,10 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     line = _prefs_line(t, prefs, lang)
     if line:
         out.append(line)
+    if warm is not None:  # what the code did: indoor stops, short walks outside
+        frost = warm == "frost" and temp_c is not None
+        out.append(t["f_warm"].format(v=WARM_MAX_LEG_MIN)
+                   + (t["f_warm_frost"].format(t=_temp(temp_c)) if frost else ""))
     if semantic:
         out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:
