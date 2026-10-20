@@ -283,8 +283,14 @@ def check_event_cards(ans: Answer) -> list[str]:
     return fails
 
 
-def _prefs_score(ans: Answer, likes: list[str], avoids: list[str]) -> int:
-    return sum((c.category in likes) - (c.category in avoids) for c in ans.cards)
+def _prefs_score(ans: Answer, spec: dict[str, Any]) -> int:
+    """Cards in liked categories or with a liked tag, minus cards in avoided categories."""
+    likes, avoids = spec.get("likes_categories", []), spec.get("avoid_categories", [])
+    tags = set(spec.get("likes_tags", []))
+    return sum(
+        (c.category in likes or bool(tags & set(c.tags))) - (c.category in avoids)
+        for c in ans.cards
+    )
 
 
 def check_prefs_shift(ans: Answer, base: Answer | None, spec: dict[str, Any]) -> list[str]:
@@ -292,8 +298,7 @@ def check_prefs_shift(ans: Answer, base: Answer | None, spec: dict[str, Any]) ->
     than the same request without prefs."""
     if base is None:
         return ["нет ответа без prefs для сравнения"]
-    likes, avoids = spec.get("likes_categories", []), spec.get("avoid_categories", [])
-    got, was = _prefs_score(ans, likes, avoids), _prefs_score(base, likes, avoids)
+    got, was = _prefs_score(ans, spec), _prefs_score(base, spec)
     if got > was:
         return []
     cats = [c.category for c in ans.cards]

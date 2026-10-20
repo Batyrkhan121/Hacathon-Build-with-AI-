@@ -675,6 +675,11 @@ def test_prefs_shift(mock_answer: Answer) -> None:
     assert run_eval.check_prefs_shift(better, None, spec) == ["нет ответа без prefs для сравнения"]
     all_liked = {"likes_categories": ["museum", "park", "mall"]}
     assert "не различает" in run_eval.check_prefs_shift(base, base, all_liked)[0]
+    warm = {"likes_tags": ["indoor"]}  # museum and mall are indoor, the park is not
+    indoor = mock_answer.model_copy(deep=True)
+    indoor.cards[1].tags = ["indoor"]
+    assert run_eval.check_prefs_shift(indoor, base, warm) == []
+    assert "не сдвинули" in run_eval.check_prefs_shift(base, base, warm)[0]
 
 
 def test_run_all_sends_baseline_without_prefs(mock_answer: Answer) -> None:

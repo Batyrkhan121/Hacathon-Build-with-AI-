@@ -342,14 +342,17 @@
 
 - id: E15
   wave: 8
-  title: "Мороз: в тепле (prefs warm)"
+  title: "В тепле (prefs warm)"
   request:
-    query: "На улице мороз −20, хочу погулять пару часов, но почти всё время в тепле"
+    query: "Есть два часа, хочу погулять рядом"
     location: {landmark_id: khan_shatyr}
     at: "2026-10-20T16:00:00+05:00"
     lang: ru
     prefs: {likes: [warm]}
-  expected_type: "места в помещении (тег indoor), отрезки на улице короткие (max_outdoor_leg_min)"
+  # Нейтральный текст: слова «в тепле» в запросе сами включают indoor, и сценарий прошёл бы
+  # без prefs. eval шлёт тот же запрос без prefs: мест в помещении должно стать больше.
+  # Мороз (≤ −10 °C) задать нельзя: на прошлую дату погоды нет.
+  expected_type: "места в помещении (тег indoor), отрезки на улице не дольше 10 мин; без prefs таких мест меньше"
   expect:
     min_cards: 2
     max_cards: 3
@@ -357,6 +360,7 @@
     route_facts: true
     max_outdoor_leg_min: 10
     indoor_cards_min: 2
+    prefs_shift: {likes_tags: [indoor]}
     forbid_open_claim_without_high: true
     lang: ru
 
@@ -383,11 +387,12 @@
   title: "Предпочтения меняют подбор"
   request:
     query: "Есть два часа, хочу погулять рядом"
-    location: {landmark_id: expo}
+    location: {landmark_id: baiterek}
     at: "2026-10-20T15:00:00+05:00"
     lang: ru
     prefs: {likes: [museums, no_bars], avoids: [coffee]}
   # eval шлёт тот же запрос без prefs и сравнивает: музеев/галерей больше, кафе меньше.
+  # У EXPO в данных один музей и ни одной галереи: сдвигать там не к чему (поэтому baiterek).
   expected_type: "с prefs подбор сдвигается к музеям, без баров и меньше кафе; prefs не в логе вместе с местом и запросом"
   expect:
     min_cards: 1
