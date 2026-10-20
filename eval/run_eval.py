@@ -154,11 +154,54 @@ def check_invariants(ans: Answer) -> list[str]:
         fails.append("маршрут ведёт в места не из карточек")
     fails += check_graph_route(ans)
     fails += check_route_facts(ans)
+    fails += check_crossing_kinds(ans, crossing_node_flags())
     fails += check_event_cards(ans)
     return fails
 
 
 # ------------------------------------------------------ wave 8 (contract 1.3.0)
+
+GRAPH_PATH = ROOT / "data" / "processed" / "walk_graph.npz"
+NODE_CROSSING, NODE_SIGNALS, NODE_UNMARKED, NODE_MARKINGS_KNOWN = 1, 2, 8, 32
+_node_flags_cache: dict[Path, dict[tuple[float, float], int] | None] = {}
+
+
+def crossing_node_flags(path: Path = GRAPH_PATH) -> dict[tuple[float, float], int] | None:
+    """Flags of the crossing nodes of the walk graph by their point (None: no graph file).
+    The route puts a crossing node at the node's own float32 coordinates."""
+    if path not in _node_flags_cache:
+        try:
+            import numpy as np
+
+            with np.load(path) as g:
+                lat, lon = g["node_lat"].astype(float), g["node_lon"].astype(float)
+                flags = g["node_flags"].astype(int)
+            idx = np.nonzero(flags & NODE_CROSSING)[0]
+            _node_flags_cache[path] = {
+                (round(lat[i], 6), round(lon[i], 6)): int(flags[i]) for i in idx}
+        except (OSError, KeyError, ValueError):
+            _node_flags_cache[path] = None
+    return _node_flags_cache[path]
+
+
+def check_crossing_kinds(ans: Answer, nodes: dict[tuple[float, float], int] | None) -> list[str]:
+    """1.3.0: «marked» (zebra) only for a crossing node whose markings are known (bit 32,
+    no signals / unmarked bits). A crossing without markings data must be «unknown»."""
+    route = ans.route
+    if route is None or nodes is None:
+        return []
+    bad = 0
+    for x in route.crossings:
+        if x.kind != "marked":
+            continue
+        flags = nodes.get((round(x.lat, 6), round(x.lon, 6)))
+        if flags is None or not flags & NODE_MARKINGS_KNOWN \
+                or flags & (NODE_SIGNALS | NODE_UNMARKED):
+            bad += 1
+    if bad:
+        return [f"переходов без данных о разметке показано как «зебра»: {bad} из "
+                f"{len(route.crossings)}"]
+    return []
 
 
 def check_route_facts(ans: Answer) -> list[str]:
@@ -259,7 +302,7 @@ STRAIGHT_TOLERANCE_M = 3.0  # the route may measure length with a flat approxima
 def min_walk_minutes(straight_m: float) -> int:
     """Lower bound for a graph leg: walking the straight line, minus the tolerance."""
     return math.ceil(max(0.0, straight_m - STRAIGHT_TOLERANCE_M) / WALK_M_PER_MIN - 1e-9)
-CROSSING_KINDS = {"signals", "marked", "unmarked"}
+CROSSING_KINDS = {"signals", "marked", "unmarked", "unknown"}
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -409,9 +452,10 @@ def check_expect(ans: Answer, exp: dict[str, Any], graph_on: bool = True) -> lis
             fails.append(f"маршрут {ans.route.profile}, ожидали {exp['route_profile']}")
     if exp.get("route_facts") and ans.route is not None:
         r = ans.route
-        missing = [name for name, v in (
-            ("доли освещённости", r.lit_share), ("бордюры", r.kerb_lowered),
-            ("max_outdoor_leg_min", r.max_outdoor_leg_min)) if v is None]
+        facts = [("доли освещённости", r.lit_share), ("max_outdoor_leg_min", r.max_outdoor_leg_min)]
+        if r.path_source == "graph":  # kerbs are None on straight segments (contract 1.3.0)
+            facts.append(("бордюры", r.kerb_lowered))
+        missing = [name for name, v in facts if v is None]
         if missing:
             fails.append(f"в маршруте нет фактов 1.3.0: {', '.join(missing)}")
     if "max_outdoor_leg_min" in exp and ans.route is not None:

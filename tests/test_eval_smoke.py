@@ -597,6 +597,14 @@ def test_route_profile_and_facts_expectations(mock_answer: Answer) -> None:
                  unknown_lit_share=1, kerb_lowered=0, kerb_unknown=0, max_outdoor_leg_min=7)
     assert check_expect(ok, exp) == []
     assert check_invariants(ok) == []
+    straight = _routed(mock_answer, profile="accessible", lit_share=0, unlit_share=0,
+                       unknown_lit_share=1, max_outdoor_leg_min=7)  # kerbs None: no crossings
+    assert check_expect(straight, exp) == []
+    graph = mock_answer.model_dump(mode="json")
+    graph["route"].update(path_source="graph", profile="accessible", lit_share=0.1,
+                          unlit_share=0, unknown_lit_share=0.9, max_outdoor_leg_min=7)
+    fails = check_expect(Answer.model_validate(graph), exp)
+    assert any("бордюры" in f for f in fails)
 
 
 def test_route_facts_must_agree_with_route(mock_answer: Answer) -> None:
@@ -727,3 +735,28 @@ def test_reject_required_scenario(mock_answer: Answer) -> None:
     assert not res.passed
     answered = grade(scn, Outcome(answer=mock_answer))
     assert "ожидали 422, а пришёл ответ" in answered.failures
+
+
+def test_marked_crossing_needs_known_markings(mock_answer: Answer, tmp_path: Path) -> None:
+    import numpy as np
+
+    lat = np.array([51.1, 51.2, 51.3], dtype=np.float32)
+    lon = np.array([71.4, 71.5, 71.6], dtype=np.float32)
+    flags = np.array([1 | 32, 1, 1 | 2], dtype=np.uint8)  # zebra known / no type / signals
+    path = tmp_path / "g.npz"
+    np.savez(path, node_lat=lat, node_lon=lon, node_flags=flags)
+    nodes = run_eval.crossing_node_flags(path)
+    assert nodes is not None and len(nodes) == 3
+
+    def with_crossings(kinds: list[str]) -> Answer:
+        raw = mock_answer.model_dump(mode="json")
+        raw["route"]["crossings"] = [
+            {"lat": float(lat[i]), "lon": float(lon[i]), "kind": k} for i, k in enumerate(kinds)]
+        return Answer.model_validate(raw)
+
+    ok = with_crossings(["marked", "unknown", "signals"])
+    assert run_eval.check_crossing_kinds(ok, nodes) == []
+    bad = with_crossings(["marked", "marked", "marked"])
+    assert "2 из 3" in run_eval.check_crossing_kinds(bad, nodes)[0]
+    assert run_eval.check_crossing_kinds(bad, None) == []  # no graph file: not checked
+    assert run_eval.crossing_node_flags(tmp_path / "none.npz") is None
