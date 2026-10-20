@@ -26,7 +26,7 @@ def test_landmarks_valid(landmarks) -> None:
         assert all(alias == alias.lower() for alias in lm.aliases), lm.id
 
 
-@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json"])
+@pytest.mark.parametrize("name", ["answer_sample.json", "answer_route.json", "answer_w8.json"])
 def test_mock_answer_valid(name: str) -> None:
     raw = json.loads((ROOT / "web" / "mock" / name).read_text(encoding="utf-8"))
     answer = Answer.model_validate(raw)
@@ -281,3 +281,18 @@ def test_place_cards_stay_valid_and_event_cards_are_checked() -> None:
                  {"source_url": "https://example.org/x"}):
         with pytest.raises(ValidationError):
             Card.model_validate({**raw["cards"][0], **leak})
+
+
+def test_exclude_poi_ids_for_more() -> None:
+    from app.schemas import MAX_EXCLUDE
+
+    base = {"query": "кофе", "location": {"landmark_id": "expo"}}
+    assert RecommendRequest.model_validate(base).exclude_poi_ids == []
+    ids = [f"osm:node/{n}" for n in range(MAX_EXCLUDE - 1)] + ["event:jazz_evening"]
+    req = RecommendRequest.model_validate({**base, "exclude_poi_ids": ids})
+    assert req.exclude_poi_ids == ids and MAX_EXCLUDE == 9
+    assert "osm:node/1" not in repr(req) and "exclude_poi_ids" not in repr(req)
+    for bad in (ids + ["osm:way/77"], ["osm:node/1", "osm:node/1"], ["Музей Сингулярности"],
+                ["osm:node/1 2"], ["javascript:alert(1)"], "osm:node/1", [""]):
+        with pytest.raises(ValidationError):
+            RecommendRequest.model_validate({**base, "exclude_poi_ids": bad})

@@ -26,7 +26,8 @@ note says the asked profile was not applied), lit / lit=no / no-data shares of t
 (OSM tags; a straight route is 0 / 0 / 1; "lit" is never rounded up), kerb_lowered and
 kerb_unknown (crossings on a graph route; None on a straight one: its crossings are not known),
 steps_count, max_outdoor_leg_min. "accessible" with stairs (no step-free way, or one over 30%
-longer) keeps profile="accessible", steps_count > 0, and the note says why.
+longer) keeps profile="accessible", steps_count > 0, and the note says why; "accessible" with
+straight legs says steps are not checked on them (steps_count sees the graph legs only).
 """
 
 from __future__ import annotations
@@ -80,6 +81,7 @@ _NOTE: dict[str, dict[str, str]] = {
                             "бордюры не проверены.",
         "loop": "с возвращением к старту", "oneway": "без обратной дороги",
         "partly_straight": "Часть отрезков посчитана по прямой × 1,3.",
+        "steps_unchecked": "На прямых отрезках ступени не проверены.",
         "stairs_fallback": "Без ступеней пути нет или он длиннее больше чем на 30 % — "
                            "на маршруте есть ступени.",
         "no_profile": "Профиль маршрута не учтён: отрезки прямые.",
@@ -95,6 +97,7 @@ _NOTE: dict[str, dict[str, str]] = {
                             "өтеді, жиектастар тексерілмеген.",
         "loop": "бастапқы нүктеге оралумен", "oneway": "кері жолсыз",
         "partly_straight": "Кейбір кесінділер түзу сызықпен × 1,3 есептелген.",
+        "steps_unchecked": "Түзу кесінділерде баспалдақ тексерілмеген.",
         "stairs_fallback": "Баспалдақсыз жол жоқ немесе ол 30 %-дан астам ұзын — "
                            "маршрутта баспалдақ бар.",
         "no_profile": "Маршрут профилі ескерілмеді: кесінділер түзу.",
@@ -110,6 +113,7 @@ _NOTE: dict[str, dict[str, str]] = {
                             "are not checked.",
         "loop": "back to the start", "oneway": "one way",
         "partly_straight": "Some segments are straight lines × 1.3.",
+        "steps_unchecked": "Steps are not checked on the straight segments.",
         "stairs_fallback": "No step-free way, or it is over 30% longer: the route has steps.",
         "no_profile": "Route profile not applied: straight segments.",
         "kids": "With kids, allow extra time.",
@@ -236,6 +240,8 @@ def _graph_route(
     notes = [note]
     if any(leg.straight for leg in legs):
         notes.append(texts["partly_straight"])
+        if profile == "accessible":  # steps_count sees the graph legs only
+            notes.append(texts["steps_unchecked"])
     if any(leg.stairs_fallback for leg in legs):
         notes.append(texts["stairs_fallback"])
     return MiniRoute(

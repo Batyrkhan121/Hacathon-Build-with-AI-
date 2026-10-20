@@ -514,6 +514,35 @@ def test_unknown_crossings_cost_between_marked_and_unmarked(
     assert [c.kind for c in path.crossings] == [taken]
 
 
+@pytest.mark.parametrize(("far_x", "taken"), [(10, "unknown"), (5, "marked")])
+def test_crossing_segment_without_a_node_costs_like_unknown(
+    tmp_path: Path, far_x: float, taken: str
+) -> None:
+    """A bare crossing segment is +20 s in fastest (it was +40 s as «unmarked»):
+    near 30 m (24 s) + 20 s = 44 s vs a marked crossing far_x m along, (60 + 2 far_x) m + 10 s."""
+    nodes = {"S0": (0, 0, 0), "S1": (far_x, 0, 0), "N0": (0, 30, 0), "N1": (far_x, 30, 0),
+             "CF": (far_x, 15, CROSSING | MARKINGS)}
+    edges = [("S0", "S1", FOOTWAY), ("N0", "N1", FOOTWAY), ("S0", "N0", CROSS_SEG),
+             ("S1", "CF", CROSS_SEG), ("CF", "N1", CROSS_SEG)]
+    path = graph(tmp_path, nodes, edges).route(at(0, 0), at(0, 30))
+    assert path is not None
+    assert [c.kind for c in path.crossings] == [taken]
+
+
+@pytest.mark.parametrize("mode", [Mode(kids=True), Mode(wheelchair=True)], ids=["kids", "chair"])
+@pytest.mark.parametrize(
+    ("near", "taken"), [(CROSSING, "unknown"), (CROSSING | UNMARKED, "signals")]
+)
+def test_with_kids_or_in_a_wheelchair_only_unmarked_costs_more(
+    tmp_path: Path, mode: Mode, near: int, taken: str
+) -> None:
+    """Near: unknown 24 + 20 = 44 s, unmarked 24 + 60 = 84 s; lights 10 m along: 40 + 20 = 60 s."""
+    g = near_or_far_crossing(tmp_path, near, CROSSING | SIGNALS, 10)
+    path = g.route(at(0, 0), at(0, 30), mode)
+    assert path is not None
+    assert [c.kind for c in path.crossings] == [taken]
+
+
 @pytest.mark.parametrize(("detour_y", "expected_m"), [(30, 560), (100, 500), (None, 500)])
 def test_card_lengths_follow_the_accessible_rule(
     tmp_path: Path, detour_y: float | None, expected_m: float

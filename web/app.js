@@ -17,6 +17,13 @@ const BUDGETS = [30, 60, 120];
 // Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
+// 1.3.0: словарь меток предпочтений (PrefTag в app/schemas.py); no_bars — только «нравится»
+const PREF_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'no_bars', 'warm', 'night'];
+const PREFS_KEY = 'qadam.prefs.v1';
+const MAX_EXCLUDE = 9; // контракт: exclude_poi_ids до 9 (3 ответа × 3 карточки)
+const MAX_WALK_MIN = 120; // контракт: overrides.max_walk_min ≤ 120
+// 1.3.0: профиль маршрута (request.route_profile); по умолчанию «быстрее»
+const ROUTE_PROFILES = ['fastest', 'accessible', 'lit'];
 const FLAGS = [...MODES, ...FILTER_FLAGS];
 const MODE_ICON = { tourist: '✈', night: '🌙', with_kids: '🧒', wheelchair: '♿', group: '👥' };
 const DEPARTURES = [90, 120, 180, 240]; // минут до вылета (контракт: 30–1440)
@@ -40,6 +47,12 @@ const state = {
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
+  routeProfile: 'fastest', // 1.3.0: fastest | accessible | lit
+  prefs: { likes: [], avoids: [] }, // 1.3.0: «Мои предпочтения» (метки из словаря PrefTag)
+  // Серия уточнений одного запроса: накопленная разовая поправка (чипы и «В тепле» складываются)
+  // и poi_id всех показанных в серии мест (для «Ещё»). Новый запрос из формы серию сбрасывает.
+  // Нигде не сохраняется.
+  series: { patch: {}, shown: [] },
   hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
@@ -63,6 +76,11 @@ const els = {
   whereNote: $('where-note'),
   presets: $('presets'),
   budgetChips: $('budget-chips'),
+  profileChips: $('profile-chips'),
+  prefsLikes: $('prefs-likes'),
+  prefsAvoids: $('prefs-avoids'),
+  prefsCount: $('prefs-count'),
+  prefsClear: $('prefs-clear'),
   refine: $('refine'),
   refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
@@ -136,11 +154,13 @@ function legendLabels() {
       signals: t('crossing.signals'),
       marked: t('crossing.marked'),
       unmarked: t('crossing.unmarked'),
+      unknown: t('crossing.unknown'),
     },
     crossingsShort: {
       signals: t('crossing.signalsShort'),
       marked: t('crossing.markedShort'),
       unmarked: t('crossing.unmarkedShort'),
+      unknown: t('crossing.unknownShort'),
     },
   };
 }
@@ -160,7 +180,25 @@ function whereLabel() {
 
 // ------------------------------------------------------------------ request
 
-function buildRequest(query, useLlm = true) {
+// Разовая поправка запроса (чипы уточнения, «В тепле»): меняет только этот запрос, ничего не сохраняет.
+// patch = { overrides: {...}, likes: [...], avoids: [...], exclude: [...] };
+// метка из likes уходит из avoids и наоборот; exclude → exclude_poi_ids (до 9, «Ещё»).
+function mergePrefs(base, patch = {}) {
+  let likes = [...(base?.likes || [])];
+  let avoids = [...(base?.avoids || [])];
+  for (const tag of patch.likes || []) {
+    avoids = avoids.filter((x) => x !== tag);
+    if (!likes.includes(tag)) likes.push(tag);
+  }
+  for (const tag of patch.avoids || []) {
+    if (tag === 'no_bars') continue; // «без баров» — только в likes (контракт 1.3.0)
+    likes = likes.filter((x) => x !== tag);
+    if (!avoids.includes(tag)) avoids.push(tag);
+  }
+  return { likes, avoids };
+}
+
+function buildRequest(query, useLlm = true, patch = {}) {
   const location =
     state.location.type === 'cell' ? { h3_cell: state.location.cell } : { landmark_id: state.location.id };
   const overrides = {};
@@ -175,6 +213,8 @@ function buildRequest(query, useLlm = true) {
     overrides.departure_in_min = state.departure;
   }
   if (state.flags.night) overrides.night = true;
+  Object.assign(overrides, patch.overrides || {});
+  const prefs = mergePrefs(state.prefs, patch);
   return {
     query,
     location,
@@ -183,18 +223,36 @@ function buildRequest(query, useLlm = true) {
     overrides: Object.keys(overrides).length ? overrides : null,
     want_route: true,
     use_llm: useLlm,
+    route_profile: state.routeProfile,
+    prefs: prefs.likes.length || prefs.avoids.length ? prefs : null,
+    exclude_poi_ids: (patch.exclude || []).slice(0, MAX_EXCLUDE),
   };
 }
 
-async function submit({ useLlm = true } = {}) {
-  const query = els.query.value.trim();
+// Добавить к накопленной поправке серии и повторить последний запрос
+function refine(add) {
+  const p = state.series.patch;
+  state.series.patch = {
+    overrides: { ...(p.overrides || {}), ...(add.overrides || {}) },
+    likes: [...new Set([...(p.likes || []), ...(add.likes || [])])],
+    avoids: [...new Set([...(p.avoids || []), ...(add.avoids || [])])],
+    exclude: add.exclude || p.exclude || [],
+  };
+  submit({ patch: state.series.patch });
+}
+
+async function submit({ useLlm = true, patch = null } = {}) {
+  // Разовая поправка повторяет прошлый запрос (тот же текст), иначе — текст из поля
+  const query = (patch && state.lastRequest?.query) || els.query.value.trim();
   if (!query) {
     showFormError(t('query.empty'));
     els.query.focus();
     return;
   }
   showFormError('');
-  const body = buildRequest(query, useLlm);
+  // Новый запрос из формы (без поправки) начинает новую серию уточнений
+  if (!patch) state.series = { patch: {}, shown: [] };
+  const body = buildRequest(query, useLlm, patch || {});
 
   state.inflight?.abort();
   const ctrl = new AbortController();
@@ -213,6 +271,10 @@ async function submit({ useLlm = true } = {}) {
     if (state.inflight !== ctrl) return;
     state.lastRequest = body;
     state.lastAnswer = answer;
+    // Места этого ответа — в список показанных в серии (для «Ещё»), без повторов
+    for (const c of answer.cards) {
+      if (c.poi_id && !state.series.shown.includes(c.poi_id)) state.series.shown.push(c.poi_id);
+    }
     state.lastError = null;
     renderAnswer();
     setStatus(
@@ -258,6 +320,7 @@ function loadingContext() {
   const out = [when];
   if (state.budget) out.push(t(`budget.${state.budget}`));
   FLAGS.forEach((f) => state.flags[f] && out.push(t(`flag.${f}`)));
+  if (state.routeProfile !== 'fastest') out.push(t(`profile.${state.routeProfile}`));
   return out;
 }
 
@@ -319,6 +382,12 @@ function renderAnswer({ redrawMap = true } = {}) {
       submit();
     },
     onEditQuery: () => focusQuery(),
+    onWarm: () => refine({ likes: ['warm'] }),
+    // Чипы уточнения под ответом: разовый повтор запроса, поправки серии складываются, ничего не сохраняется
+    onCloser: (maxWalk) => refine({ overrides: { max_walk_min: Math.min(MAX_WALK_MIN, maxWalk) } }),
+    onNoCafe: () => refine({ avoids: ['coffee'] }),
+    // «Ещё»: те же условия, без мест, уже показанных в этой серии
+    onMore: state.series.shown.length < MAX_EXCLUDE ? () => refine({ exclude: [...state.series.shown] }) : null,
   });
   if (!redrawMap) return;
   const route = answer.route;
@@ -411,6 +480,14 @@ function chip(label, pressed, onClick) {
 }
 
 function renderChips() {
+  els.profileChips.replaceChildren(
+    ...ROUTE_PROFILES.map((p) =>
+      chip(t(`profile.${p}`), state.routeProfile === p, () => {
+        state.routeProfile = p;
+        filtersChanged();
+      }),
+    ),
+  );
   els.budgetChips.replaceChildren(
     ...BUDGETS.map((m) =>
       chip(t(`budget.${m}`), state.budget === m, () => {
@@ -471,7 +548,10 @@ function renderChips() {
   if (hintKey && hintKey !== state.hintKey) els.refine.open = true;
   state.hintKey = hintKey;
   // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
-  const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
+  const picked =
+    FLAGS.filter((f) => state.flags[f]).length +
+    [state.budget, state.time, state.day].filter(Boolean).length +
+    (state.routeProfile === 'fastest' ? 0 : 1);
   // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
   els.refineCount.replaceChildren();
   if (picked) {
@@ -500,6 +580,7 @@ function filtersChanged() {
 
 function clearFilters() {
   state.budget = null;
+  state.routeProfile = 'fastest';
   FLAGS.forEach((f) => (state.flags[f] = false));
   renderChips();
 }
@@ -829,9 +910,74 @@ function syncLangButtons() {
   mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
 }
 
+// «Мои предпочтения»: только localStorage этого браузера (решение пользователя), без истории.
+// Чтение отбрасывает всё, чего нет в словаре: неизвестная метка дала бы 422.
+function loadPrefs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    const pick = (list, allowNoBars) =>
+      [...new Set(Array.isArray(list) ? list : [])].filter(
+        (x) => PREF_TAGS.includes(x) && (allowNoBars || x !== 'no_bars'),
+      );
+    const likes = pick(raw?.likes, true).slice(0, 8);
+    const avoids = pick(raw?.avoids, false)
+      .filter((x) => !likes.includes(x))
+      .slice(0, 8);
+    return { likes, avoids };
+  } catch {
+    return { likes: [], avoids: [] };
+  }
+}
+
+function savePrefs() {
+  try {
+    if (state.prefs.likes.length || state.prefs.avoids.length) {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs));
+    } else {
+      localStorage.removeItem(PREFS_KEY);
+    }
+  } catch {
+    /* приватный режим: предпочтения живут до перезагрузки */
+  }
+}
+
+function togglePref(list, tag) {
+  const other = list === 'likes' ? 'avoids' : 'likes';
+  const on = state.prefs[list].includes(tag);
+  state.prefs[list] = on ? state.prefs[list].filter((x) => x !== tag) : [...state.prefs[list], tag];
+  if (!on) state.prefs[other] = state.prefs[other].filter((x) => x !== tag);
+  savePrefs();
+  renderPrefs();
+  filtersChanged();
+}
+
+function renderPrefs() {
+  els.prefsLikes.replaceChildren(
+    ...PREF_TAGS.map((tag) => chip(t(`pref.${tag}`), state.prefs.likes.includes(tag), () => togglePref('likes', tag))),
+  );
+  els.prefsAvoids.replaceChildren(
+    ...PREF_TAGS.filter((tag) => tag !== 'no_bars').map((tag) =>
+      chip(t(`pref.${tag}`), state.prefs.avoids.includes(tag), () => togglePref('avoids', tag)),
+    ),
+  );
+  const n = state.prefs.likes.length + state.prefs.avoids.length;
+  els.prefsCount.replaceChildren();
+  if (n) {
+    const dot = Object.assign(document.createElement('span'), { textContent: `· ${n}` });
+    dot.setAttribute('aria-hidden', 'true');
+    const sr = Object.assign(document.createElement('span'), {
+      className: 'visually-hidden',
+      textContent: `(${t('refine.picked', { n })})`,
+    });
+    els.prefsCount.append(dot, sr);
+  }
+  els.prefsClear.disabled = n === 0;
+}
+
 function renderAll() {
   renderPresets();
   renderChips();
+  renderPrefs();
   renderLandmarkSelect();
   renderWhereNote();
   showBackToCard(state.backRank);
@@ -848,6 +994,13 @@ async function init() {
     els.pickBtn.disabled = true;
   }
   bindEvents();
+  state.prefs = loadPrefs();
+  els.prefsClear.addEventListener('click', () => {
+    state.prefs = { likes: [], avoids: [] };
+    savePrefs();
+    renderPrefs();
+    filtersChanged();
+  });
   // v2.1: «Где я» свёрнуто за «Изменить»; поле подписано заголовком «Куда пойдём?»
   els.whereToggle.addEventListener('click', () => {
     const open = !els.whereBox.classList.contains('is-open');
