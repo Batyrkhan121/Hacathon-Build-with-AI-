@@ -935,3 +935,18 @@ def test_exclude_ids_drop_places_and_events_before_scoring() -> None:
     assert ids(out) == [park.id]
     assert retrieve(store, intent(), make_ctx(), None,
                     exclude_ids=frozenset({cafe.id, park.id})) == []
+
+
+def test_query_words_of_an_avoided_label_do_not_pull_places_up() -> None:
+    """«кофе рядом» with avoids coffee: the word «кофе» gives cafes no keyword match."""
+    cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee"])
+    mall = make_poi("mall", "mall", dlat=0.003)
+    store = make_store([cafe, mall])
+    plain = retrieve(store, intent("кофе"), make_ctx(), None)
+    assert plain[0].poi.id == cafe.id and plain[0].score_parts["relevance"] > 0
+    out = retrieve(store, intent("кофе"), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    by_id = {c.poi.id: c for c in out}
+    assert by_id[cafe.id].score_parts["relevance"] == 0.0
+    assert out[0].poi.id == mall.id
+    assert not query_unmatched(store, intent("кофе"), make_ctx(), out,
+                               prefs=_prefs(avoids=["coffee"]))
