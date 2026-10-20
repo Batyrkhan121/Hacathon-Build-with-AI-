@@ -105,7 +105,8 @@ def test_node_and_edge_flags(built) -> None:
     graph, stats = built
     flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
     assert flags[3] == NODE_CROSSING and flags[4] == NODE_SIGNALS and flags[5] == NODE_KERB
-    assert flags[6] == NODE_CROSSING | NODE_UNMARKED and flags[1] == 0
+    # node 6 also takes the lowered kerb of its crossing way 5-6 (wave 8)
+    assert flags[6] == NODE_CROSSING | NODE_UNMARKED | NODE_KERB and flags[1] == 0
 
     def ef(a: int, b: int) -> int:
         return int(graph.edge_flags[edge_index(graph, a, b)])
@@ -114,7 +115,8 @@ def test_node_and_edge_flags(built) -> None:
     assert ef(4, 5) == EDGE_MAJOR | EDGE_LIT
     assert ef(1, 3) == EDGE_FOOTWAY and ef(5, 6) == EDGE_FOOTWAY | EDGE_CROSSING
     assert stats["crossings"] == 2 and stats["signals"] == 1 and stats["unmarked_crossings"] == 1
-    assert stats["kerbs_lowered"] == 1 and stats["steps_edges"] == 1
+    assert stats["kerbs_lowered"] == 2 and stats["crossings_kerb_lowered"] == 1  # 5 and 6
+    assert stats["steps_edges"] == 1
 
 
 def test_snap_within_150_m(built) -> None:

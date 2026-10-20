@@ -107,6 +107,8 @@ def test_mini_route_graph_fields() -> None:
     crossing = {"lat": 51.0905, "lon": 71.411, "kind": "signals"}
     r = MiniRoute.model_validate(_route(path_source="graph", crossings=[crossing], steps_count=2))
     assert r.path_source == "graph" and r.crossings[0].kind == "signals" and r.steps_count == 2
+    unknown = MiniRoute.model_validate(_route(crossings=[{**crossing, "kind": "unknown"}]))
+    assert unknown.crossings[0].kind == "unknown"  # 1.3.0: OSM gives no crossing type
     for bad in ({"path_source": "osrm"}, {"crossings": [crossing] * 51}, {"steps_count": -1},
                 {"crossings": [{**crossing, "kind": "bridge"}]},
                 {"crossings": [{**crossing, "h3_cell": "89215380487ffff"}]}):

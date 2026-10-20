@@ -1,0 +1,99 @@
+{
+  "nodes": 60820,
+  "edges": 85936,
+  "length_km": 5532.5,
+  "footway_length_km": 1256.5,
+  "lit": {
+    "yes": {
+      "km": 137.8,
+      "length_share": 0.0249,
+      "edges": 2720,
+      "edges_share": 0.0317
+    },
+    "no": {
+      "km": 22.1,
+      "length_share": 0.004,
+      "edges": 374,
+      "edges_share": 0.0044
+    },
+    "unknown": {
+      "km": 5372.7,
+      "length_share": 0.9711,
+      "edges": 82842,
+      "edges_share": 0.964
+    }
+  },
+  "lit_footways": {
+    "yes": {
+      "km": 66.4,
+      "length_share": 0.0529,
+      "edges": 1684,
+      "edges_share": 0.049
+    },
+    "no": {
+      "km": 4.5,
+      "length_share": 0.0036,
+      "edges": 127,
+      "edges_share": 0.0037
+    },
+    "unknown": {
+      "km": 1185.6,
+      "length_share": 0.9436,
+      "edges": 32576,
+      "edges_share": 0.9473
+    }
+  },
+  "steps": {
+    "km": 3.91,
+    "length_share": 0.0007,
+    "edges": 258,
+    "edges_share": 0.003,
+    "with_ramp_tags": 12
+  },
+  "crossings_total": 4075,
+  "crossings": {
+    "signals": {
+      "nodes": 1401,
+      "share": 0.3438
+    },
+    "marked": {
+      "nodes": 1133,
+      "share": 0.278
+    },
+    "unmarked": {
+      "nodes": 156,
+      "share": 0.0383
+    },
+    "unknown": {
+      "nodes": 1385,
+      "share": 0.3399
+    }
+  },
+  "kerbs": {
+    "lowered": {
+      "nodes": 63,
+      "share": 0.0155
+    },
+    "raised": {
+      "nodes": 8,
+      "share": 0.002
+    },
+    "unknown": {
+      "nodes": 4004,
+      "share": 0.9826
+    }
+  },
+  "lit_values": {
+    "yes": 2720,
+    "no": 374
+  },
+  "kerb_values": {
+    "lowered": 66,
+    "raised": 11,
+    "flush": 10,
+    "no": 7
+  },
+  "same_graph_as_npz": true,
+  "osm_snapshot": "2026-05-31T22:37:44Z",
+  "created_at": "2026-10-20T14:58:33+05:00"
+}
