@@ -2169,3 +2169,69 @@ def test_llm_run_card_gets_the_category_visit_estimate(deps: Deps, tmp_path: Pat
     c = next(c for c in a.cards if c.kind == "event")
     assert a.data_used.generation == "llm"
     assert (c.visit_min_low, c.visit_min_high) == (60, 120)  # the museum estimate
+
+
+# --------------------- an explicit «избегать» beats what the parser read in the text (UX check)
+
+
+def test_avoids_take_the_parsed_category_out_of_the_search(deps: Deps) -> None:
+    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids coffee): three cafes and the
+    panel saying «категории: кафе» next to «избегать: кофе» before. Now the parsed cafe
+    category and the coffee tag leave the search; the panel does not contradict itself."""
+    q = "Хочу тихое место с кофе"
+    plain = recommend(req(q, use_llm=False), deps)
+    assert plain.cards and all(c.category == "cafe" for c in plain.cards)
+    a = recommend(req(q, use_llm=False, prefs={"avoids": ["coffee"]}), deps)
+    # an avoid is a penalty, not a filter: the one quiet place of the test data (a cafe) may
+    # stay, the other cafes go
+    assert a.cards and sum(c.category == "cafe" for c in a.cards) <= 1
+    f = a.data_used.filters
+    assert not any(x.startswith("категории:") and "кафе" in x for x in f)
+    assert not any(x.startswith("теги:") and "кофе" in x for x in f)
+    assert "избегать: кофе" in f
+    assert a.intent.categories == ["cafe"]  # what was asked stays visible in the intent
+
+
+def test_explicit_ui_categories_stay_with_avoids(deps: Deps) -> None:
+    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["coffee"]},
+                      overrides={"categories": ["cafe"]}), deps)
+    assert a.cards and all(c.category == "cafe" for c in a.cards)  # the UI asked for cafes
+    assert "категории: кафе" in a.data_used.filters
+
+
+@pytest.mark.parametrize(("query", "label", "category", "gone"), [
+    ("музей рядом", "museums", "museum", True),
+    # the walk tag (not a parks label) still finds the one walk place of the test data
+    ("парк погулять", "parks", "park", False),
+])
+def test_avoids_drop_their_categories(deps: Deps, query: str, label: str, category: str,
+                                      gone: bool) -> None:
+    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum is open
+    name = pipeline_mod.CATEGORY_NAMES["ru"][category]
+    plain = recommend(req(query, use_llm=False, at=tuesday), deps)
+    assert any(name in x for x in plain.data_used.filters if x.startswith("категории:"))
+    a = recommend(req(query, use_llm=False, at=tuesday, prefs={"avoids": [label]}), deps)
+    assert not any(name in x for x in a.data_used.filters if x.startswith("категории:"))
+    if gone:  # the query word («музей») no longer pulls the avoided place up either
+        assert a.cards and not any(c.category == category for c in a.cards)
+
+
+def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
+    """«кофе рядом» + «Без кафе»: the word «кофе» does not pull cafes up against the chip."""
+    near = [p for p in deps.store.pois if p.id in ("test:poi/12", "test:poi/7", "test:poi/9")]
+    small = Deps(store=make_store(near, deps.store.landmarks), llm=deps.llm,
+                 settings=deps.settings)
+    plain = recommend(req("кофе рядом", use_llm=False), small)
+    assert [c.category for c in plain.cards] == ["cafe"]  # the category filter of the text
+    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["coffee"]}), small)
+    assert a.cards and a.cards[0].category != "cafe"
+    assert TEXTS["ru"]["no_match"] not in a.warnings  # the avoided word is not «unmatched»
+
+
+def test_avoided_categories_and_tags_follow_the_table() -> None:
+    from app.schemas import UserPrefs
+
+    cats, tags = retrieval.avoided(UserPrefs(avoids=["coffee", "museums", "night"]))
+    assert cats == {"cafe", "museum", "gallery"}
+    assert tags == {"coffee", "night", "late_open", "24_7"}
+    assert retrieval.avoided(None) == (frozenset(), frozenset())

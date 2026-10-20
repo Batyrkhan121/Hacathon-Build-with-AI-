@@ -450,6 +450,26 @@ def _passes_prefs(poi: POI, prefs: UserPrefs | None) -> bool:
     return prefs is None or "no_bars" not in prefs.likes or not pref_match(poi, "no_bars")
 
 
+def avoided(prefs: UserPrefs | None) -> tuple[frozenset[str], frozenset[str]]:
+    """(categories, tags) that the person's avoids name, by the ARCHITECTURE §5 table: coffee
+    -> cafe + tag coffee, museums -> museum / gallery, parks -> park, quiet / kids / night ->
+    their tags. The pipeline takes them out of what the parser read in the text."""
+    if prefs is None:
+        return frozenset(), frozenset()
+    cats = {c for label in prefs.avoids for c in PREF_CATEGORIES.get(label, frozenset())}
+    tags = {x for label in prefs.avoids for x in PREF_TAGS.get(label, frozenset())}
+    return frozenset(cats), frozenset(tags)
+
+
+def _avoided_stems(prefs: UserPrefs | None) -> frozenset[str]:
+    """Query words that name what the person avoids («кофе» with avoids coffee): they must
+    not pull those places up by keyword match — the explicit choice beats the text."""
+    cats, tags = avoided(prefs)
+    words = [CATEGORY_WORDS.get(c, "") for c in sorted(cats)]
+    words += [TAG_WORDS.get(x, "") for x in sorted(tags)]
+    return frozenset(t[:_STEM] for t in _tokens(" ".join(words)))
+
+
 def _prefs_fit(poi: POI, prefs: UserPrefs | None) -> float:
     """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty."""
     if prefs is None:
@@ -777,18 +797,20 @@ def explain(
 
 
 def query_unmatched(
-    store: Store, intent: QueryIntent, ctx: SearchContext, candidates: list[Candidate]
+    store: Store, intent: QueryIntent, ctx: SearchContext, candidates: list[Candidate], *,
+    prefs: UserPrefs | None = None,
 ) -> bool:
     """True when the free-text query asked for something and no candidate matched it.
 
     «порекомендуй казино», gibberish: the answer is then just the nearest places. The pipeline
     (FEATURES) adds a warning like «точного совпадения нет, показано, что рядом» (ru/kk/en).
-    False for structured requests (must_tags / categories), queries made only of stopwords
-    or landmark words («я возле Mega Silk Way»), and when nothing was found at all.
+    False for structured requests (must_tags / categories), queries made only of stopwords,
+    landmark words («я возле Mega Silk Way») or words of what `prefs` avoids («кофе» with
+    the «Без кафе» chip), and when nothing was found at all.
     """
     if not candidates or intent.must_tags or intent.categories:
         return False
-    if not _query_stems(intent) - _landmark_stems(store, intent, ctx):
+    if not _query_stems(intent) - _landmark_stems(store, intent, ctx) - _avoided_stems(prefs):
         return False
     return max(c.score_parts.get("relevance", 0.0) for c in candidates) == 0.0
 
@@ -827,7 +849,8 @@ def retrieve(
     if k <= 0 or not store.pois:
         return []
     semantic = _semantic_scores(store, query_vec)
-    query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
+    query_stems = (_query_stems(intent) - _landmark_stems(store, intent, ctx)
+                   - _avoided_stems(prefs))
     passed: list[tuple[int | None, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
         if poi.id in exclude_ids:

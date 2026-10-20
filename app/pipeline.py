@@ -569,6 +569,10 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     to_departure = flight and (departure is not None or departure_phrase(req.query))
     walk_budget: int | None = None  # minutes left for the walk before leaving for the airport
     plan_update: dict[str, object] = {}
+    # T123: an explicit «избегать» (prefs.avoids, e.g. the «Без кафе» chip) beats what the
+    # parser read in the text («тихое место с кофе» -> cafe): its categories and tags leave
+    # the search; categories the UI set explicitly (overrides.categories) stay
+    plan_update.update(_without_avoided(intent, req))
     if to_departure and intent.time_budget_min:
         walk_budget = intent.time_budget_min - AIRPORT_TRANSFER_MIN - AIRPORT_RESERVE_MIN
         plan_update["time_budget_min"] = max(MIN_WALK_BUDGET_MIN, walk_budget)
@@ -602,7 +606,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         if intent.max_walk_min is None:  # an explicit limit (text or UI) is kept as asked
             cap = plan_update.get("max_walk_min")
             plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
-        plan_update["must_tags"] = [x for x in intent.must_tags if x not in WARM_DROP_TAGS]
+        tags = plan_update.get("must_tags", intent.must_tags)
+        plan_update["must_tags"] = [x for x in tags if x not in WARM_DROP_TAGS]  # type: ignore[union-attr]
         if intent.indoor == "any":
             plan_update["indoor"], warm_indoor = "indoor", True
     plan_intent = intent.model_copy(update=plan_update) if plan_update else intent
@@ -717,7 +722,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # warm mode drops the walk tags on purpose: «погулять» then is not an unmatched query
     asked_intent = (search_intent if warm is None
                     else search_intent.model_copy(update={"must_tags": intent.must_tags}))
-    if candidates and _query_unmatched(store, asked_intent, ctx, candidates):
+    if candidates and _query_unmatched(store, asked_intent, ctx, candidates, search_prefs):
         warn.append(t["no_match"])
     if 0 < len(candidates) < SPARSE_MIN:
         warn.append(t["sparse"].format(n=len(candidates)))
@@ -1023,7 +1028,7 @@ def _hours_dropped(store: Store, intent: QueryIntent, ctx: SearchContext,
 
 
 def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
-                     candidates: list[Candidate]) -> bool:
+                     candidates: list[Candidate], prefs: UserPrefs | None = None) -> bool:
     """QUALITY decides (retrieval.query_unmatched): the query has meaningful words and none of
     them matches any candidate, so the cards are just what is nearby. Absent (older main) or
     broken -> no warning, never a failed answer."""
@@ -1031,6 +1036,8 @@ def _query_unmatched(store: Store, intent: QueryIntent, ctx: SearchContext,
     if check is None:
         return False
     try:
+        if prefs is not None:
+            return bool(check(store, intent, ctx, candidates, prefs=prefs))
         return bool(check(store, intent, ctx, candidates))
     except Exception as exc:  # noqa: BLE001 - a missing hint never kills the answer
         log.error("query_unmatched failed (%s)\n%s", type(exc).__name__, _frames(exc))
@@ -1257,6 +1264,20 @@ def _retrieve(
     except Exception as exc:  # noqa: BLE001
         log.error("retrieve without events failed (%s)\n%s", type(exc).__name__, _frames(exc))
         return [], True
+
+
+def _without_avoided(intent: QueryIntent, req: RecommendRequest) -> dict[str, object]:
+    """plan_intent updates: the parsed categories / must_tags the person avoids, removed."""
+    cats, tags = retrieval.avoided(req.prefs)
+    explicit = set(req.overrides.categories or []) if req.overrides is not None else set()
+    out: dict[str, object] = {}
+    kept_cats = [c for c in intent.categories if c not in cats or c in explicit]
+    if kept_cats != intent.categories:
+        out["categories"] = kept_cats
+    kept_tags = [x for x in intent.must_tags if x not in tags]
+    if kept_tags != intent.must_tags:
+        out["must_tags"] = kept_tags
+    return out
 
 
 def warm_reason(req: RecommendRequest, wx: WeatherInfo | None) -> str | None:
