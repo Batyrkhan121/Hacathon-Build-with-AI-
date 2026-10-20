@@ -148,3 +148,134 @@ def test_location_accepts_cells_up_to_r10() -> None:
     for res in (11, 13, 15):
         with pytest.raises(ValidationError, match="finer than r10"):
             LocationInput(h3_cell=h3.latlng_to_cell(51.0894, 71.4161, res))
+
+
+# ------------------------------------------------------------------ 1.3.0 (wave 8)
+
+
+def _event_card(**over: object) -> dict:
+    base = {"rank": 1, "poi_id": "event:jazz_evening", "title": "Джазовый вечер",
+            "category": "entertainment", "geo": {"lat": 51.09, "lon": 71.41}, "distance_m": 400,
+            "walk_min": 6, "visit_min_low": 60, "visit_min_high": 120, "why": "Живая музыка.",
+            "what_to_do": "Приходите к началу.", "open_status": "unknown",
+            "open_confidence": "low", "open_note": "нет данных о часах, проверьте перед визитом",
+            "idea_source": "poi_data", "facts_sources": ["manual"], "data_confidence": 0.8,
+            "address": "Филармония, пр. Мангилик Ел, 1", "kind": "event",
+            "starts_at": "2026-10-24T19:00:00+05:00", "ends_at": "2026-10-24T21:00:00+05:00",
+            "source_url": "https://example.org/events/jazz"}
+    return {**base, **over}
+
+
+def test_1_2_0_request_gets_1_3_0_defaults() -> None:
+    from app.schemas import SCHEMA_VERSION
+
+    assert SCHEMA_VERSION == "1.3.0"
+    req = RecommendRequest.model_validate({"query": "кофе", "location": {"landmark_id": "expo"}})
+    assert (req.route_profile, req.prefs) == ("fastest", None)
+    for profile in ("fastest", "accessible", "lit"):
+        assert RecommendRequest.model_validate(
+            {"query": "кофе", "location": {"landmark_id": "expo"}, "route_profile": profile}
+        ).route_profile == profile
+    with pytest.raises(ValidationError):
+        RecommendRequest.model_validate(
+            {"query": "кофе", "location": {"landmark_id": "expo"}, "route_profile": "safe"})
+
+
+def test_prefs_take_only_the_fixed_vocabulary() -> None:
+    from app.schemas import MAX_PREFS, PREF_LABELS_RU, UserPrefs
+
+    assert len(PREF_LABELS_RU) == MAX_PREFS == 8
+    assert set(PREF_LABELS_RU.values()) == {"тихо", "кофе", "с ребёнком", "музеи", "парки",
+                                            "без баров", "в тепле", "ночные"}
+    every = [t for t in PREF_LABELS_RU if t != "no_bars"]
+    ok = UserPrefs(likes=["no_bars", "museums"], avoids=["night"])
+    assert (ok.likes, ok.avoids) == (["no_bars", "museums"], ["night"])
+    assert UserPrefs(likes=list(PREF_LABELS_RU)).likes == list(PREF_LABELS_RU)
+    assert UserPrefs(avoids=every).avoids == every
+    for bad in ({"likes": ["sushi"]}, {"likes": ["музеи"]}, {"avoids": ["coffee please"]},
+                {"likes": ["museums", "museums"]}, {"likes": ["parks"], "avoids": ["parks"]},
+                {"avoids": ["no_bars"]}, {"likes": list(PREF_LABELS_RU) * 2},
+                {"likes": [], "history": ["osm:node/1"]}, {"text": "люблю тишину"},
+                {"likes": "quiet"}):
+        with pytest.raises(ValidationError):
+            UserPrefs.model_validate(bad)
+
+
+def test_prefs_stay_out_of_request_repr() -> None:
+    req = RecommendRequest.model_validate(
+        {"query": "кофе", "location": {"landmark_id": "expo"},
+         "prefs": {"likes": ["museums"], "avoids": ["night"]}})
+    assert req.prefs is not None and req.prefs.likes == ["museums"]
+    assert "museums" not in repr(req) and "prefs" not in repr(req) and "museums" not in str(req)
+
+
+def test_unknown_pref_tag_is_a_private_422(synthetic_pois: list[POI], landmarks,
+                                           tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from app import api
+    from app.pipeline import Deps
+
+    from .test_pipeline import FakeLLM, make_settings, make_store
+
+    deps = Deps(store=make_store(synthetic_pois, landmarks), llm=FakeLLM(),
+                settings=make_settings(tmp_path))
+    client = TestClient(api.create_app(deps))
+    base = {"query": "кофе", "location": {"landmark_id": "expo"}}
+    for prefs in ({"likes": ["secret_tag_x"]}, {"avoids": ["no_bars"]}, {"likes": "museums"}):
+        r = client.post("/api/recommend", json={**base, "prefs": prefs})
+        assert r.status_code == 422, prefs
+        assert "secret_tag_x" not in r.text
+    r = client.post("/api/recommend", json={**base, "route_profile": "night_vision"})
+    assert r.status_code == 422
+
+
+def test_mini_route_1_3_0_profile_facts() -> None:
+    from app.schemas import MiniRoute
+
+    r = MiniRoute.model_validate(_route())
+    assert r.profile == "fastest"
+    assert (r.lit_share, r.unlit_share, r.unknown_lit_share) == (None, None, None)
+    assert (r.kerb_lowered, r.kerb_unknown, r.max_outdoor_leg_min) == (None, None, None)
+    full = MiniRoute.model_validate(_route(
+        path_source="graph", profile="lit", lit_share=0.78, unlit_share=0.07,
+        unknown_lit_share=0.15, steps_count=0, kerb_lowered=3, kerb_unknown=2,
+        max_outdoor_leg_min=9))
+    assert (full.profile, full.lit_share, full.kerb_lowered, full.max_outdoor_leg_min) == (
+        "lit", 0.78, 3, 9)
+    straight = MiniRoute.model_validate(_route(profile="accessible", lit_share=0,
+                                               unlit_share=0, unknown_lit_share=1))
+    assert straight.unknown_lit_share == 1
+    for bad in ({"profile": "safe"}, {"lit_share": 0.5}, {"lit_share": 0.5, "unlit_share": 0.5},
+                {"lit_share": 0.6, "unlit_share": 0.3, "unknown_lit_share": 0.3},
+                {"lit_share": 1.2, "unlit_share": 0, "unknown_lit_share": -0.2},
+                {"kerb_lowered": -1}, {"kerb_unknown": -1}, {"max_outdoor_leg_min": -5}):
+        with pytest.raises(ValidationError):
+            MiniRoute.model_validate(_route(**bad))
+
+
+def test_place_cards_stay_valid_and_event_cards_are_checked() -> None:
+    from app.schemas import Card
+
+    raw = json.loads((ROOT / "web" / "mock" / "answer_sample.json").read_text(encoding="utf-8"))
+    place = Card.model_validate(raw["cards"][0])
+    assert (place.kind, place.starts_at, place.ends_at, place.source_url) == (
+        "place", None, None, None)
+    event = Card.model_validate(_event_card())
+    assert event.kind == "event" and event.starts_at is not None
+    assert event.starts_at.utcoffset() is not None
+    assert Card.model_validate(_event_card(ends_at=None)).ends_at is None
+    for bad in ({"starts_at": None}, {"source_url": None},
+                {"starts_at": "2026-10-24T19:00:00"},
+                {"ends_at": "2026-10-24T18:00:00+05:00"},
+                {"ends_at": "2026-10-24T19:00:00+05:00"},
+                {"source_url": "http://example.org/events/jazz"},
+                {"source_url": "javascript:alert(1)"},
+                {"source_url": "https://example.org/a b"},
+                {"kind": "place"}, {"kind": "concert"}):
+        with pytest.raises(ValidationError):
+            Card.model_validate(_event_card(**bad))
+    for leak in ({"starts_at": "2026-10-24T19:00:00+05:00"},
+                 {"source_url": "https://example.org/x"}):
+        with pytest.raises(ValidationError):
+            Card.model_validate({**raw["cards"][0], **leak})

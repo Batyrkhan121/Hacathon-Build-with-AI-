@@ -26,7 +26,7 @@
 
 ## 3. Поток RAG
 ```
-браузер: запрос + (ориентир | GPS→H3 r10) + фильтры + время
+браузер: запрос + (ориентир | GPS→H3 r10) + фильтры + время (+ route_profile, prefs — 1.3.0)
    │  POST /api/recommend  (RecommendRequest: без координат)
    ▼
 resolve_origin ─► parse_query (LLM ⟶ rules) ─► apply_overrides ─► QueryIntent
@@ -60,8 +60,8 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 | `hours.py` | CORE | часы работы OSM → статус | `evaluate_hours`, `now_astana`, `ASTANA_TZ` |
 | `store.py` | CORE | загрузка POI, индекса, ориентиров | `Store`, `load_store`, `load_pois`, `load_landmarks` |
 | `retrieval.py` | CORE | фильтры, скоринг, MMR | `retrieve`, `lexical_relevance`, `WEIGHTS` |
-| `route.py` | CORE → FEATURES (волна 5) | мини-маршрут: по пешеходному графу, иначе прямые отрезки | `plan_route` |
-| `walkgraph.py` | FEATURES (волна 5) | загрузка пешеходного графа, привязка к узлам, кратчайший путь (heapq) | — |
+| `route.py` | CORE → FEATURES (волна 5) → CORE (волна 8) | мини-маршрут: по пешеходному графу, иначе прямые отрезки | `plan_route` |
+| `walkgraph.py` | FEATURES (волна 5) → CORE (волна 8) | загрузка пешеходного графа, привязка к узлам, кратчайший путь (heapq) | — |
 | `validate.py` | CORE | защита от ошибок LLM, шаблонные карточки | `finalize`, `template_cards` |
 | `llm.py` | LLM | Claude: JSON по схеме, кэш; эмбеддинги Gemini (опционально) | `LLMClient.generate_structured`, `embed_query`, `embed_documents` |
 | `query_parser.py` | LLM | текст → намерение | `parse_query`, `parse_rules`, `apply_overrides`, `detect_lang` |
@@ -83,10 +83,10 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
     | Массив | Тип | Смысл |
     |---|---|---|
     | `node_lat`, `node_lon` | float32 | координаты узла |
-    | `node_flags` | uint8 | биты: 1 переход, 2 светофор, 4 занижённый бордюр, 8 переход без разметки |
+    | `node_flags` | uint8 | биты: 1 переход, 2 светофор, 4 занижённый бордюр, 8 переход без разметки, 16 бордюр известен и не занижен (kerb=raised/rolled; волна 8) |
     | `edge_u`, `edge_v` | int32 | концы ребра (номера узлов); граф неориентированный, каждое ребро один раз, `u != v` |
     | `edge_len_m` | float32 | длина ребра по линии OSM, метры |
-    | `edge_flags` | uint8 | биты: 1 лестница, 2 освещено, 4 пешеходная дорожка, 8 крупная дорога, 16 отрезок перехода |
+    | `edge_flags` | uint8 | биты: 1 лестница, 2 освещено (lit=yes), 4 пешеходная дорожка, 8 крупная дорога, 16 отрезок перехода, 32 не освещено (lit=no; волна 8) |
 
   - `data/processed/walk_graph_meta.json`: `osm_snapshot` (дата снимка OSM), `bbox` `[юг, запад, север, восток]`, `nodes`, `edges`, `crossings`, `signals`, `largest_component_share` (доля узлов в крупнейшей компоненте до отбрасывания мелких, 0..1; в npz остаётся только крупнейшая), `poi_nodes` (`{poi_id: номер узла}`), `landmark_nodes` (`{landmark_id: номер узла}`), `created_at`. Данные — производная OSM под ODbL.
   - Время по графу: `walk_min = ceil(длина пути / 75)`, минимум 1 (те же 4,5 км/ч, но без множителя 1,3). Вид перехода в `RouteCrossing.kind`: бит 2 → `signals`, иначе бит 8 → `unmarked`, иначе бит 1 → `marked`.
@@ -100,6 +100,26 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
     - в графе бывают узлы-переходы степени 1 (тупиковые хвосты переходов в OSM) и рёбра короче 1 см (совпадающие узлы OSM): читатель их терпит.
   - `MiniRoute` 1.1.0: `path_source` (`graph` | `straight`), `crossings` (до 50), `steps_count` (число отрезков-лестниц). При `graph` в `path` и `legs` путь и время по графу.
   - Флаг `WALK_GRAPH` (по умолчанию включён) работает, если файл есть (`settings.walk_graph_ready`). Флаг выключен, файла нет или любая ошибка загрузки и поиска → прежние прямые отрезки и `path_source=straight`.
+  - Волна 8: биты node 16 и edge 32 добавочные, `format_version` остаётся 1. Нет бита — «нет данных», никогда не «да»: ребро без битов 2 и 32 идёт в `unknown_lit_share`, переход без битов 4 и 16 — в `kerb_unknown`.
+- Контракт 1.3.0 (волна 8, `app/schemas.py`). Все новые поля необязательные, запросы и ответы 1.2.0 остаются валидными.
+  - Запрос: `route_profile` — `fastest` (по умолчанию) | `accessible` (без ступенек) | `lit` (по освещённым улицам).
+  - Запрос: `prefs` (`UserPrefs`) — `likes` и `avoids`, каждый до 8 меток только из `PrefTag`, подписи в `PREF_LABELS_RU`:
+
+    | Метка | Подпись | Что значит для подбора (FEATURES уточняет по eval) |
+    |---|---|---|
+    | `quiet` | тихо | тег `quiet` |
+    | `coffee` | кофе | тег `coffee`, категория `cafe` |
+    | `kids` | с ребёнком | тег `kids`, `kids_friendly` |
+    | `museums` | музеи | категории `museum`, `gallery` |
+    | `parks` | парки | категория `park` |
+    | `no_bars` | без баров | только в `likes`: без категорий `bar`, `nightlife` |
+    | `warm` | в тепле | `indoor`, короткие отрезки на улице |
+    | `night` | ночные | теги `night`, `late_open`, `24_7` |
+
+    Неизвестная метка, свободный текст, повтор, одна метка в обоих списках, `no_bars` в `avoids`, лишнее поле → 422. Истории нет: сервер не хранит prefs. В логах prefs не пишутся вместе с ячейкой, ориентиром и запросом; в `repr` запроса их нет (`repr=False`).
+  - `MiniRoute`: `profile` — профиль, по которому маршрут построен на самом деле. `lit_share`, `unlit_share`, `unknown_lit_share` — доли длины пути по графу (OSM lit=yes / lit=no / нет тега), задаются вместе, в сумме 1 (±0,02); у прямых отрезков 0 / 0 / 1. `kerb_lowered`, `kerb_unknown` — число переходов на пути с занижённым бордюром и без данных о бордюре. `max_outdoor_leg_min` — самый длинный отрезок пешком между остановками, минуты. `steps_count` — как в 1.1.0. Всё считает код. Если `accessible` пришлось идти со ступенями (без них пути нет или он длиннее больше чем на 30 %), `profile` остаётся `accessible`, `steps_count > 0`, причина в `note`. Освещённость — данные OSM, а не обещание безопасности.
+  - `Card.kind`: `place` (по умолчанию) | `event`. У события обязательны `starts_at` (с часовым поясом, UTC+5) и `source_url` (только `https://`), `ends_at` необязателен и позже начала; у места эти три поля пустые. Для события `poi_id` = id события, `title` — название, `address` — площадка и адрес, `geo` — точка площадки, `facts_sources` — `manual`. «Идёт сейчас» — только если `starts_at ≤ сейчас < ends_at` и оба известны, иначе «начало в ЧЧ:ММ». Само `kind=event` и есть метка «временное».
+  - `data/events.json` (DATA → FEATURES): список объектов `id` (`event:<slug>`), `title` (`ru`, по возможности `kk`, `en`), `venue`, `address`, `geo` или `venue_poi_id`, `category`, `tags` (из `TAG_VOCAB`), `starts_at`, `ends_at` (ISO с `+05:00`), `source_url` (https), `source_name`, `fetched_at`. Только источники, чьи условия разрешают хранение; 2GIS и Яндекс нельзя. Прошедшие события в ответ не попадают.
 - `data/raw/`, `data/cache/`: не коммитятся.
 - API:
   - `GET /api/health`;

@@ -1,8 +1,8 @@
 """Qadam — data contract between all layers.
 
-Owner: INTEGRATOR (main branch only). Lane branches must NOT edit this file.
+Owner: INTEGRATOR (main branch only; in wave 8 the wave-8 branch). Lanes must NOT edit this file.
 Need a change? Put a "CONTRACT CHANGE REQUEST" into your lane report; the integrator
-applies it on main and tells the lanes to `git merge main`.
+applies it on main (wave 8: on wave-8) and tells the lanes which commit to merge.
 
 Flow: pipeline -> data/processed/poi.jsonl (POI) -> store/retrieval (Candidate)
       -> generate (DraftResponse) -> validate (Card) -> pipeline (Answer) -> api -> web/eval
@@ -15,7 +15,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.2.0"  # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10
+SCHEMA_VERSION = "1.3.0"
+# 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10;
+# 1.3.0 (wave 8): route_profile and prefs in the request, route profile facts, event cards
 MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
@@ -89,6 +91,21 @@ Source = Literal[
 OpenStatus = Literal["open", "closed", "unknown"]
 Confidence = Literal["high", "medium", "low"]
 Wheelchair = Literal["yes", "limited", "no", "unknown"]
+RouteProfile = Literal["fastest", "accessible", "lit"]  # быстрее / без ступенек / по освещённым
+
+# 1.3.0: fixed preference vocabulary. No free text: an unknown tag is a 422.
+PrefTag = Literal["quiet", "coffee", "kids", "museums", "parks", "no_bars", "warm", "night"]
+PREF_LABELS_RU: dict[str, str] = {
+    "quiet": "тихо",
+    "coffee": "кофе",
+    "kids": "с ребёнком",
+    "museums": "музеи",
+    "parks": "парки",
+    "no_bars": "без баров",
+    "warm": "в тепле",
+    "night": "ночные",
+}
+MAX_PREFS = 8
 
 
 class GeoPoint(BaseModel):
@@ -192,6 +209,30 @@ class UserOverrides(BaseModel):
     night: bool | None = None
 
 
+class UserPrefs(BaseModel):
+    """1.3.0. Likes and avoids for ONE request, only from PrefTag (labels: PREF_LABELS_RU).
+
+    No free text and no history: the server does not store prefs and never logs them together
+    with the cell, the landmark or the query. "no_bars" is a like ("без баров"), not an avoid.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    likes: list[PrefTag] = Field(default_factory=list, max_length=MAX_PREFS)
+    avoids: list[PrefTag] = Field(default_factory=list, max_length=MAX_PREFS)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> UserPrefs:
+        for name, tags in (("likes", self.likes), ("avoids", self.avoids)):
+            if len(set(tags)) != len(tags):
+                raise ValueError(f"duplicate tags in {name}")
+        if set(self.likes) & set(self.avoids):
+            raise ValueError("a tag cannot be in both likes and avoids")
+        if "no_bars" in self.avoids:
+            raise ValueError("no_bars is a like")
+        return self
+
+
 class RecommendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -202,6 +243,9 @@ class RecommendRequest(BaseModel):
     overrides: UserOverrides | None = None
     want_route: bool = True
     use_llm: bool = True  # False = deterministic rules parser + template cards
+    # 1.3.0, optional (1.2.0 requests stay valid):
+    route_profile: RouteProfile = "fastest"
+    prefs: UserPrefs | None = Field(default=None, repr=False)  # repr=False: not in logged reprs
 
 
 class QueryIntent(BaseModel):
@@ -278,6 +322,9 @@ class DraftResponse(BaseModel):
 
 
 class Card(BaseModel):
+    """One recommendation. 1.3.0: kind="event" is a dated event at a venue (data/events.json):
+    starts_at (tz-aware) and source_url are required for it and forbidden for a place."""
+
     rank: int = Field(ge=1, le=3)
     poi_id: str
     title: str
@@ -296,8 +343,28 @@ class Card(BaseModel):
     facts_sources: list[Source] = Field(min_length=1)  # provenance of the facts on the card
     data_confidence: float = Field(ge=0, le=1)
     tags: list[str] = Field(default_factory=list)
-    address: str | None = None
+    address: str | None = None  # for an event: venue name and address, from data/events.json
     website: str | None = None
+    # 1.3.0, optional (1.2.0 cards stay valid):
+    kind: Literal["place", "event"] = "place"
+    starts_at: datetime | None = None  # event only, tz-aware (UTC+5)
+    ends_at: datetime | None = None  # event only, optional, after starts_at
+    source_url: str | None = Field(default=None, max_length=2048, pattern=r"^https://\S+$")
+
+    @model_validator(mode="after")
+    def _event_fields(self) -> Card:
+        if self.kind == "place":
+            if (self.starts_at, self.ends_at, self.source_url) != (None, None, None):
+                raise ValueError("starts_at, ends_at and source_url are for events only")
+            return self
+        if self.starts_at is None or self.source_url is None:
+            raise ValueError("an event needs starts_at and source_url")
+        for value in (self.starts_at, self.ends_at):
+            if value is not None and value.utcoffset() is None:
+                raise ValueError("event times must carry a time zone")
+        if self.ends_at is not None and self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be after starts_at")
+        return self
 
 
 class RouteLeg(BaseModel):
@@ -332,6 +399,25 @@ class MiniRoute(BaseModel):
     path_source: Literal["graph", "straight"] = "straight"
     crossings: list[RouteCrossing] = Field(default_factory=list, max_length=50)  # graph only
     steps_count: int = Field(default=0, ge=0)  # stair segments on the graph path
+    # 1.3.0, all optional with defaults (old answers stay valid). Facts computed by code:
+    profile: RouteProfile = "fastest"  # the profile the route was actually planned with
+    lit_share: float | None = Field(default=None, ge=0, le=1)  # share of path length, OSM lit=yes
+    unlit_share: float | None = Field(default=None, ge=0, le=1)  # OSM lit=no
+    unknown_lit_share: float | None = Field(default=None, ge=0, le=1)  # no lit tag; straight = 1
+    kerb_lowered: int | None = Field(default=None, ge=0)  # crossings with kerb=lowered/flush
+    kerb_unknown: int | None = Field(default=None, ge=0)  # crossings without kerb data
+    max_outdoor_leg_min: int | None = Field(default=None, ge=0)  # longest walk between stops
+
+    @model_validator(mode="after")
+    def _lit_shares(self) -> MiniRoute:
+        shares = (self.lit_share, self.unlit_share, self.unknown_lit_share)
+        if all(v is None for v in shares):
+            return self
+        if any(v is None for v in shares):
+            raise ValueError("lit_share, unlit_share and unknown_lit_share go together")
+        if abs(sum(v for v in shares if v is not None) - 1) > 0.02:
+            raise ValueError("lit shares must sum to 1")
+        return self
 
 
 class DataUsed(BaseModel):
