@@ -1673,6 +1673,7 @@ PREF_LOG_MARKERS = sorted(
     key=len, reverse=True)
 ALL_PREFS = {"likes": ["quiet", "museums", "parks", "no_bars", "warm", "night"],
              "avoids": ["coffee", "kids"]}
+EXCLUDE = ["test:poi/1", "test:poi/12", "event:jazz"]  # «Ещё»: ids of cards already shown
 
 
 def _pref_leaks(records: list[logging.LogRecord]) -> list[str]:
@@ -1680,6 +1681,7 @@ def _pref_leaks(records: list[logging.LogRecord]) -> list[str]:
     for r in records:
         text = (r.getMessage() + " " + (r.exc_text or "")).lower()
         hits = [m for m in PREF_LOG_MARKERS if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+        hits += [x for x in (*EXCLUDE, "exclude") if x in text]
         if hits:
             out.append(f"{r.name}: {hits}: {text[:120]}")
     return out
@@ -1696,7 +1698,8 @@ def test_prefs_never_reach_the_logs(deps: Deps, monkeypatch: pytest.MonkeyPatch,
                                     caplog: pytest.LogCaptureFixture,
                                     location: dict[str, str], failure: str | None) -> None:
     """T123 main check (EVAL's probe is extra): prefs are labels for one answer; no log record
-    carries them, so none carries them next to the cell, the landmark or the query."""
+    carries them, so none carries them next to the cell, the landmark or the query. The same
+    for exclude_poi_ids («Ещё»): no shown id in any log record."""
     if failure == "retrieve":
         monkeypatch.setattr(retrieval, "retrieve", _boom)
     elif failure == "route":
@@ -1709,7 +1712,8 @@ def test_prefs_never_reach_the_logs(deps: Deps, monkeypatch: pytest.MonkeyPatch,
         deps = Deps(store=deps.store, llm=FakeLLM(fail=LLMUnavailable("down")),
                     settings=deps.settings)
     query = "тихое место погулять с видом"
-    body = {"query": query, "location": location, "at": DAYTIME, "prefs": ALL_PREFS}
+    body = {"query": query, "location": location, "at": DAYTIME, "prefs": ALL_PREFS,
+            "exclude_poi_ids": EXCLUDE}
     request = RecommendRequest.model_validate(body)
     with caplog.at_level(logging.DEBUG):
         a = recommend(request, deps)
@@ -1997,3 +2001,57 @@ def test_a_broken_event_never_takes_the_places_down(deps: Deps, tmp_path: Path,
     a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, [_event_record()]))
     assert a.cards and not any(c.kind == "event" for c in a.cards)
     assert TEXTS["ru"]["search_error"] not in a.warnings
+
+
+# ------------------------------------- «Ещё» (contract 1.3.0, exclude_poi_ids): no repeats
+
+MORE_Q = "куда сходить сегодня"
+
+
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_more_never_repeats_the_cards_already_shown(deps: Deps, tmp_path: Path,
+                                                    use_llm: bool) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    first = recommend(req(MORE_Q, use_llm=use_llm), d)
+    shown = [c.poi_id for c in first.cards]
+    assert len(shown) >= 2 and "event:jazz" in shown  # an event among them too
+    second = recommend(req(MORE_Q, use_llm=use_llm, exclude_poi_ids=shown), d)
+    assert second.cards and not set(shown) & {c.poi_id for c in second.cards}
+    assert second.route is None or not set(shown) & set(second.route.stop_ids)
+    assert "без уже показанных мест: " + str(len(shown)) in second.data_used.filters
+    third = recommend(req(MORE_Q, use_llm=use_llm,
+                          exclude_poi_ids=shown + [c.poi_id for c in second.cards]), d)
+    assert not set(shown + [c.poi_id for c in second.cards]) & {c.poi_id for c in third.cards}
+
+
+def test_more_with_nothing_left_is_an_honest_empty_answer(deps: Deps) -> None:
+    near = [p for p in deps.store.pois if p.id in ("test:poi/1", "test:poi/12")]
+    small = Deps(store=make_store(near, deps.store.landmarks), llm=deps.llm,
+                 settings=deps.settings)
+    first = recommend(req("кофе", use_llm=False), small)
+    assert {c.poi_id for c in first.cards} == {"test:poi/1", "test:poi/12"}
+    a = recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1", "test:poi/12"]),
+                  small)
+    assert a.cards == [] and a.route is None
+    assert a.summary == TEXTS["ru"]["summary_no_more"]
+    assert TEXTS["ru"]["nothing"] in a.warnings
+    en = recommend(req("coffee", use_llm=False, lang="en",
+                       exclude_poi_ids=["test:poi/1", "test:poi/12"]), small)
+    assert en.summary == TEXTS["en"]["summary_no_more"]
+
+
+def test_more_keeps_the_ids_out_of_the_retrieve_reasons(deps: Deps,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+    real = retrieval.retrieve
+
+    def spy(*a: Any, **kw: Any) -> list[Candidate]:
+        seen.append(kw.get("exclude_ids"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(retrieval, "retrieve", spy)
+    recommend(req("кофе", use_llm=False), deps)
+    assert seen == [None]  # nothing to exclude: the 1.2.0 call
+    seen.clear()
+    recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1"]), deps)
+    assert seen and seen[0] == frozenset({"test:poi/1"})

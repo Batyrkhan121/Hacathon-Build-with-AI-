@@ -197,6 +197,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
         "f_profile_auto": " (коляска)",
         "f_prefs_likes": "предпочтения: {v}", "f_prefs_avoids": "избегать: {v}",
+        "f_excluded": "без уже показанных мест: {n}",
+        "summary_no_more": "Других подходящих мест рядом нет: уже показанные не "
+                           "повторяем.",
         "f_warm": "в тепле: на улице до {v} мин подряд", "f_warm_frost": " (мороз {t})",
         "warm_outdoor": "Рядом мало мест в помещении — показаны и места на улице.",
         "warm_long_leg": "Самый длинный отрезок по улице — {n} мин: тёплых мест ближе "
@@ -277,6 +280,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
         "f_profile_auto": " (арба)",
         "f_prefs_likes": "қалауыңыз: {v}", "f_prefs_avoids": "аулақ болу: {v}",
+        "f_excluded": "көрсетілген орындарсыз: {n}",
+        "summary_no_more": "Жақын жерде басқа лайықты орын жоқ: көрсетілгендерін "
+                           "қайталамаймыз.",
         "f_warm": "жылыда: далада қатарынан {v} минутқа дейін",
         "f_warm_frost": " (аяз {t})",
         "warm_outdoor": "Жақын жерде жабық орындар аз — далада орындар да көрсетілді.",
@@ -355,6 +361,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_lit": "route: along lit streets (OSM data)",
         "f_profile_auto": " (wheelchair)",
         "f_prefs_likes": "likes: {v}", "f_prefs_avoids": "avoid: {v}",
+        "f_excluded": "excluding places already shown: {n}",
+        "summary_no_more": "No other suitable places nearby: the ones already shown "
+                           "are not repeated.",
         "f_warm": "warm: up to {v} min outside at a time", "f_warm_frost": " (frost {t})",
         "warm_outdoor": "Few indoor places nearby — outdoor places are shown too.",
         "warm_long_leg": "The longest walk outside is {n} min: there is no warm place "
@@ -634,6 +643,11 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # T123: prefs re-rank and filter the search (retrieval); labels only, never logged.
     # Warm mode adds "warm" to the likes: warm stops first, whatever switched it on.
     search_prefs = _search_prefs(req.prefs, warm=warm is not None)
+    # «Ещё»: the places and events already shown in this series are never candidates again
+    # (ids only, per request, never logged)
+    exclude = frozenset(req.exclude_poi_ids)
+    search_kw: dict[str, object] = {"prefs": search_prefs, "event_pool": event_pool,
+                                    "exclude": exclude}
 
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
@@ -641,8 +655,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if no_time:  # nothing fits before the flight: do not search, do not spend the LLM
         candidates, failed = [], False
     else:
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                       prefs=search_prefs, event_pool=event_pool)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k, **search_kw)
     if short_walks:  # "two cards beat a third one 48 minutes away"
         candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
     if not candidates and not failed and not no_time and not short_walks:
@@ -650,7 +663,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
             candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                           prefs=search_prefs, event_pool=event_pool)
+                                           **search_kw)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     if plan_intent.night and not no_time:
@@ -661,8 +674,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
             far_ctx = ctx.model_copy(update={"radius_m": min(
                 round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
-            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k,
-                                     prefs=search_prefs, event_pool=event_pool)
+            more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k, **search_kw)
             sure = [c for c in more if _night_sure(c, by_event, local_time)]
             if sure:
                 search_intent, ctx = far_intent, far_ctx
@@ -671,8 +683,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             candidates = sure
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
-        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                       prefs=search_prefs, event_pool=event_pool)
+        candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k, **search_kw)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
@@ -683,8 +694,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if warm_indoor and len(candidates) < WARM_MIN_INDOOR and not failed and not no_time:
         # too few indoor places around: outdoor ones come back, and the person is told
         wider_intent = search_intent.model_copy(update={"indoor": "any"})
-        more, failed = _retrieve(store, wider_intent, ctx, query_vec, pool_k,
-                                 prefs=search_prefs, event_pool=event_pool)
+        more, failed = _retrieve(store, wider_intent, ctx, query_vec, pool_k, **search_kw)
         if short_walks:
             more = [c for c in more if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
@@ -835,6 +845,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                   night_taxi=night_taxi))
     if summary is None:
         summary = _template_summary(t, len(cards))
+    if not cards and exclude and not no_time:
+        summary = t["summary_no_more"]
     if no_time:
         summary = t["summary_leave_now"]
     elif at_airport and intent.tourist and _sights(candidates) < 2 and not _food_only(intent):
@@ -872,7 +884,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
                              else None,
                              profile=profile, profile_auto=profile_auto,
-                             prefs=req.prefs, warm=warm,
+                             prefs=req.prefs, warm=warm, excluded=len(exclude),
                              temp_c=wx.temp_c if wx is not None else None),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
@@ -1198,11 +1210,15 @@ def _retrieve(
     store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None,
     k: int = TOP_K, *, prefs: UserPrefs | None = None,
     event_pool: list[tuple[POI, HoursVerdict]] | None = None,
+    exclude: frozenset[str] = frozenset(),
 ) -> tuple[list[Candidate], bool]:
     """(candidates, failed). Wave 8 keywords go to retrieve only when set (1.2.0 calls stay)."""
     extra: dict[str, object] = {}
     if prefs is not None:
         extra["prefs"] = prefs
+    if exclude:
+        extra["exclude_ids"] = exclude
+        event_pool = [pair for pair in event_pool or [] if pair[0].id not in exclude]
     if event_pool:
         extra["events"] = event_pool
     try:
@@ -1459,7 +1475,7 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              index_stale: bool = False, hours_dropped: dict[str, int] | None = None,
              profile: RouteProfile = "fastest", profile_auto: bool = False,
              prefs: UserPrefs | None = None, warm: str | None = None,
-             temp_c: float | None = None) -> list[str]:
+             temp_c: float | None = None, excluded: int = 0) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran.
     `airport` = minutes to departure when the flight rule shaped the time budget.
@@ -1497,6 +1513,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
         frost = warm == "frost" and temp_c is not None
         out.append(t["f_warm"].format(v=WARM_MAX_LEG_MIN)
                    + (t["f_warm_frost"].format(t=_temp(temp_c)) if frost else ""))
+    if excluded:  # «Ещё»: a count only, the ids stay out of the answer text
+        out.append(t["f_excluded"].format(n=excluded))
     if semantic:
         out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:

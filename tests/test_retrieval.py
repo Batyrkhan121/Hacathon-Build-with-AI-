@@ -923,3 +923,15 @@ def test_events_pass_at_night_without_hours() -> None:
     night = make_ctx(at=datetime(2026, 10, 20, 23, 0, tzinfo=ASTANA_TZ))
     out = retrieve(store, intent(night=True), night, None, events=[_event_pair()])
     assert ids(out) == ["event:night-show"]
+
+
+def test_exclude_ids_drop_places_and_events_before_scoring() -> None:
+    cafe = make_poi("cafe", "cafe", dlat=0.001)
+    park = make_poi("park", "park", dlat=0.002)
+    pair = _event_pair()
+    store = make_store([cafe, park])
+    out = retrieve(store, intent(), make_ctx(), None, events=[pair],
+                   exclude_ids=frozenset({cafe.id, "event:night-show"}))
+    assert ids(out) == [park.id]
+    assert retrieve(store, intent(), make_ctx(), None,
+                    exclude_ids=frozenset({cafe.id, park.id})) == []

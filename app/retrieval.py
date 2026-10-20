@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from functools import lru_cache
 
 import numpy as np
@@ -804,6 +805,7 @@ def retrieve(
     *,
     prefs: UserPrefs | None = None,
     events: Sequence[tuple[POI, HoursVerdict]] = (),
+    exclude_ids: AbstractSet[str] = frozenset(),
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -819,6 +821,8 @@ def retrieve(
     T123 `events`: (POI, verdict) of the events current at ctx.local_time (app.events). The
     same distance / profile / prefs filters; no hours filter (app.events already kept only
     events that are not over); EVENT_BONUS in score_parts["event"].
+    `exclude_ids` (request.exclude_poi_ids, the «Ещё» chip): places and events already shown,
+    dropped before any scoring.
     """
     if k <= 0 or not store.pois:
         return []
@@ -826,6 +830,8 @@ def retrieve(
     query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
     passed: list[tuple[int | None, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
+        if poi.id in exclude_ids:
+            continue
         distance = haversine_m(ctx.origin, poi.geo)
         if (distance > ctx.radius_m or not _passes_profile(poi, intent)
                 or not _passes_prefs(poi, prefs)):
@@ -836,7 +842,8 @@ def retrieve(
             passed.append((i, poi, distance, verdict))
     for poi, verdict in events:
         distance = haversine_m(ctx.origin, poi.geo)
-        if (distance <= ctx.radius_m and _passes_profile(poi, intent)
+        if (poi.id not in exclude_ids and distance <= ctx.radius_m
+                and _passes_profile(poi, intent)
                 and _passes_prefs(poi, prefs)):
             passed.append((None, poi, distance, verdict))
 
