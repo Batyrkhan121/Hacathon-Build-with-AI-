@@ -13,6 +13,15 @@ docs/ARCHITECTURE.md §5 (built by DATA, pipeline/walk_graph.py). Only numpy and
   Astana lit is tagged on ~3% of edges: no bit means «unknown», not «dark», so a known-lit
   way is only a mild plus); with kids — unmarked +60 s.
   The heuristic is the straight line at the same pace: every real cost is at least that.
+- Wave 8: route profiles change only these edge and crossing costs (same A*):
+  fastest — as above; accessible — no stairs, unmarked crossing +120 s, traffic lights +5 s,
+  a crossing without kerb data +15 s, with a raised kerb +120 s (lowered kerbs win);
+  if there is no step-free way or it is over ACCESSIBLE_MAX_X x the usual one, the leg is the
+  usual (fastest) one with stairs_fallback=True (the note says so; with wheelchair=True there
+  is no fallback onto stairs); lit — lit=no x3, no lighting data x1.2, lit x1.
+- Facts of the path, never guessed: metres lit / lit=no / without data (a link to a point
+  and a contradictory edge count as «no data»), and the kerb of each crossing ("lowered" only
+  when the crossing node says so or the kerb nodes at both ends of its crossing segments do).
 - These weights only choose the path. Minutes shown to the user are the length at 75 m/min:
   walk_min = ceil(length / 75), minimum 1 (docs/ARCHITECTURE.md §5).
 - One route (all its legs) gets ROUTE_LIMIT_S; past it the search gives up (None).
@@ -30,13 +39,16 @@ import logging
 import math
 import time
 import zipfile
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
 from app.geo import haversine_m, walk_minutes
-from app.schemas import GeoPoint
+from app.schemas import GeoPoint, RouteProfile
 
 log = logging.getLogger(__name__)
 
@@ -51,16 +63,26 @@ MAJOR_ROAD_X = 1.3
 UNLIT_NIGHT_X = 1.1  # ARCHITECTURE §5: at most x1.1, or routes chase the rare lit=yes ways
 CROSSING_S: dict[str, float] = {"signals": 20.0, "marked": 10.0, "unmarked": 40.0}
 UNMARKED_CAREFUL_S = 60.0  # in a wheelchair or with kids
+ACCESSIBLE_CROSSING_S: dict[str, float] = {"signals": 5.0, "marked": 10.0, "unmarked": 120.0}
+ACCESSIBLE_KERB_S: dict[str, float] = {"lowered": 0.0, "unknown": 15.0, "raised": 120.0}
+ACCESSIBLE_MAX_X = 1.3  # a step-free way longer than 1.3 x the usual one -> the usual one
+LIT_NO_X = 3.0  # profile "lit": a way tagged lit=no
+LIT_UNKNOWN_X = 1.2  # profile "lit": no lighting data (most ways) is only a little worse
 DETOUR_MAX_X = 3.0  # graph longer than 3 x straight + 200 m -> the straight segment
 DETOUR_MAX_ADD_M = 200.0
 
 NODE_CROSSING, NODE_SIGNALS, NODE_LOWERED_KERB, NODE_UNMARKED = 1, 2, 4, 8
+NODE_RAISED_KERB = 16  # kerb known and not lowered (read when the graph has it)
 EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING = 1, 2, 4, 8, 16
+EDGE_UNLIT = 32  # lit=no (read when the graph has it; without it lit=no is «no data»)
+
+Kerb = Literal["lowered", "raised", "unknown"]
 
 _M_PER_DEG = 111_320.0
 _ARRAYS = ("node_lat", "node_lon", "node_flags", "edge_u", "edge_v", "edge_len_m", "edge_flags")
 _HEURISTIC_SAFETY = 0.99  # equirectangular distance may be a hair longer than the real one
 _CHECK_EVERY = 256  # heap pops between deadline checks
+_SIDE_MAX_NODES = 8  # kerb nodes are looked for this far along a crossing
 _INF = math.inf
 
 
@@ -77,6 +99,7 @@ class Mode:
     wheelchair: bool = False
     night: bool = False
     kids: bool = False
+    profile: RouteProfile = "fastest"  # an unknown value is treated as "fastest"
 
 
 WALK = Mode()  # plain walking, no special needs
@@ -87,6 +110,7 @@ class Crossing:
     lat: float
     lon: float
     kind: str  # "signals" | "marked" | "unmarked" (RouteCrossing.kind)
+    kerb: Kerb = "unknown"
 
 
 @dataclass(frozen=True)
@@ -99,6 +123,14 @@ class GraphPath:
     crossings: list[Crossing]
     steps: int  # stair edges on the path
     straight: bool = False  # a straight segment instead of the graph (see the module doc)
+    lit_m: float = 0.0  # metres on ways tagged lit=yes
+    unlit_m: float = 0.0  # metres on ways tagged lit=no
+    stairs_fallback: bool = False  # profile "accessible", but no step-free way worth taking
+
+    @property
+    def unknown_lit_m(self) -> float:
+        """Metres without lighting data: the links to the points and untagged ways."""
+        return max(0.0, self.length_m - self.lit_m - self.unlit_m)
 
     @property
     def walk_min(self) -> int:
@@ -134,9 +166,36 @@ def crossing_kind(flags: int) -> str | None:
 def _crossing_penalty(kind: str | None, mode: Mode) -> float:
     if kind is None:
         return 0.0
+    seconds = (ACCESSIBLE_CROSSING_S if mode.profile == "accessible" else CROSSING_S)[kind]
     if kind == "unmarked" and (mode.wheelchair or mode.kids):
-        return UNMARKED_CAREFUL_S
-    return CROSSING_S[kind]
+        return max(seconds, UNMARKED_CAREFUL_S)
+    return seconds
+
+
+def _no_stairs(mode: Mode) -> bool:
+    return mode.wheelchair or mode.profile == "accessible"
+
+
+def _lit_state(flags: int) -> int:
+    """1 lit=yes, -1 lit=no, 0 no data (no bit, or both: never guessed as «lit»)."""
+    lit, unlit = bool(flags & EDGE_LIT), bool(flags & EDGE_UNLIT)
+    if lit != unlit:
+        return 1 if lit else -1
+    return 0
+
+
+def _kerb_state(flags: int) -> Kerb:
+    lowered, raised = bool(flags & NODE_LOWERED_KERB), bool(flags & NODE_RAISED_KERB)
+    if lowered != raised:
+        return "lowered" if lowered else "raised"
+    return "unknown"
+
+
+def _both_sides(sides: list[Kerb]) -> Kerb:
+    """A raised kerb on any side -> "raised"; "lowered" needs two sides, all lowered."""
+    if "raised" in sides:
+        return "raised"
+    return "lowered" if len(sides) >= 2 and all(s == "lowered" for s in sides) else "unknown"
 
 
 class WalkGraph:
@@ -170,6 +229,8 @@ class WalkGraph:
         self._e_len, self._e_flags = e_len.tolist(), e_flags.tolist()
         self._eu, self._ev = eu.tolist(), ev.tolist()
         self._kind = [crossing_kind(f) for f in self._n_flags]
+        self._kerb = [_kerb_state(f) for f in self._n_flags]
+        self._lit = [_lit_state(f) for f in self._e_flags]
         # a crossing segment with no crossing node at either end still is a crossing: we do not
         # know its kind, so it counts as unmarked (the cautious choice)
         self._seg_crossing = [
@@ -200,6 +261,8 @@ class WalkGraph:
         self.poi_nodes = self._node_map(meta.get("poi_nodes"), n)
         self.landmark_nodes = self._node_map(meta.get("landmark_nodes"), n)
         self._costs_by_mode: dict[Mode, tuple[list[float], list[float]]] = {}
+        self._step_free: list[int] | None = None
+        self._kerb_of_crossing: dict[int, Kerb] = {}
 
     @staticmethod
     def _node_map(raw: object, n: int) -> dict[str, int]:
@@ -244,16 +307,48 @@ class WalkGraph:
         cost = np.asarray(self._e_len, dtype=np.float64) / SPEED_M_S
         cost = np.where(e_flags & EDGE_STEPS, cost * STAIRS_X, cost)
         cost = np.where(e_flags & EDGE_MAJOR, cost * MAJOR_ROAD_X, cost)
-        if mode.night:
+        if mode.profile == "lit":
+            lit = np.asarray(self._lit, dtype=np.int64)
+            cost = cost * np.where(lit > 0, 1.0, np.where(lit < 0, LIT_NO_X, LIT_UNKNOWN_X))
+        elif mode.night:
             cost = np.where(e_flags & EDGE_LIT, cost, cost * UNLIT_NIGHT_X)
         seg = np.asarray(self._seg_crossing, dtype=bool)
         cost = np.where(seg, cost + _crossing_penalty("unmarked", mode), cost)
-        if mode.wheelchair:
+        if _no_stairs(mode):
             cost = np.where(e_flags & EDGE_STEPS, _INF, cost)
         node_cost = [_crossing_penalty(kind, mode) for kind in self._kind]
+        if mode.profile == "accessible":  # crossings with lowered kerbs on both sides win
+            for e in np.flatnonzero(seg).tolist():
+                cost[e] += ACCESSIBLE_KERB_S[self._segment_kerb(e)]
+            node_cost = [s + ACCESSIBLE_KERB_S[self._node_kerb(node)] if self._kind[node] else s
+                         for node, s in enumerate(node_cost)]
         result = (cost.tolist(), node_cost)
         self._costs_by_mode[mode] = result
         return result
+
+    def _step_free_part(self) -> list[int]:
+        """Component of every node in the graph without stairs (union-find, built once): with
+        stairs forbidden, two nodes in different parts have no path, and A* would only learn
+        that after visiting the whole part (~0.1 s on the city graph)."""
+        if self._step_free is None:
+            parent = list(range(len(self._lat)))
+
+            def root(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            for e, flags in enumerate(self._e_flags):
+                if not flags & EDGE_STEPS:
+                    ru, rv = root(self._eu[e]), root(self._ev[e])
+                    if ru != rv:
+                        parent[ru] = rv
+            self._step_free = [root(x) for x in range(len(parent))]
+        return self._step_free
+
+    def _may_reach(self, a: int, b: int, mode: Mode) -> bool:
+        return not _no_stairs(mode) or self._step_free_part()[a] == self._step_free_part()[b]
 
     # ------------------------------------------------------------ search
 
@@ -320,24 +415,67 @@ class WalkGraph:
         link_b = haversine_m(self.point(nb), b)
         crossings: list[Crossing] = []
 
-        def add(lat: float, lon: float, kind: str | None) -> None:
+        def add(lat: float, lon: float, kind: str | None, kerb: Callable[[], Kerb]) -> None:
             if kind and not (crossings and crossings[-1].lat == lat and crossings[-1].lon == lon):
-                crossings.append(Crossing(lat=lat, lon=lon, kind=kind))
+                crossings.append(Crossing(lat=lat, lon=lon, kind=kind, kerb=kerb()))
 
-        add(self._lat[nodes[0]], self._lon[nodes[0]], self._kind[nodes[0]])
+        first = nodes[0]
+        add(self._lat[first], self._lon[first], self._kind[first], partial(self._node_kerb, first))
         for e, node in zip(edges, nodes[1:], strict=True):
             if self._seg_crossing[e]:
                 u, v = self._eu[e], self._ev[e]
                 add((self._lat[u] + self._lat[v]) / 2, (self._lon[u] + self._lon[v]) / 2,
-                    "unmarked")
-            add(self._lat[node], self._lon[node], self._kind[node])
+                    "unmarked", partial(self._segment_kerb, e))
+            add(self._lat[node], self._lon[node], self._kind[node], partial(self._node_kerb, node))
         return GraphPath(
             points=[(a.lat, a.lon), *((self._lat[n], self._lon[n]) for n in nodes), (b.lat, b.lon)],
             length_m=link_a + sum(self._e_len[e] for e in edges) + link_b,
             cost_s=cost + (link_a + link_b) / SPEED_M_S,
             crossings=crossings,
             steps=sum(1 for e in edges if self._e_flags[e] & EDGE_STEPS),
+            lit_m=sum(self._e_len[e] for e in edges if self._lit[e] > 0),
+            unlit_m=sum(self._e_len[e] for e in edges if self._lit[e] < 0),
         )
+
+    def _node_kerb(self, node: int) -> Kerb:
+        """Kerb of a crossing node: its own tag, else the kerb nodes on its crossing segments,
+        one side per crossing segment that leaves it (cached)."""
+        cached = self._kerb_of_crossing.get(node)
+        if cached is not None:
+            return cached
+        kerb = self._kerb[node]
+        if kerb == "unknown":
+            kerb = _both_sides([
+                self._side_kerb(self._adj_nbr[k], node)
+                for k in range(self._adj_start[node], self._adj_start[node + 1])
+                if self._e_flags[self._adj_edge[k]] & EDGE_CROSSING
+            ])
+        self._kerb_of_crossing[node] = kerb
+        return kerb
+
+    def _segment_kerb(self, edge: int) -> Kerb:
+        """Kerb of a crossing segment with no crossing node: the kerb nodes at its two ends."""
+        u, v = self._eu[edge], self._ev[edge]
+        return _both_sides([self._side_kerb(u, v), self._side_kerb(v, u)])
+
+    def _side_kerb(self, first: int, came_from: int) -> Kerb:
+        """Kerb tags met walking from `first` along crossing segments away from `came_from`,
+        up to the next crossing node (an island) or _SIDE_MAX_NODES nodes."""
+        known: set[str] = set()
+        seen, stack = {came_from}, [first]
+        while stack and len(seen) <= _SIDE_MAX_NODES:
+            node = stack.pop()
+            if node in seen or self._kind[node]:
+                continue
+            seen.add(node)
+            known.add(self._kerb[node])
+            stack.extend(
+                self._adj_nbr[k] for k in range(self._adj_start[node], self._adj_start[node + 1])
+                if self._e_flags[self._adj_edge[k]] & EDGE_CROSSING
+            )
+        if "raised" in known:
+            return "raised"
+        return "lowered" if "lowered" in known else "unknown"
 
     def _leg(
         self,
@@ -355,10 +493,21 @@ class WalkGraph:
         links = haversine_m(a, self.point(na)) + haversine_m(self.point(nb), b)
         if direct <= links:  # no need to search: the graph would only add the two links
             return straight_path(a, b)
-        found = self._search(na, nb, mode, deadline)
-        if found is None:
+        found = self._search(na, nb, mode, deadline) if self._may_reach(na, nb, mode) else None
+        path = self._path(a, b, na, nb, found) if found is not None else None
+        # a step-free way can only be over ACCESSIBLE_MAX_X x the usual one when it is over
+        # ACCESSIBLE_MAX_X x the straight line: only then is the usual one searched for
+        if mode.profile == "accessible" and not mode.wheelchair and (
+            path is None or path.length_m > ACCESSIBLE_MAX_X * direct
+        ):
+            usual = self._search(na, nb, replace(mode, profile="fastest"), deadline)
+            if usual is not None:
+                plain = self._path(a, b, na, nb, usual)
+                if plain.steps and (path is None
+                                    or path.length_m > ACCESSIBLE_MAX_X * plain.length_m):
+                    path = replace(plain, stairs_fallback=True)
+        if path is None:
             return None
-        path = self._path(a, b, na, nb, found)
         return path if graph_beats_straight(direct, path.length_m, links) else straight_path(a, b)
 
     # ------------------------------------------------------------ public
@@ -424,6 +573,9 @@ class WalkGraph:
         Targets that cannot be bound or reached are left out, and so are those where the graph
         is only a binding artefact or an absurd detour (graph_beats_straight): the caller keeps
         the straight estimate for them. Over the time limit -> {}.
+        Profile "accessible": the step-free length, or the usual one under the rule of `route`
+        (a second search, only for targets whose step-free way is over ACCESSIBLE_MAX_X x the
+        straight line or missing).
         """
         start = self._bind(origin, None, origin_landmark)
         if start is None or not targets:
@@ -435,33 +587,52 @@ class WalkGraph:
                 goal_of.setdefault(node, []).append(key)
         if not goal_of:
             return {}
-        edge_cost, node_cost = self._costs(mode)
         deadline = time.perf_counter() + limit_s
         link0 = haversine_m(origin, self.point(start))
+        link_t = {key: haversine_m(self.point(node), targets[key])
+                  for node, keys in goal_of.items() for key in keys}
+        direct = {key: haversine_m(origin, targets[key]) for key in link_t}
+        try:
+            goals = {node for node in goal_of if self._may_reach(start, node, mode)}
+            reached = self._lengths(start, goals, mode, deadline) if goals else {}
+            metres = {key: link0 + reached[node][0] + link_t[key]
+                      for node, keys in goal_of.items() if node in reached for key in keys}
+            if mode.profile == "accessible" and not mode.wheelchair:
+                doubtful = {node for node, keys in goal_of.items() for key in keys
+                            if metres.get(key, _INF) > ACCESSIBLE_MAX_X * direct[key]}
+                usual = (self._lengths(start, doubtful, replace(mode, profile="fastest"),
+                                       deadline) if doubtful else {})
+                for node, (length, steps) in usual.items():
+                    for key in goal_of[node]:
+                        plain = link0 + length + link_t[key]
+                        if steps and metres.get(key, _INF) > ACCESSIBLE_MAX_X * plain:
+                            metres[key] = plain
+        except _Timeout:
+            log.warning("walk graph: card times over %.0f ms, straight", limit_s * 1000)
+            return {}
+        return {key: m for key, m in metres.items()
+                if graph_beats_straight(direct[key], m, link0 + link_t[key])}
+
+    def _lengths(
+        self, start: int, goals: set[int], mode: Mode, deadline: float
+    ) -> dict[int, tuple[float, int]]:
+        """Dijkstra by cost from start until every goal is settled: goal -> (metres, stairs)."""
+        edge_cost, node_cost = self._costs(mode)
         best = {start: 0.0}
-        length = {start: 0.0}
+        prev: dict[int, tuple[int, int]] = {}
         closed: set[int] = set()
         heap = [(0.0, start)]
-        left = set(goal_of)
-        out: dict[str, float] = {}
+        left = set(goals)
         pops = 0
         while heap and left:
             g, v = heapq.heappop(heap)
             if v in closed:
                 continue
             closed.add(v)
-            if v in left:
-                left.discard(v)
-                for key in goal_of[v]:
-                    link_t = haversine_m(self.point(v), targets[key])
-                    metres = link0 + length[v] + link_t
-                    if graph_beats_straight(haversine_m(origin, targets[key]), metres,
-                                            link0 + link_t):
-                        out[key] = metres
+            left.discard(v)
             pops += 1
             if pops % _CHECK_EVERY == 0 and time.perf_counter() > deadline:
-                log.warning("walk graph: card times over %.0f ms, straight", limit_s * 1000)
-                return {}
+                raise _Timeout
             for k in range(self._adj_start[v], self._adj_start[v + 1]):
                 w = self._adj_nbr[k]
                 if w in closed:
@@ -470,8 +641,13 @@ class WalkGraph:
                 ng = g + edge_cost[e] + node_cost[w]
                 if ng < best.get(w, _INF):
                     best[w] = ng
-                    length[w] = length[v] + self._e_len[e]
+                    prev[w] = (v, e)
                     heapq.heappush(heap, (ng, w))
+        out: dict[int, tuple[float, int]] = {}
+        for goal in goals & closed:
+            _, edges = self._unwind(start, goal, prev)
+            out[goal] = (sum(self._e_len[e] for e in edges),
+                         sum(1 for e in edges if self._e_flags[e] & EDGE_STEPS))
         return out
 
 

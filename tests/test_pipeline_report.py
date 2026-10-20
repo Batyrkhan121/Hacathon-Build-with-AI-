@@ -90,6 +90,8 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
         "nodes": 1200, "edges": 1500, "total_length_km": 310.5,
         "largest_component_share": 0.9712, "crossings": 80, "unmarked_crossings": 12,
         "signals": 20, "kerbs_lowered": 9, "crossings_from_way_tags": 6,
+        "crossings_kerb_lowered": 5, "kerbs_raised": 2, "crossings_kerb_raised": 1,
+        "unlit_edges": 30,
         "crossing_nodes_added": 2, "steps_edges": 4, "lit_edges": 700,
         "crossing_edges": 60, "poi_total": 100, "poi_snapped": 40, "poi_snapped_share": 0.4,
         "poi_snap_median_m": 18.0, "landmarks_total": 9, "landmarks_snapped": 7,
@@ -104,7 +106,8 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
     section = text.split("## Пешеходный граф", 1)[1]
     for piece in ("Узлов: 1200; рёбер: 1500", "97.1% узлов", "Переходов: 80",
                   "footway=crossing у 6 узлов (из них 2 новых", "светофоров: 20",
-                  "лестницами: 4", "40 из 100 (40.0%)", "медиана 18 м", "ориентиров: 7 из 9",
+                  "лестницами: 4", "(из них переходов 5)", "неосвещённых (lit=no): 30",
+                  "40 из 100 (40.0%)", "медиана 18 м", "ориентиров: 7 из 9",
                   "2.5 МБ; лицензия: ODbL 1.0", "за границей bbox: 3",
                   "разных снимков: 2026-05-31, 2026-10-18",
                   "Покрытие частичное: 2 из 9 плиток", "не скачаны: walk_tile_0",
@@ -114,3 +117,40 @@ def test_report_walk_graph_section_states_partial_coverage() -> None:
     full = build_report(pois, [PAYLOAD], LANDMARKS,
                         walk_meta={**walk, "coverage": "full", "tiles_loaded": ["t"] * 9})
     assert "Покрытие: весь город, 9 из 9 плиток." in full
+
+
+def test_report_warm_places_wheelchair_coverage_and_events() -> None:
+    pois = normalize_payload(PAYLOAD)  # a cafe with hours, a museum without, a park
+    cov = {
+        "osm_snapshot": "2026-05-31T00:00:00Z", "nodes": 10, "edges": 12, "length_km": 3.0,
+        "footway_length_km": 1.0,
+        "lit": {k: {"km": km, "length_share": km / 3, "edges": e, "edges_share": e / 12}
+                for k, km, e in (("yes", 0.6, 2), ("no", 0.3, 1), ("unknown", 2.1, 9))},
+        "lit_footways": {k: {"km": 0.5, "length_share": 0.5 if k != "no" else 0.0, "edges": 1,
+                             "edges_share": 0.5} for k in ("yes", "no", "unknown")},
+        "steps": {"km": 0.01, "length_share": 0.0033, "edges": 1, "edges_share": 0.083,
+                  "with_ramp_tags": 0},
+        "crossings_total": 4,
+        "crossings": {k: {"nodes": 1, "share": 0.25}
+                      for k in ("signals", "marked", "unmarked", "unknown")},
+        "kerbs": {"lowered": {"nodes": 1, "share": 0.25}, "raised": {"nodes": 0, "share": 0.0},
+                  "unknown": {"nodes": 3, "share": 0.75}},
+        "same_graph_as_npz": True,
+    }
+    events = {"total": 3, "valid": 2, "upcoming": 1, "past": 1,
+              "bound_by": {"id": 1, "none": 1}, "by_source": {"Astana Opera": 1},
+              "errors": ["#3 x: source_url: нужна ссылка https://"], "warnings": []}
+    text = build_report(pois, [PAYLOAD], LANDMARKS, walk_coverage=cov, events=events)
+    for piece in ("## Метка «в тепле»", "мест: **2**", "Часы работы известны у 1 (50%)",
+                  "разбирает 1", "| cafe | 1 | 1 | 1 |", "| museum | 1 | 0 | 0 |",
+                  "| unknown | 3 | 100.0% |",
+                  "| освещено (lit=yes) | 0.6 | 20.0% | 2 | 16.7% |",
+                  "| нет данных об освещении | 2.1 | 70.0% | 9 | 75.0% |",
+                  "| бордюр: занижен (lowered, flush, kerb=no) | 1 | 25.0% |",
+                  "| бордюр: нет данных | 3 | 75.0% |",
+                  "предстоящих в data/events.json: 1", "по id 1", "не привязана 1",
+                  "Astana Opera — 1", "Ошибка: #3 x"):
+        assert piece in text, piece
+    assert "Граф не совпал" not in text
+    assert "Граф не совпал" in build_report(
+        pois, [PAYLOAD], LANDMARKS, walk_coverage=cov | {"same_graph_as_npz": False})

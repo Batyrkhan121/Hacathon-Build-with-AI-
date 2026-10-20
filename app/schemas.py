@@ -374,7 +374,8 @@ class RouteLeg(BaseModel):
     walk_min: int = Field(ge=0)
 
 
-CrossingKind = Literal["signals", "marked", "unmarked"]  # traffic lights / zebra / no markings
+# traffic lights / zebra / no markings / 1.3.0: markings not known (OSM gives no crossing type)
+CrossingKind = Literal["signals", "marked", "unmarked", "unknown"]
 
 
 class RouteCrossing(BaseModel):

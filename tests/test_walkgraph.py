@@ -289,14 +289,188 @@ def test_lengths_from_one_search(tmp_path: Path) -> None:
     assert "far" not in lengths  # cannot be snapped: the caller keeps the straight estimate
 
 
+# ------------------------------------------- wave 8: route profiles in the edge costs
+
+
+UNLIT, KERB_RAISED = 32, 16  # edge: lit=no; node: kerb known and not lowered
+
+
+def stairs_in_the_middle(tmp_path: Path, detour_y: float | None) -> WalkGraph:
+    """A 500 m way A -> B with 20 m of stairs at x=240..260; a ramp round them via y=detour_y."""
+    nodes = {"A": (0, 0, 0), "S1": (240, 0, 0), "S2": (260, 0, 0), "B": (500, 0, 0)}
+    edges = [("A", "S1", FOOTWAY), ("S1", "S2", STEPS), ("S2", "B", FOOTWAY)]
+    if detour_y is not None:
+        nodes |= {"R1": (240, detour_y, 0), "R2": (260, detour_y, 0)}
+        edges += [("S1", "R1", FOOTWAY), ("R1", "R2", FOOTWAY), ("R2", "S2", FOOTWAY)]
+    return graph(tmp_path, nodes, edges)
+
+
+def test_accessible_goes_round_the_stairs_when_it_costs_up_to_30_percent(tmp_path: Path) -> None:
+    g = stairs_in_the_middle(tmp_path, 30)  # ramp: 560 m, 12% longer than the stairs way
+    fastest = g.route(at(0, 0), at(500, 0))
+    accessible = g.route(at(0, 0), at(500, 0), Mode(profile="accessible"))
+    assert fastest is not None and accessible is not None
+    assert fastest.steps == 1 and fastest.length_m == pytest.approx(500, abs=1)
+    assert accessible.steps == 0 and accessible.length_m == pytest.approx(560, abs=1)
+    assert not accessible.stairs_fallback
+
+
+@pytest.mark.parametrize("detour_y", [100, None], ids=["ramp_40_percent_longer", "no_ramp"])
+def test_accessible_falls_back_to_the_stairs_way(tmp_path: Path, detour_y: float | None) -> None:
+    """No step-free way, or one over 30% longer (700 m vs 500 m): the usual route, flagged."""
+    g = stairs_in_the_middle(tmp_path, detour_y)
+    path = g.route(at(0, 0), at(500, 0), Mode(profile="accessible"))
+    assert path is not None and not path.straight
+    assert path.steps == 1 and path.length_m == pytest.approx(500, abs=1)
+    assert path.stairs_fallback
+
+
+def test_wheelchair_still_never_takes_stairs_even_as_a_fallback(tmp_path: Path) -> None:
+    g = stairs_in_the_middle(tmp_path, None)
+    assert g.route(at(0, 0), at(500, 0), Mode(wheelchair=True, profile="accessible")) is None
+
+
+def test_accessible_prefers_traffic_lights_to_an_unmarked_crossing(tmp_path: Path) -> None:
+    nodes = {
+        "S0": (0, 0, 0), "S1": (60, 0, 0), "N0": (0, 30, 0), "N1": (60, 30, 0),
+        "CU": (0, 15, CROSSING | UNMARKED), "CS": (60, 15, CROSSING | SIGNALS),
+    }
+    edges = [
+        ("S0", "S1", FOOTWAY), ("N0", "N1", FOOTWAY),
+        ("S0", "CU", CROSS_SEG), ("CU", "N0", CROSS_SEG),
+        ("S1", "CS", CROSS_SEG), ("CS", "N1", CROSS_SEG),
+    ]
+    g = graph(tmp_path, nodes, edges)
+    # fastest: unmarked 30 m (24 s) + 40 s = 64 s < lights 150 m (120 s) + 20 s
+    fastest = g.route(at(0, 0), at(0, 30))
+    accessible = g.route(at(0, 0), at(0, 30), Mode(profile="accessible"))
+    assert fastest is not None and accessible is not None
+    assert [c.kind for c in fastest.crossings] == ["unmarked"]
+    assert [c.kind for c in accessible.crossings] == ["signals"]
+
+
+@pytest.mark.parametrize(("kerb_flags", "kind"), [(LOWERED, "lowered"), (KERB_RAISED, "raised")])
+def test_accessible_prefers_crossings_with_lowered_kerbs(
+    tmp_path: Path, kerb_flags: int, kind: str
+) -> None:
+    nodes = {
+        "S0": (0, 0, 0), "S1": (5, 0, kerb_flags), "N0": (0, 30, 0), "N1": (5, 30, kerb_flags),
+        "CU": (0, 15, CROSSING), "CK": (5, 15, CROSSING),
+    }
+    edges = [
+        ("S0", "S1", FOOTWAY), ("N0", "N1", FOOTWAY),
+        ("S0", "CU", CROSS_SEG), ("CU", "N0", CROSS_SEG),
+        ("S1", "CK", CROSS_SEG), ("CK", "N1", CROSS_SEG),
+    ]
+    g = graph(tmp_path, nodes, edges)
+    # 30 m (24 s) + 10 s with no kerb data vs 40 m (32 s) + 10 s with kerb data at both ends
+    fastest = g.route(at(0, 0), at(0, 30))
+    accessible = g.route(at(0, 0), at(0, 30), Mode(profile="accessible"))
+    assert fastest is not None and accessible is not None
+    assert [c.kerb for c in fastest.crossings] == ["unknown"]
+    expected = "lowered" if kind == "lowered" else "unknown"
+    assert [c.kerb for c in accessible.crossings] == [expected]
+
+
+def lit_or_not(tmp_path: Path, direct_flags: int, lit_way_m: float) -> WalkGraph:
+    """A -> B: a direct 100 m way with `direct_flags`, or a lit way of `lit_way_m` via M."""
+    half = lit_way_m / 2
+    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "M": (50, math.sqrt(half * half - 50 * 50), 0)}
+    edges = [("A", "B", FOOTWAY | direct_flags),
+             ("A", "M", FOOTWAY | LIT), ("M", "B", FOOTWAY | LIT)]
+    return graph(tmp_path, nodes, edges)
+
+
+def test_lit_profile_avoids_ways_known_to_be_dark(tmp_path: Path) -> None:
+    g = lit_or_not(tmp_path, UNLIT, 130)
+    fastest = g.route(at(0, 0), at(100, 0))
+    lit = g.route(at(0, 0), at(100, 0), Mode(profile="lit"))
+    assert fastest is not None and lit is not None
+    assert fastest.length_m == pytest.approx(100, abs=1)
+    assert lit.length_m == pytest.approx(130, abs=1)
+
+
+@pytest.mark.parametrize(("lit_way_m", "expected_m"), [(115, 115), (130, 100)])
+def test_lit_profile_pays_a_little_for_ways_without_data(
+    tmp_path: Path, lit_way_m: float, expected_m: float
+) -> None:
+    """No data is a little worse than lit (115 m lit beats 100 m unknown), not «dark»."""
+    g = lit_or_not(tmp_path, 0, lit_way_m)
+    lit = g.route(at(0, 0), at(100, 0), Mode(profile="lit"))
+    night = g.route(at(0, 0), at(100, 0), Mode(night=True))
+    assert lit is not None and night is not None
+    assert lit.length_m == pytest.approx(expected_m, abs=1)
+    assert night.length_m == pytest.approx(100, abs=1)  # fastest at night: as before
+
+
+def test_lit_shares_of_the_path(tmp_path: Path) -> None:
+    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "C": (150, 0, 0), "D": (200, 0, 0),
+             "E": (220, 0, 0)}
+    edges = [("A", "B", FOOTWAY | LIT), ("B", "C", FOOTWAY | UNLIT), ("C", "D", FOOTWAY),
+             ("D", "E", FOOTWAY | LIT | UNLIT)]  # contradictory tags: no data, never «lit»
+    path = graph(tmp_path, nodes, edges).route(at(0, -5), at(220, 0))
+    assert path is not None and not path.straight
+    assert path.lit_m == pytest.approx(100, abs=0.5)
+    assert path.unlit_m == pytest.approx(50, abs=0.5)
+    assert path.unknown_lit_m == pytest.approx(5 + 50 + 20, abs=0.5)  # the link has no data
+    assert path.lit_m + path.unlit_m + path.unknown_lit_m == pytest.approx(path.length_m)
+
+
+def test_a_straight_leg_has_no_lighting_data(tmp_path: Path) -> None:
+    g = graph(tmp_path, {"A": (0, 0, 0), "B": (500, 0, 0)}, [("A", "B", FOOTWAY | LIT)])
+    path = g.route(at(80, 0), at(80, 3))
+    assert path is not None and path.straight
+    assert path.lit_m == 0 and path.unlit_m == 0
+    assert path.unknown_lit_m == pytest.approx(path.length_m)
+
+
+@pytest.mark.parametrize(
+    ("crossing", "south", "north", "kerb"),
+    [
+        (CROSSING | SIGNALS | LOWERED, 0, 0, "lowered"),  # on the crossing node itself
+        (CROSSING | SIGNALS, LOWERED, LOWERED, "lowered"),  # kerb nodes at both ends
+        (CROSSING | SIGNALS, LOWERED, 0, "unknown"),  # one side only: not «yes»
+        (CROSSING | SIGNALS, 0, 0, "unknown"),
+        (CROSSING | KERB_RAISED, 0, 0, "raised"),
+        (CROSSING | LOWERED | KERB_RAISED, 0, 0, "unknown"),  # contradictory tags
+    ],
+)
+def test_kerb_of_each_crossing(
+    tmp_path: Path, crossing: int, south: int, north: int, kerb: str
+) -> None:
+    nodes = {"S": (0, 0, south), "C": (0, 15, crossing), "N": (0, 30, north)}
+    edges = [("S", "C", CROSS_SEG), ("C", "N", CROSS_SEG)]
+    path = graph(tmp_path, nodes, edges).route(at(0, -1), at(0, 31))
+    assert path is not None
+    assert [c.kerb for c in path.crossings] == [kerb]
+
+
+def test_kerb_of_a_crossing_segment_without_a_crossing_node(tmp_path: Path) -> None:
+    nodes = {"S": (0, 0, LOWERED), "N": (0, 30, LOWERED)}
+    path = graph(tmp_path, nodes, [("S", "N", CROSS_SEG)]).route(at(0, -1), at(0, 31))
+    assert path is not None
+    assert [(c.kind, c.kerb) for c in path.crossings] == [("unmarked", "lowered")]
+
+
+@pytest.mark.parametrize(("detour_y", "expected_m"), [(30, 560), (100, 500), (None, 500)])
+def test_card_lengths_follow_the_accessible_rule(
+    tmp_path: Path, detour_y: float | None, expected_m: float
+) -> None:
+    g = stairs_in_the_middle(tmp_path, detour_y)
+    lengths = g.lengths_from(at(0, 0), {"b": at(500, 0)}, Mode(profile="accessible"))
+    assert lengths["b"] == pytest.approx(expected_m, abs=1)
+    assert g.lengths_from(at(0, 0), {"b": at(500, 0)})["b"] == pytest.approx(500, abs=1)
+
+
 # ----------------------------------------------------------- the real graph
 
 
-REAL = Path(__file__).resolve().parent.parent / "data" / "processed" / "walk_graph.npz"
+REAL =Path(__file__).resolve().parent.parent / "data" / "processed" / "walk_graph.npz"
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="walk_graph.npz not built yet (DATA, T93)")
-def test_real_graph_median_route_under_100_ms() -> None:
+@pytest.mark.parametrize("profile", ["fastest", "accessible", "lit"])
+def test_real_graph_median_route_under_100_ms(profile: str) -> None:
     g = load_graph(REAL)
     assert g is not None
     rng = np.random.default_rng(19)
@@ -311,7 +485,7 @@ def test_real_graph_median_route_under_100_ms() -> None:
             continue
         b = int(rng.choice(near))
         t0 = time.perf_counter()
-        g.route(g.point(int(a)), g.point(b))
+        g.route(g.point(int(a)), g.point(b), Mode(profile=profile))  # type: ignore[arg-type]
         times.append(time.perf_counter() - t0)
     assert len(times) >= 20
     assert statistics.median(times) < 0.1
