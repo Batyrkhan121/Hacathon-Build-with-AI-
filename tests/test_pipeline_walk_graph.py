@@ -19,6 +19,7 @@ from pipeline.walk_graph import (
     EDGE_STEPS,
     NODE_CROSSING,
     NODE_KERB,
+    NODE_KERB_HIGH,
     NODE_MARKED,
     NODE_SIGNALS,
     NODE_UNMARKED,
@@ -319,3 +320,37 @@ def test_foot_yes_overrides_access_private() -> None:
     assert not walkable({"highway": "footway", "foot": "no"})
     q = walk_query("51.03,71.35,51.11,71.5")
     assert '["access"="private"]["foot"~"^(designated|permissive|yes)$"]' in q
+
+
+@pytest.mark.parametrize(("node_tags", "way_tags"), [
+    # node says markings, its crossing way says unmarked
+    ({"highway": "crossing", "crossing:markings": "yes"}, {"crossing": "unmarked"}),
+    # node says zebra, its way says no markings: "no" wins
+    ({"highway": "crossing", "crossing:markings": "zebra"}, {"crossing:markings": "no"}),
+    # the node contradicts itself
+    ({"highway": "crossing", "crossing": "unmarked", "crossing:markings": "yes"}, {}),
+])
+def test_unmarked_crossing_never_gets_the_markings_bit(node_tags: dict, way_tags: dict) -> None:
+    payload = {"osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"}, "elements": [
+        n(1, 0, 0), n(2, 0, 1, **node_tags), n(3, 0, 2), n(4, -1, 1), n(5, 1, 1),
+        w(400, [1, 2, 3], highway="residential"),
+        w(401, [4, 2, 5], highway="footway", footway="crossing", **way_tags),
+    ]}
+    graph, stats = build_graph([payload])
+    flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
+    assert flags[2] == NODE_CROSSING | NODE_UNMARKED
+    assert stats["crossings_marked"] == 0
+
+
+def test_save_refuses_contradicting_node_bits(built, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    graph, stats = built
+    for bad in (NODE_CROSSING | NODE_UNMARKED | NODE_MARKED, NODE_KERB | NODE_KERB_HIGH):
+        flags = graph.node_flags.copy()
+        flags[0] = bad
+        with pytest.raises(ValueError, match="together"):
+            save_graph(replace(graph, node_flags=flags), {}, {}, stats, tmp_path / "g.npz",
+                       tmp_path / "m.json", poi_total=0, landmark_total=0,
+                       osm_snapshot="2026-10-19")
+        assert not list(tmp_path.iterdir())  # nothing written

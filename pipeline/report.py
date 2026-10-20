@@ -112,6 +112,8 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         f"- Переходов: {meta.get('crossings', 0)} (из них нерегулируемых без разметки "
         f"{meta.get('unmarked_crossings', 0)}"
         + (f", с известной разметкой {meta['crossings_marked']}"
+           + (f" — в том числе {meta['crossings_marked_signals']} со светофором, маршрут "
+              "покажет их как светофор" if "crossings_marked_signals" in meta else "")
            if "crossings_marked" in meta else "")
         + f"); светофоров: {meta.get('signals', 0)}; "
         f"узлов с понижённым бордюром: {meta.get('kerbs_lowered', 0)}"

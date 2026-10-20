@@ -299,7 +299,8 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         elif any(k in KERB_LOW for k in values):
             node_flags[r] |= NODE_KERB
     for r, f in node_flags.items():
-        if f & NODE_CROSSING and markings_known(
+        # an unmarked crossing (bit 8, from the node or its way) never gets 32: "no" wins
+        if f & NODE_CROSSING and not f & NODE_UNMARKED and markings_known(
             {**way_types.get(r, {}), **_crossing_part(node_tags.get(r, {}))}
         ):
             node_flags[r] |= NODE_MARKED
@@ -400,6 +401,10 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "crossings_marked": int(
             np.count_nonzero(is_crossing & ((node_flag_arr & NODE_MARKED) > 0))
         ),
+        # of them with lights: the reader shows those as "signals", not "marked"
+        "crossings_marked_signals": int(np.count_nonzero(
+            is_crossing & ((node_flag_arr & NODE_MARKED) > 0) & ((node_flag_arr & NODE_SIGNALS) > 0)
+        )),
         "crossing_edges": int(np.count_nonzero(edge_flag_arr & EDGE_CROSSING)),
         "steps_edges": int(np.count_nonzero(edge_flag_arr & EDGE_STEPS)),
         "lit_edges": int(np.count_nonzero(edge_flag_arr & EDGE_LIT)),
@@ -560,6 +565,16 @@ def snap_points(
 # ------------------------------------------------------------------------- save
 
 
+def check_flag_rules(node_flags: np.ndarray) -> None:
+    """Contract pairs that never meet on one node (ARCHITECTURE section 5): 8 and 32 (unmarked
+    and marked), 4 and 16 (kerb lowered and not). Raises before anything is written."""
+    for a, b, what in ((NODE_UNMARKED, NODE_MARKED, "8 and 32"),
+                       (NODE_KERB, NODE_KERB_HIGH, "4 and 16")):
+        both = int(np.count_nonzero(((node_flags & a) > 0) & ((node_flags & b) > 0)))
+        if both:
+            raise ValueError(f"{both} nodes carry node bits {what} together")
+
+
 def save_graph(
     graph: WalkGraph,
     poi_snaps: Mapping[str, tuple[int, float]],
@@ -573,6 +588,7 @@ def save_graph(
     osm_snapshot: str,
     extra_meta: Mapping | None = None,
 ) -> dict:
+    check_flag_rules(graph.node_flags)
     npz_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = npz_path.with_suffix(".tmp.npz")
     np.savez_compressed(tmp, **{key: getattr(graph, key) for key in NPZ_KEYS})

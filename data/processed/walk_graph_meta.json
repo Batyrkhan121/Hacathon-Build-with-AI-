@@ -1244,7 +1244,7 @@
   "nurly_zhol": 50317,
   "palace_peace": 28324
  },
- "created_at": "2026-10-20T15:14:25+05:00",
+ "created_at": "2026-10-20T15:21:55+05:00",
  "ways_used": 35275,
  "ways_excluded": 0,
  "nodes_missing_coords": 0,
@@ -1260,6 +1260,7 @@
  "crossings_kerb_lowered": 63,
  "crossings_kerb_raised": 8,
  "crossings_marked": 1329,
+ "crossings_marked_signals": 196,
  "crossing_edges": 4535,
  "steps_edges": 258,
  "lit_edges": 2720,
