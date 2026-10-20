@@ -20,6 +20,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from app.events import EVENT_PREFIX
 from app.geo import haversine_m, walk_minutes
 from app.hours import evaluate_hours
 from app.schemas import (
@@ -106,7 +107,6 @@ PREF_AVOID_MAX = -0.35
 # T123: dated events (app.events) enter the pool as POIs with ids "event:<slug>". They are on
 # only for a while, so they get a small plus; their words make «концерт / афиша / сегодня»
 # find them without embeddings (an event has no vector: it gets the pool median).
-EVENT_PREFIX = "event:"
 EVENT_BONUS = 0.08
 EVENT_WORDS = ("событие мероприятие афиша сегодня вечером концерт спектакль выставка шоу "
                "event events today tonight concert show exhibition іс-шара бүгін кеш көрме")

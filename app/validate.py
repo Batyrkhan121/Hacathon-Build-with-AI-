@@ -561,7 +561,7 @@ def _event_card(
         what_to_do=todo,
         open_status="unknown",
         open_confidence="low",
-        open_note=cand.hours.note,  # app.events.note: «Начало в 19:00 (по данным источника).»
+        open_note=cand.hours.note,  # app.events.note: «Начало в 19:00 — по данным источника, …»
         idea_source=idea_source,
         facts_sources=["manual"],
         data_confidence=cand.poi.data_confidence,

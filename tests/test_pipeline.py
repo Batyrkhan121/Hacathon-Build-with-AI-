@@ -1982,3 +1982,18 @@ def test_event_card_prompt_rule_exists() -> None:
 
     system = load_prompt("generate_cards")
     assert 'kind = "event"' in system and "on_now" in system and "event_note" in system
+
+
+def test_a_broken_event_never_takes_the_places_down(deps: Deps, tmp_path: Path,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    real = retrieval.retrieve
+
+    def fragile(*a: Any, **kw: Any) -> list[Candidate]:
+        if kw.get("events"):
+            raise ValueError("bad event record")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(retrieval, "retrieve", fragile)
+    a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, [_event_record()]))
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
+    assert TEXTS["ru"]["search_error"] not in a.warnings

@@ -1211,6 +1211,14 @@ def _retrieve(
         # data problem (bad index / record) vs a bug in the code: both need a fix, not a retry
         kind = "data" if isinstance(exc, (ValueError, KeyError, IndexError)) else "bug"
         log.error("retrieve failed (%s, %s)\n%s", kind, type(exc).__name__, _frames(exc))
+        if not event_pool:
+            return [], True
+    # events are an extra (hand-made data): the places must still answer without them
+    extra.pop("events")
+    try:
+        return retrieval.retrieve(store, intent, ctx, query_vec, k=k, **extra), False
+    except Exception as exc:  # noqa: BLE001
+        log.error("retrieve without events failed (%s)\n%s", type(exc).__name__, _frames(exc))
         return [], True
 
 
