@@ -42,18 +42,20 @@ from decimal import ROUND_HALF_UP, Decimal
 import h3
 import numpy as np
 
-from app import geo, hours, retrieval, route, validate, walkgraph, weather
+from app import events, geo, hours, retrieval, route, validate, walkgraph, weather
 from app.config import Settings
 from app.generate import draft_cards
 from app.llm import LLMClient, LLMUnavailable
 from app.query_parser import apply_overrides, departure_phrase, mentions_flight, parse_query
 from app.schemas import (
+    POI,
     PREF_LABELS_RU,
     TAG_VOCAB,
     Answer,
     Candidate,
     Card,
     DataUsed,
+    HoursVerdict,
     Landmark,
     Lang,
     LocationInput,
@@ -104,6 +106,7 @@ MAX_ONE_WAY_WALK_MIN = 20  # budget-derived walk to one stop, unless the user se
 NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
 GROUP_MIN = 3
 FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
+EVENT_NIGHT_SOON_MIN = 60  # at night an event counts as «surely on» if it is on or this close
 SIGHT_CATEGORIES = frozenset({"attraction", "monument", "museum", "viewpoint", "gallery",
                               "religious", "park", "theatre"})
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
@@ -600,6 +603,12 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         radius_m=_safe_radius(plan_intent),
     )
 
+    # T123: events current at the request time (data/events.json; none / broken file -> [])
+    now_events = events.current(_load_events(deps.settings), local_time)
+    by_event = {e.id: e for e in now_events}
+    event_pool = [(events.as_poi(e, intent.lang), events.verdict(e, local_time, intent.lang))
+                  for e in now_events]
+
     # 4. query vector (Gemini, optional; never in the no-AI mode)
     query_vec = None
     semantic_reason: str | None = None  # why the search is lexical although an index exists
@@ -633,7 +642,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         candidates, failed = [], False
     else:
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                       prefs=search_prefs)
+                                       prefs=search_prefs, event_pool=event_pool)
     if short_walks:  # "two cards beat a third one 48 minutes away"
         candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
     if not candidates and not failed and not no_time and not short_walks:
@@ -641,20 +650,20 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         if wider > ctx.radius_m:
             ctx = ctx.model_copy(update={"radius_m": wider})
             candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                           prefs=search_prefs)
+                                           prefs=search_prefs, event_pool=event_pool)
             if candidates:
                 warn.append(t["widened"].format(r=wider))
     if plan_intent.night and not no_time:
         # At night "surely open" beats "close": keep open / late_open / 24_7 places; if none
         # is within the short-walk cap, look further (the taxi back is advised anyway).
-        sure = [c for c in candidates if _night_sure(c)]
+        sure = [c for c in candidates if _night_sure(c, by_event, local_time)]
         if not sure and careful_cap and not short_walks and not failed:
             far_intent = plan_intent.model_copy(update={"max_walk_min": intent.max_walk_min})
             far_ctx = ctx.model_copy(update={"radius_m": min(
                 round(_safe_radius(far_intent) * WIDEN_FACTOR), MAX_RADIUS_M)})
             more, failed = _retrieve(store, far_intent, far_ctx, query_vec, pool_k,
-                                     prefs=search_prefs)
-            sure = [c for c in more if _night_sure(c)]
+                                     prefs=search_prefs, event_pool=event_pool)
+            sure = [c for c in more if _night_sure(c, by_event, local_time)]
             if sure:
                 search_intent, ctx = far_intent, far_ctx
                 warn.append(t["night_far"])
@@ -663,25 +672,27 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if not candidates and not failed and not no_time and plan_intent.categories:
         search_intent = plan_intent.model_copy(update={"categories": []})
         candidates, failed = _retrieve(store, search_intent, ctx, query_vec, pool_k,
-                                       prefs=search_prefs)
+                                       prefs=search_prefs, event_pool=event_pool)
         if short_walks:
             candidates = [c for c in candidates if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
-            candidates = [c for c in candidates if _night_sure(c)] or candidates
+            candidates = [c for c in candidates
+                          if _night_sure(c, by_event, local_time)] or candidates
         if candidates:
             warn.append(t["relaxed"])
     if warm_indoor and len(candidates) < WARM_MIN_INDOOR and not failed and not no_time:
         # too few indoor places around: outdoor ones come back, and the person is told
         wider_intent = search_intent.model_copy(update={"indoor": "any"})
         more, failed = _retrieve(store, wider_intent, ctx, query_vec, pool_k,
-                                 prefs=search_prefs)
+                                 prefs=search_prefs, event_pool=event_pool)
         if short_walks:
             more = [c for c in more if c.walk_min <= HUB_MAX_WALK_MIN]
         if plan_intent.night:
-            more = [c for c in more if _night_sure(c)] or more
+            more = [c for c in more if _night_sure(c, by_event, local_time)] or more
         if len(more) > len(candidates):
             search_intent, candidates = wider_intent, more
             warn.append(t["warm_outdoor"])
+    candidates = _without_event_venues(candidates, by_event)
     dropped = {} if no_time else _hours_dropped(store, search_intent, ctx, search_prefs)
     # warm mode drops the walk tags on purpose: «погулять» then is not an unmatched query
     asked_intent = (search_intent if warm is None
@@ -741,7 +752,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if warm is not None:  # short walks outside between the stops too
         gen_candidates = warm_cluster(gen_candidates)
 
-    # 6. cards
+    # 6. cards (event candidates become kind="event" cards: validate gets the events)
+    ev_kw: dict[str, object] = {"events": by_event} if by_event else {}
     cards: list[Card] = []
     generation = "template"
     summary: str | None = None
@@ -750,7 +762,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if candidates and llm is not None:
         draft = None
         try:
-            draft = draft_cards(search_intent, ctx, gen_candidates, llm, prefs=search_prefs)
+            draft = draft_cards(search_intent, ctx, gen_candidates, llm, prefs=search_prefs,
+                                **ev_kw)
         except LLMUnavailable:
             reason = llm.last_error or "bug"
             log.info("request %s: generation fell back to templates (%s)", request_id, reason)
@@ -759,7 +772,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         if draft is not None:
             try:
                 cards, fin_warnings = validate.finalize(draft, gen_candidates, search_intent,
-                                                        ctx)
+                                                        ctx, **ev_kw)
                 warn.extend(fin_warnings)
                 draft_ids = {d.poi_id for d in draft.cards}
                 if any(c.poi_id in draft_ids for c in cards):
@@ -771,13 +784,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 warn.append(t["gen_check_failed"])
                 cards = []
     if generation == "llm":
-        cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id)
+        cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id, ev_kw)
     if parse_reason is not None and not llm_down_said:
         warn.append(t["parse_fallback"].format(
             reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
     if candidates and not cards:
         try:
-            cards = validate.template_cards(gen_candidates[:TOP_K], search_intent, ctx)
+            cards = validate.template_cards(gen_candidates[:TOP_K], search_intent, ctx,
+                                            **ev_kw)
         except Exception as exc:  # noqa: BLE001
             log.error("request %s: template_cards failed (%s)\n%s", request_id,
                       type(exc).__name__, _frames(exc))
@@ -1025,7 +1039,8 @@ def _tag_leak(text: str, lang: str, titles: Iterable[str]) -> bool:
 
 
 def _untag_whys(cards: list[Card], candidates: list[Candidate], intent: QueryIntent,
-                ctx: SearchContext, request_id: str) -> list[Card]:
+                ctx: SearchContext, request_id: str,
+                ev_kw: dict[str, object] | None = None) -> list[Card]:
     """A model-written why naming a raw tag («есть кофе и wifi», «отмечена тегом …») gets the
     template why of the same candidate (validate.template_cards); nothing else changes."""
     by_id = {c.poi.id: c for c in candidates}
@@ -1034,7 +1049,7 @@ def _untag_whys(cards: list[Card], candidates: list[Candidate], intent: QueryInt
         cand = by_id.get(card.poi_id)
         if cand is not None and _tag_leak(card.why, intent.lang, [card.title]):
             try:
-                why = validate.template_cards([cand], intent, ctx, n=1)[0].why
+                why = validate.template_cards([cand], intent, ctx, n=1, **(ev_kw or {}))[0].why
             except Exception as exc:  # noqa: BLE001 - keep the card as it is
                 log.error("request %s: template why for card %d failed (%s)\n%s", request_id,
                           card.rank, type(exc).__name__, _frames(exc))
@@ -1067,9 +1082,33 @@ def _food_only(intent: QueryIntent) -> bool:
     return bool(intent.categories) and set(intent.categories) <= FOOD_CATEGORIES
 
 
-def _night_sure(c: Candidate) -> bool:
-    """Open now by the data, or marked as working late / round the clock."""
+def _night_sure(c: Candidate, by_event: dict[str, events.Event] | None = None,
+                now: datetime | None = None) -> bool:
+    """Open now by the data, or marked as working late / round the clock; an event: on now
+    or starting within EVENT_NIGHT_SOON_MIN."""
+    event = (by_event or {}).get(c.poi.id)
+    if event is not None and now is not None:
+        soon = event.starts_at - now <= timedelta(minutes=EVENT_NIGHT_SOON_MIN)
+        return events.is_live(event, now) or soon
     return c.hours.status == "open" or bool({"late_open", "24_7"} & set(c.poi.tags))
+
+
+def _load_events(settings: Settings) -> list[events.Event]:
+    """data/events.json under the data dir; any problem -> no events, never a failed answer."""
+    try:
+        return events.load_events(settings.data_dir / "events.json")
+    except Exception as exc:  # noqa: BLE001 - events are an extra, the places still answer
+        log.error("events failed to load (%s)", type(exc).__name__)
+        return []
+
+
+def _without_event_venues(candidates: list[Candidate], by_event: dict[str, events.Event]
+                          ) -> list[Candidate]:
+    """A venue whose event is among the candidates gives its place to the event: «Тоска в
+    Астана Опере» says more than «Астана Опера» next to it."""
+    venues = {by_event[c.poi.id].venue_poi_id for c in candidates if c.poi.id in by_event}
+    venues.discard(None)
+    return [c for c in candidates if c.poi.id not in venues] if venues else candidates
 
 
 def _localized_area(lang: Lang, landmark: Landmark | None, cell: str, ru_label: str) -> str:
@@ -1109,6 +1148,9 @@ def _localize_hours(cards: list[Card], candidates: list[Candidate], at: datetime
     by_id = {c.poi.id: c for c in candidates}
     out: list[Card] = []
     for card in cards:
+        if card.kind == "event":  # the event time, written by app.events in this language
+            out.append(card)
+            continue
         cand = by_id.get(card.poi_id)
         if cand is None:  # never leave a Russian note in a kk / en answer
             out.append(card.model_copy(update={"open_note": hours.check_note(lang)}))
@@ -1155,11 +1197,14 @@ def _safe_radius(intent: QueryIntent) -> int:
 def _retrieve(
     store: Store, intent: QueryIntent, ctx: SearchContext, query_vec: np.ndarray | None,
     k: int = TOP_K, *, prefs: UserPrefs | None = None,
+    event_pool: list[tuple[POI, HoursVerdict]] | None = None,
 ) -> tuple[list[Candidate], bool]:
     """(candidates, failed). Wave 8 keywords go to retrieve only when set (1.2.0 calls stay)."""
     extra: dict[str, object] = {}
     if prefs is not None:
         extra["prefs"] = prefs
+    if event_pool:
+        extra["events"] = event_pool
     try:
         return retrieval.retrieve(store, intent, ctx, query_vec, k=k, **extra), False
     except Exception as exc:  # noqa: BLE001 - an empty answer beats a 500
@@ -1323,7 +1368,7 @@ def _context_warnings(
     night_taxi: bool = False,
 ) -> list[str]:
     out: list[str] = []
-    unknown = sum(1 for c in cards if c.open_status == "unknown")
+    unknown = sum(1 for c in cards if c.open_status == "unknown" and c.kind == "place")
     if unknown == 1:
         out.append(t["hours_unknown_1"])
     elif unknown > 1:

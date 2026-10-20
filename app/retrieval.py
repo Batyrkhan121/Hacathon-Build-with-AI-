@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from functools import lru_cache
 
 import numpy as np
@@ -102,6 +103,13 @@ PREF_LIKE_BONUS = 0.25  # one liked label matched
 PREF_LIKE_MAX = 0.30  # several liked labels on one place add up to this
 PREF_AVOID_PENALTY = -0.25  # one avoided label; several add up to PREF_AVOID_MAX
 PREF_AVOID_MAX = -0.35
+# T123: dated events (app.events) enter the pool as POIs with ids "event:<slug>". They are on
+# only for a while, so they get a small plus; their words make «концерт / афиша / сегодня»
+# find them without embeddings (an event has no vector: it gets the pool median).
+EVENT_PREFIX = "event:"
+EVENT_BONUS = 0.08
+EVENT_WORDS = ("событие мероприятие афиша сегодня вечером концерт спектакль выставка шоу "
+               "event events today tonight concert show exhibition іс-шара бүгін кеш көрме")
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -371,10 +379,17 @@ def _stem_hit(stem: str, doc_stems: set[str] | frozenset[str]) -> bool:
     )
 
 
+def is_event(poi: POI) -> bool:
+    """A dated event from data/events.json (app.events), not a place."""
+    return poi.id.startswith(EVENT_PREFIX)
+
+
 def poi_text(poi: POI) -> str:
     """Searchable text of a POI: names, description, category and tag words (ru/kk/en)."""
     parts = [poi.name, *poi.name_i18n.values(), poi.description or "", poi.category]
     parts.append(CATEGORY_WORDS.get(poi.category, ""))
+    if is_event(poi):
+        parts.append(EVENT_WORDS)
     for tag in poi.tags:
         parts.extend([tag, TAG_WORDS.get(tag, "")])
     return " ".join(parts)
@@ -617,6 +632,9 @@ def _score(
     if fit:
         parts["prefs"] = fit
         score += fit
+    if is_event(poi):
+        parts["event"] = EVENT_BONUS
+        score += EVENT_BONUS
     return round(score, 4), {k: round(float(v), 4) for k, v in parts.items()}
 
 
@@ -736,7 +754,7 @@ def explain(
                 keys.append((tag, {}))
                 break
     hours = cand.hours
-    if hours.status == "unknown":
+    if hours.status == "unknown" and not is_event(poi):  # an event's time: app.validate
         keys.append(("hours_unknown", {}))
     elif hours.closes_in_min is not None and hours.closes_in_min <= 90:
         keys.append(("closes_soon", {"n": hours.closes_in_min}))
@@ -785,6 +803,7 @@ def retrieve(
     k: int = 8,
     *,
     prefs: UserPrefs | None = None,
+    events: Sequence[tuple[POI, HoursVerdict]] = (),
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -797,12 +816,15 @@ def retrieve(
     Unnamed places with the same generic name are kept once (the best one).
     T123 `prefs` (contract 1.3.0): likes add PREF_LIKE_BONUS, avoids PREF_AVOID_PENALTY
     (score_parts["prefs"]), likes "no_bars" drops bar / nightlife.
+    T123 `events`: (POI, verdict) of the events current at ctx.local_time (app.events). The
+    same distance / profile / prefs filters; no hours filter (app.events already kept only
+    events that are not over); EVENT_BONUS in score_parts["event"].
     """
     if k <= 0 or not store.pois:
         return []
     semantic = _semantic_scores(store, query_vec)
     query_stems = _query_stems(intent) - _landmark_stems(store, intent, ctx)
-    passed: list[tuple[int, POI, float, HoursVerdict]] = []
+    passed: list[tuple[int | None, POI, float, HoursVerdict]] = []
     for i, poi in enumerate(store.pois):
         distance = haversine_m(ctx.origin, poi.geo)
         if (distance > ctx.radius_m or not _passes_profile(poi, intent)
@@ -812,18 +834,24 @@ def retrieve(
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
         if _passes_hours(poi, verdict, intent):
             passed.append((i, poi, distance, verdict))
+    for poi, verdict in events:
+        distance = haversine_m(ctx.origin, poi.geo)
+        if (distance <= ctx.radius_m and _passes_profile(poi, intent)
+                and _passes_prefs(poi, prefs)):
+            passed.append((None, poi, distance, verdict))
 
     # a POI without a vector gets the pool median instead of a lexical-only score: otherwise
     # it sits on another scale than 0.7*cos + 0.3*lex of its neighbours
     median: float | None = None
     if semantic is not None:
-        finite = [float(semantic[i]) for i, *_ in passed if not np.isnan(semantic[i])]
+        finite = [float(semantic[i]) for i, *_ in passed
+                  if i is not None and not np.isnan(semantic[i])]
         median = float(np.median(finite)) if finite else None
     pool: list[Candidate] = []
     for i, poi, distance, verdict in passed:
         sem: float | None = None
         info: dict[str, float] = {}
-        if semantic is not None and not np.isnan(semantic[i]):
+        if semantic is not None and i is not None and not np.isnan(semantic[i]):
             sem = float(semantic[i])
             info["semantic"] = round(sem, 4)
         elif semantic is not None and median is not None:

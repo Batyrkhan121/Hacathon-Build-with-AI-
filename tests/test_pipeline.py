@@ -9,6 +9,7 @@ test_api.py imports the helpers below (FakeLLM, make_store, install_core_fakes, 
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import math
 import re
@@ -46,6 +47,11 @@ from app.schemas import (
 from app.store import Store
 
 from .conftest import ASTANA_TZ
+
+# the honest tail of an event note (app.events)
+CHECK_RU = " — по данным источника, проверьте перед визитом."
+CHECK_KK = " — дереккөз бойынша, барар алдында тексеріңіз."
+CHECK_EN = " — per the source, check before you go."
 
 # ------------------------------------------------------------------ CORE fakes
 
@@ -1820,3 +1826,159 @@ def test_warm_long_walk_outside_is_told(deps: Deps, monkeypatch: pytest.MonkeyPa
     a = recommend(req("куда сходить", use_llm=False, prefs={"likes": ["warm"]}), deps)
     assert a.route is not None
     assert TEXTS["ru"]["warm_long_leg"].format(n=14) in a.warnings
+
+
+# ------------------------------------------------- T123: events -> kind="event" cards (no net)
+
+
+def _event_record(slug: str = "jazz", starts: str = "2026-10-19T19:00:00+05:00",
+                  ends: str | None = "2026-10-19T21:00:00+05:00", **kw: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": f"event:{slug}", "title": {"ru": "Джазовый вечер", "kk": "Джаз кеші",
+                                         "en": "Jazz night"},
+        "category": "theatre", "tags": ["indoor", "live_music"],
+        "starts_at": starts, "ends_at": ends,
+        "venue": "Тест-музей", "address": "ул. Тестовая, 3",
+        "geo": {"lat": 51.0882, "lon": 71.4158},  # ~140 m from EXPO, next to test:poi/3
+        "venue_poi_id": "test:poi/3", "source_url": "https://example-venue.kz/afisha/jazz",
+        "source_name": "Тест-площадка", "fetched_at": "2026-10-18", "indoor": True,
+    }
+    data.update(kw)
+    return data
+
+
+def _events_deps(deps: Deps, tmp_path: Path, items: object) -> Deps:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "events.json").write_text(json.dumps(items, ensure_ascii=False),
+                                          encoding="utf-8")
+    return Deps(store=deps.store, llm=deps.llm,
+                settings=dataclasses.replace(deps.settings, data_dir=data_dir))
+
+
+EVENT_Q = "концерт или спектакль сегодня вечером"
+
+
+def test_event_becomes_an_event_card_on_the_template_path(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(EVENT_Q, use_llm=False), d)
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert len(ev_cards) == 1
+    c = ev_cards[0]
+    assert c.poi_id == "event:jazz" and c.title == "Джазовый вечер"
+    assert c.address == "Тест-музей, ул. Тестовая, 3"
+    assert c.facts_sources == ["manual"] and c.idea_source == "poi_data"
+    assert c.starts_at == datetime(2026, 10, 19, 19, 0, tzinfo=ASTANA_TZ)
+    assert c.ends_at == datetime(2026, 10, 19, 21, 0, tzinfo=ASTANA_TZ)
+    assert c.source_url == "https://example-venue.kz/afisha/jazz"
+    assert (c.open_status, c.open_confidence) == ("unknown", "low")
+    assert c.open_note == "Начало в 19:00; окончание в 21:00" + CHECK_RU
+    assert "начало в 19:00" in c.why and "часы работы не указаны" not in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (120, 120)
+    assert "manual" in a.data_used.sources
+    # the event is not an «unknown hours» place in the warnings
+    unknown = sum(x.open_status == "unknown" and x.kind == "place" for x in a.cards)
+    hours_lines = [w for w in a.warnings if "нет данных о часах" in w]
+    assert hours_lines == ([] if not unknown else [
+        TEXTS["ru"]["hours_unknown_1"] if unknown == 1
+        else TEXTS["ru"]["hours_unknown_n"].format(n=unknown)])
+    Card.model_validate(c.model_dump())  # the contract's event rules hold
+
+
+def test_the_venue_gives_its_place_to_its_event(deps: Deps, tmp_path: Path) -> None:
+    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum (the venue) is open on Tuesdays
+    plain = recommend(req("музей", use_llm=False, at=tuesday), deps)
+    assert "test:poi/3" in [c.poi_id for c in plain.cards]
+    show = _event_record("show", category="museum", title={"ru": "Выставка в музее"},
+                         starts="2026-10-20T11:00:00+05:00", ends="2026-10-20T19:00:00+05:00")
+    a = recommend(req("музей", use_llm=False, at=tuesday), _events_deps(deps, tmp_path, [show]))
+    ids = [c.poi_id for c in a.cards]
+    assert "event:show" in ids and "test:poi/3" not in ids
+
+
+def test_event_card_through_the_llm_path(deps: Deps, tmp_path: Path) -> None:
+    """The model writes «идёт сейчас» about an event that starts at 19:00: the sentence goes."""
+    llm = FakeLLM(whys=["Идёт сейчас! Джаз рядом с вами.", "Рядом и подходит."])
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    prompts: list[str] = []
+    real = llm.generate_structured
+
+    def spy(**kw: Any) -> Any:
+        prompts.append(kw["prompt"])
+        return real(**kw)
+
+    llm.generate_structured = spy  # type: ignore[method-assign]
+    a = recommend(req(EVENT_Q), d)
+    card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
+    assert '"kind": "event"' in card_prompt and '"on_now": false' in card_prompt
+    assert '"starts_local": "2026-10-19 19:00"' in card_prompt
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert ev_cards and a.data_used.generation == "llm"
+    assert "Идёт сейчас" not in ev_cards[0].why and "Джаз рядом" in ev_cards[0].why
+    assert ev_cards[0].source_url and ev_cards[0].facts_sources == ["manual"]
+
+
+def test_on_now_only_while_the_event_is_on(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T19:30:00+05:00"), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.open_note == "Идёт сейчас: 19:00–21:00 — по данным источника, проверьте перед визитом."
+    assert "идёт сейчас, до 21:00" in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (90, 90)  # what is left of it
+    no_end = _events_deps(deps, tmp_path, [_event_record(ends=None)])
+    b = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T19:30:00+05:00"), no_end)
+    c = next(c for c in b.cards if c.kind == "event")
+    assert c.ends_at is None and c.open_note == "Начало в 19:00" + CHECK_RU
+    assert "идёт" not in c.why.lower()
+
+
+@pytest.mark.parametrize(("lang", "title", "note"), [
+    ("kk", "Джаз кеші", "Басталуы: 19:00; аяқталуы: 21:00" + CHECK_KK),
+    ("en", "Jazz night", "Starts at 19:00; ends at 21:00 — per the source, check before you go."),
+])
+def test_event_card_in_kk_and_en(deps: Deps, tmp_path: Path, lang: str, title: str,
+                                 note: str) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req("concert tonight" if lang == "en" else "бүгін кешке концерт",
+                      use_llm=False, lang=lang), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.title == title and c.open_note == note
+
+
+def test_past_far_and_missing_events_give_no_event_card(deps: Deps, tmp_path: Path) -> None:
+    past = _event_record("past", starts="2026-10-19T10:00:00+05:00",
+                         ends="2026-10-19T12:00:00+05:00")
+    far = _event_record("far", geo={"lat": 51.16, "lon": 71.47})  # ~9 km away
+    later = _event_record("later", starts="2026-11-01T19:00:00+05:00", ends=None)
+    for items in ([past, far, later], [], {"broken": True}):
+        a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, items))
+        assert a.cards and not any(c.kind == "event" for c in a.cards)
+    missing = Deps(store=deps.store, llm=deps.llm,
+                   settings=dataclasses.replace(deps.settings, data_dir=tmp_path / "none"))
+    a = recommend(req(EVENT_Q, use_llm=False), missing)
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
+
+
+def test_events_follow_the_hard_filters(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    cafe = recommend(req("кофе", use_llm=False, overrides={"categories": ["cafe"]}), d)
+    assert not any(c.kind == "event" for c in cafe.cards)  # categories still filter
+    kids = recommend(req(EVENT_Q, use_llm=False, overrides={"with_kids": True}), d)
+    assert not any(c.kind == "event" for c in kids.cards)  # not marked kids_ok
+
+
+def test_a_live_event_passes_the_night_filter(deps: Deps, tmp_path: Path) -> None:
+    late = _event_record("late", starts="2026-10-19T22:00:00+05:00",
+                         ends="2026-10-19T23:59:00+05:00")
+    d = _events_deps(deps, tmp_path, [late])
+    a = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T23:00:00+05:00"), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.open_note.startswith("Идёт сейчас: 22:00–23:59")
+
+
+def test_event_card_prompt_rule_exists() -> None:
+    from app.llm import load_prompt
+
+    system = load_prompt("generate_cards")
+    assert 'kind = "event"' in system and "on_now" in system and "event_note" in system

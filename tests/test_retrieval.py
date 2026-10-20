@@ -879,3 +879,47 @@ def test_query_categories_stay_hard_with_likes() -> None:
     out = retrieve(make_store([cafe, museum]), intent("кофе", categories=["cafe"]), make_ctx(),
                    None, prefs=_prefs(["museums"]))
     assert ids(out) == [cafe.id]
+
+
+# ----------------------------------------------------------------- T123: events in the pool
+
+
+def _event_pair(dlat: float = 0.001, **kw: object):  # type: ignore[no-untyped-def]
+    from app import events
+
+    data: dict[str, object] = {
+        "id": "event:night-show", "title": {"ru": "Ночное шоу"}, "category": "theatre",
+        "tags": ["indoor"], "starts_at": "2026-10-20T19:00:00+05:00",
+        "ends_at": "2026-10-20T21:00:00+05:00", "geo": {"lat": EXPO[0] + dlat, "lon": EXPO[1]},
+        "source_url": "https://example.kz/e/1",
+    }
+    data.update(kw)
+    e = events.Event.model_validate(data)
+    return events.as_poi(e, "ru"), events.verdict(e, TUE_NOON, "ru")
+
+
+def test_events_join_the_pool_with_the_same_filters() -> None:
+    from app.retrieval import EVENT_BONUS
+
+    cafe = make_poi("cafe", "cafe", dlat=0.001)
+    store = make_store([cafe])
+    pair = _event_pair()
+    out = retrieve(store, intent("концерт сегодня"), make_ctx(), None, events=[pair])
+    assert ids(out)[0] == "event:night-show"  # the event words match «концерт сегодня»
+    assert out[0].score_parts["event"] == EVENT_BONUS
+    assert "часы работы не указаны" not in out[0].matched  # its time is told elsewhere
+    far = _event_pair(dlat=0.05)
+    assert "event:night-show" not in ids(retrieve(store, intent(), make_ctx(), None,
+                                                  events=[far]))
+    kids = retrieve(store, intent(with_kids=True), make_ctx(), None, events=[pair])
+    assert "event:night-show" not in ids(kids)
+    cats = retrieve(store, intent(categories=["cafe"]), make_ctx(), None, events=[pair])
+    assert ids(cats) == [cafe.id]
+
+
+def test_events_pass_at_night_without_hours() -> None:
+    """app.events already kept only events that are not over: no hours filter for them."""
+    store = make_store([make_poi("cafe", "cafe", dlat=0.002)])
+    night = make_ctx(at=datetime(2026, 10, 20, 23, 0, tzinfo=ASTANA_TZ))
+    out = retrieve(store, intent(night=True), night, None, events=[_event_pair()])
+    assert ids(out) == ["event:night-show"]
