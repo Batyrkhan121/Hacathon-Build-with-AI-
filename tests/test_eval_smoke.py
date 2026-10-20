@@ -696,10 +696,17 @@ def test_run_all_sends_baseline_without_prefs(mock_answer: Answer) -> None:
 def test_prefs_in_log_with_place_is_caught() -> None:
     req = {"query": "гулять рядом", "location": {"landmark_id": "expo"},
            "prefs": {"likes": ["museums"], "avoids": ["coffee"]}}
-    ok = ["recommend id=ab12 res=lm cards=3 ms=40", "prefs: likes=1 avoids=1"]
+    ok = [("qadam.pipeline", "recommend id=ab12 res=lm cards=3 ms=40"),
+          ("qadam.pipeline", "prefs: likes=1 avoids=1"),
+          # parser tags are not prefs: «night», «coffee» next to the landmark is no alarm
+          ("qadam.query_parser", "landmark=expo must_tags=['coffee', 'night']")]
     assert run_eval.check_prefs_not_logged(ok, req) == []
-    assert run_eval.check_prefs_not_logged(["recommend landmark=expo prefs=museums"], req)
-    assert run_eval.check_prefs_not_logged(["query='гулять рядом' tags=coffee"], req)
+    bad = [("qadam.api", "ok"), ("qadam.pipeline", "query='гулять рядом' prefs=museums")]
+    [fail] = run_eval.check_prefs_not_logged(bad, req)
+    assert "запись №2" in fail and "qadam.pipeline" in fail
+    assert "гулять" not in fail and "museums" not in fail  # the line itself is never copied
+    assert run_eval.check_prefs_not_logged(
+        [("x", "UserPrefs(likes=['museums']) landmark=expo")], req)
     assert run_eval.check_prefs_not_logged(None, req) == []  # --url: logs not visible
 
 
@@ -708,7 +715,26 @@ def test_capture_logs_sees_info_records() -> None:
 
     with run_eval.capture_logs() as lines:
         logging.getLogger("qadam.test").info("recommend id=%s", "x1")
-    assert lines == ["recommend id=x1"]
+    assert lines == [("qadam.test", "recommend id=x1")]
+
+
+def test_crossing_check_off_for_url_and_noted(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_eval, "CROSSING_GRAPH", None)
+    assert run_eval.crossing_node_flags() is None
+    assert "--graph-check" in run_eval.crossing_check_note(url_mode=True)
+    broken = tmp_path / "walk_graph.npz"
+    broken.write_bytes(b"not a zip")
+    monkeypatch.setattr(run_eval, "CROSSING_GRAPH", broken)
+    assert run_eval.crossing_node_flags() is None
+    assert "не читается" in run_eval.crossing_check_note(url_mode=False)
+    monkeypatch.setattr(run_eval, "CROSSING_GRAPH", tmp_path / "none.npz")
+    assert "нет файла" in run_eval.crossing_check_note(url_mode=False)
+
+
+def test_report_marks_core_as_wave8_measure(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "другая мера, чем 16/16 сдачи" in md
 
 
 def test_reject_required_scenario(mock_answer: Answer) -> None:
