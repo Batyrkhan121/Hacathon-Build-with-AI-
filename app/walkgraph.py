@@ -8,14 +8,16 @@ docs/ARCHITECTURE.md §5 (built by DATA, pipeline/walk_graph.py). Only numpy and
 - A point is bound to a node within SNAP_MAX_M: POIs and landmarks via poi_nodes /
   landmark_nodes from the meta, anything else via a grid index.
 - A* by time: length / 1.25 m/s; stairs x2, big road x1.3 (pavements and footways win),
-  crossing +20 s (traffic lights), +10 s (marked), +40 s (unmarked). Modes: wheelchair —
+  crossing +20 s (traffic lights), +10 s (marked), +40 s (unmarked), +20 s (markings not
+  known: in between; 1.3.0 "unknown", about a third of OSM crossings). Modes: wheelchair —
   no stairs, unmarked crossing +60 s; night — edges without the lit bit x1.1 (in OSM
   Astana lit is tagged on ~3% of edges: no bit means «unknown», not «dark», so a known-lit
   way is only a mild plus); with kids — unmarked +60 s.
   The heuristic is the straight line at the same pace: every real cost is at least that.
 - Wave 8: route profiles change only these edge and crossing costs (same A*):
-  fastest — as above; accessible — no stairs, unmarked crossing +120 s, traffic lights +5 s,
-  a crossing without kerb data +15 s, with a raised kerb +120 s (lowered kerbs win);
+  fastest — as above; accessible — no stairs, unmarked crossing +120 s, markings not known
+  +60 s, traffic lights +5 s, a crossing without kerb data +15 s, with a raised kerb +120 s
+  (lowered kerbs win);
   if there is no step-free way or it is over ACCESSIBLE_MAX_X x the usual one, the leg is the
   usual (fastest) one with stairs_fallback=True (the note says so; with wheelchair=True there
   is no fallback onto stairs); lit — lit=no x3, no lighting data x1.2, lit x1.
@@ -61,9 +63,13 @@ ROUTE_LIMIT_S = 0.3
 STAIRS_X = 2.0
 MAJOR_ROAD_X = 1.3
 UNLIT_NIGHT_X = 1.1  # ARCHITECTURE §5: at most x1.1, or routes chase the rare lit=yes ways
-CROSSING_S: dict[str, float] = {"signals": 20.0, "marked": 10.0, "unmarked": 40.0}
+CROSSING_S: dict[str, float] = {
+    "signals": 20.0, "marked": 10.0, "unknown": 20.0, "unmarked": 40.0,
+}
 UNMARKED_CAREFUL_S = 60.0  # in a wheelchair or with kids
-ACCESSIBLE_CROSSING_S: dict[str, float] = {"signals": 5.0, "marked": 10.0, "unmarked": 120.0}
+ACCESSIBLE_CROSSING_S: dict[str, float] = {
+    "signals": 5.0, "marked": 10.0, "unknown": 60.0, "unmarked": 120.0,
+}
 ACCESSIBLE_KERB_S: dict[str, float] = {"lowered": 0.0, "unknown": 15.0, "raised": 120.0}
 ACCESSIBLE_MAX_X = 1.3  # a step-free way longer than 1.3 x the usual one -> the usual one
 LIT_NO_X = 3.0  # profile "lit": a way tagged lit=no
@@ -73,6 +79,7 @@ DETOUR_MAX_ADD_M = 200.0
 
 NODE_CROSSING, NODE_SIGNALS, NODE_LOWERED_KERB, NODE_UNMARKED = 1, 2, 4, 8
 NODE_RAISED_KERB = 16  # kerb known and not lowered (read when the graph has it)
+NODE_MARKINGS = 32  # markings known: marked / zebra / uncontrolled (read when the graph has it)
 EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING = 1, 2, 4, 8, 16
 EDGE_UNLIT = 32  # lit=no (read when the graph has it; without it lit=no is «no data»)
 
@@ -109,7 +116,7 @@ WALK = Mode()  # plain walking, no special needs
 class Crossing:
     lat: float
     lon: float
-    kind: str  # "signals" | "marked" | "unmarked" (RouteCrossing.kind)
+    kind: str  # "signals" | "marked" | "unmarked" | "unknown" (RouteCrossing.kind)
     kerb: Kerb = "unknown"
 
 
@@ -153,13 +160,16 @@ def straight_path(a: GeoPoint, b: GeoPoint) -> GraphPath:
 
 
 def crossing_kind(flags: int) -> str | None:
-    """bit 2 -> signals, else bit 8 -> unmarked, else bit 1 -> marked (ARCHITECTURE §5)."""
+    """bit 2 -> signals, else bit 8 -> unmarked, else bit 32 -> marked, else bit 1 -> unknown
+    (ARCHITECTURE §5, 1.3.0): a crossing with no type in OSM is never shown as a zebra."""
     if flags & NODE_SIGNALS:
         return "signals"
     if flags & NODE_UNMARKED:
         return "unmarked"
-    if flags & NODE_CROSSING:
+    if flags & NODE_MARKINGS:
         return "marked"
+    if flags & NODE_CROSSING:
+        return "unknown"
     return None
 
 
@@ -231,8 +241,8 @@ class WalkGraph:
         self._kind = [crossing_kind(f) for f in self._n_flags]
         self._kerb = [_kerb_state(f) for f in self._n_flags]
         self._lit = [_lit_state(f) for f in self._e_flags]
-        # a crossing segment with no crossing node at either end still is a crossing: we do not
-        # know its kind, so it counts as unmarked (the cautious choice)
+        # a crossing segment with no crossing node at either end still is a crossing, of a kind
+        # we do not know ("unknown", 1.3.0; it was "unmarked" before wave 8)
         self._seg_crossing = [
             bool(self._e_flags[e] & EDGE_CROSSING)
             and self._kind[self._eu[e]] is None
@@ -313,7 +323,7 @@ class WalkGraph:
         elif mode.night:
             cost = np.where(e_flags & EDGE_LIT, cost, cost * UNLIT_NIGHT_X)
         seg = np.asarray(self._seg_crossing, dtype=bool)
-        cost = np.where(seg, cost + _crossing_penalty("unmarked", mode), cost)
+        cost = np.where(seg, cost + _crossing_penalty("unknown", mode), cost)
         if _no_stairs(mode):
             cost = np.where(e_flags & EDGE_STEPS, _INF, cost)
         node_cost = [_crossing_penalty(kind, mode) for kind in self._kind]
@@ -425,7 +435,7 @@ class WalkGraph:
             if self._seg_crossing[e]:
                 u, v = self._eu[e], self._ev[e]
                 add((self._lat[u] + self._lat[v]) / 2, (self._lon[u] + self._lon[v]) / 2,
-                    "unmarked", partial(self._segment_kerb, e))
+                    "unknown", partial(self._segment_kerb, e))
             add(self._lat[node], self._lon[node], self._kind[node], partial(self._node_kerb, node))
         return GraphPath(
             points=[(a.lat, a.lon), *((self._lat[n], self._lon[n]) for n in nodes), (b.lat, b.lon)],
