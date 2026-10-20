@@ -1,5 +1,6 @@
-# Checks the hand-added events (data/manual/events.json) whenever they or their checker change:
-# fields, https source from the allow-list, no 2GIS/Yandex, venue bound to our POI.
+# Checks the hand-added events (data/manual/events.json) whenever they, their checker or the
+# POI they bind to change: fields, https source from the allow-list, no 2GIS/Yandex, venue
+# bound to our POI (a venue_poi_id may disappear from a rebuilt poi.jsonl).
 name: events-check
 
 on:
@@ -7,11 +8,13 @@ on:
     paths:
       - "data/manual/events.json"
       - "data/manual/event_sources.json"
+      - "data/processed/poi.jsonl"
       - "pipeline/events.py"
   pull_request:
     paths:
       - "data/manual/events.json"
       - "data/manual/event_sources.json"
+      - "data/processed/poi.jsonl"
       - "pipeline/events.py"
 
 permissions:
