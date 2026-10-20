@@ -11,6 +11,7 @@
 !web/mock/answer_sample.json
 !web/vendor/**
 !data/landmarks.json
+!data/events.json
 !data/processed/poi.jsonl
 !data/processed/REPORT.md
 !data/processed/walk_graph.npz
