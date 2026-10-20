@@ -18,19 +18,38 @@ OSM footways and crossings (path_source="graph", crossings, steps_count); the st
 the budget trimming stay as above, but the budget is checked with the graph minutes. One route
 gets walkgraph.ROUTE_LIMIT_S; any failure (no binding, no path, over the limit) -> the straight
 route exactly as before (path_source="straight").
+
+Wave 8 (T121): `profile` (fastest / accessible / lit, contract 1.3.0) chooses the edge costs of
+the walk graph (app.walkgraph). MiniRoute carries the facts of the path, all counted by code:
+`profile` (the one the route was really planned with: a straight route is "fastest", and the
+note says the asked profile was not applied), lit / lit=no / no-data shares of the length
+(OSM tags; a straight route is 0 / 0 / 1; "lit" is never rounded up), kerb_lowered and
+kerb_unknown (crossings on a graph route; None on a straight one: its crossings are not known),
+steps_count, max_outdoor_leg_min. "accessible" with stairs (no step-free way, or one over 30%
+longer) keeps profile="accessible", steps_count > 0, and the note says why.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import Counter
 from collections.abc import Set as AbstractSet
+from dataclasses import replace
 from itertools import combinations, permutations
 
 from app import walkgraph
 from app.geo import haversine_m, walk_minutes
-from app.schemas import Candidate, GeoPoint, Lang, MiniRoute, RouteCrossing, RouteLeg
+from app.schemas import (
+    Candidate,
+    GeoPoint,
+    Lang,
+    MiniRoute,
+    RouteCrossing,
+    RouteLeg,
+    RouteProfile,
+)
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +80,9 @@ _NOTE: dict[str, dict[str, str]] = {
                             "бордюры не проверены.",
         "loop": "с возвращением к старту", "oneway": "без обратной дороги",
         "partly_straight": "Часть отрезков посчитана по прямой × 1,3.",
+        "stairs_fallback": "Без ступеней пути нет или он длиннее больше чем на 30 % — "
+                           "на маршруте есть ступени.",
+        "no_profile": "Профиль маршрута не учтён: отрезки прямые.",
         "kids": "С ребёнком закладывайте больше времени.",
         "wheelchair": "На коляске закладывайте больше времени; маршрут не проверен на ступени "
                       "и бордюры.",
@@ -73,6 +95,9 @@ _NOTE: dict[str, dict[str, str]] = {
                             "өтеді, жиектастар тексерілмеген.",
         "loop": "бастапқы нүктеге оралумен", "oneway": "кері жолсыз",
         "partly_straight": "Кейбір кесінділер түзу сызықпен × 1,3 есептелген.",
+        "stairs_fallback": "Баспалдақсыз жол жоқ немесе ол 30 %-дан астам ұзын — "
+                           "маршрутта баспалдақ бар.",
+        "no_profile": "Маршрут профилі ескерілмеді: кесінділер түзу.",
         "kids": "Баламен көбірек уақыт қалдырыңыз.",
         "wheelchair": "Арбамен көбірек уақыт қалдырыңыз; маршрут баспалдақ пен жиектасқа "
                       "тексерілмеген.",
@@ -85,6 +110,8 @@ _NOTE: dict[str, dict[str, str]] = {
                             "are not checked.",
         "loop": "back to the start", "oneway": "one way",
         "partly_straight": "Some segments are straight lines × 1.3.",
+        "stairs_fallback": "No step-free way, or it is over 30% longer: the route has steps.",
+        "no_profile": "Route profile not applied: straight segments.",
         "kids": "With kids, allow extra time.",
         "wheelchair": "In a wheelchair, allow extra time; the route is not checked for steps "
                       "or kerbs.",
@@ -182,7 +209,8 @@ def _graph_route(
     total: int,
     budget_min: int | None,
     note: str,
-    partly_note: str,
+    texts: dict[str, str],
+    profile: RouteProfile,
 ) -> MiniRoute:
     ids = [c.poi.id for c in ordered] + (["origin"] if loop else [])
     route_legs: list[RouteLeg] = []
@@ -197,13 +225,19 @@ def _graph_route(
         if path and (path[-1].lat, path[-1].lon) == points[0]:
             points = points[1:]
         path.extend(GeoPoint(lat=lat, lon=lon) for lat, lon in points)
-    crossings: list[RouteCrossing] = []
-    seen: set[tuple[float, float]] = set()
+    on_path: dict[tuple[float, float], walkgraph.Crossing] = {}  # a stop's crossing counts once
     for leg in legs:
         for c in leg.crossings:
-            if (c.lat, c.lon) not in seen and len(crossings) < MAX_CROSSINGS:
-                seen.add((c.lat, c.lon))
-                crossings.append(RouteCrossing(lat=c.lat, lon=c.lon, kind=c.kind))  # type: ignore[arg-type]
+            on_path.setdefault((c.lat, c.lon), c)
+    crossings = [RouteCrossing(lat=c.lat, lon=c.lon, kind=c.kind)  # type: ignore[arg-type]
+                 for c in list(on_path.values())[:MAX_CROSSINGS]]
+    kerbs = Counter(c.kerb for c in on_path.values())
+    lit, unlit, unknown = _lit_shares(legs)
+    notes = [note]
+    if any(leg.straight for leg in legs):
+        notes.append(texts["partly_straight"])
+    if any(leg.stairs_fallback for leg in legs):
+        notes.append(texts["stairs_fallback"])
     return MiniRoute(
         stop_ids=[c.poi.id for c in ordered],
         legs=route_legs,
@@ -211,11 +245,29 @@ def _graph_route(
         total_min=total,
         fits_budget=budget_min is None or total <= budget_min,
         path=path,
-        note=f"{note} {partly_note}" if any(leg.straight for leg in legs) else note,
+        note=" ".join(notes),
         path_source="graph",
         crossings=crossings,
         steps_count=sum(leg.steps for leg in legs),
+        profile=profile,
+        lit_share=lit,
+        unlit_share=unlit,
+        unknown_lit_share=unknown,
+        kerb_lowered=kerbs["lowered"],
+        kerb_unknown=kerbs["unknown"],
+        max_outdoor_leg_min=max(leg.walk_min for leg in route_legs),
     )
+
+
+def _lit_shares(legs: list[walkgraph.GraphPath]) -> tuple[float, float, float]:
+    """Shares of the length on lit=yes / lit=no / untagged ways (OSM), 3 decimals. The lit share
+    is rounded down: no data is never shown as «lit»; the rest goes to «no data»."""
+    total = sum(leg.length_m for leg in legs)
+    if total <= 0:
+        return 0.0, 0.0, 1.0
+    lit = math.floor(sum(leg.lit_m for leg in legs) / total * 1000) / 1000
+    unlit = round(sum(leg.unlit_m for leg in legs) / total, 3)
+    return lit, unlit, max(0.0, round(1 - lit - unlit, 3))
 
 
 def plan_route(
@@ -232,21 +284,25 @@ def plan_route(
     origin_landmark: str | None = None,
     graph_note: str | None = None,
     lang: Lang = "ru",
+    profile: RouteProfile = "fastest",
 ) -> MiniRoute | None:
     """Order stops, compute legs and totals; drop trailing stops that break the budget.
 
     visit_min maps poi_id -> planned minutes on site (use Card.visit_min_low).
     Return None when fewer than 1 stop remains. `loop` adds the walk back to the start.
-    With `graph`: legs, path and minutes along the walk graph (path_source="graph"); legs
-    that fell back to straight segments add a sentence in `lang` to the note; any failure or
-    no leg on the graph -> exactly the straight route.
+    With `graph`: legs, path and minutes along the walk graph (path_source="graph") with the
+    edge costs of `profile` (it replaces mode.profile); legs that fell back to straight
+    segments, or to stairs on "accessible", add a sentence in `lang` to the note; any failure
+    or no leg on the graph -> exactly the straight route (profile="fastest"; a profile other
+    than "fastest" adds «not applied» to its note).
     """
+    texts = _NOTE.get(lang, _NOTE["ru"])
     if graph is not None:
-        texts = _NOTE.get(lang, _NOTE["ru"])
         routed = _plan_on_graph(origin, stops, budget_min, visit_min, max_stops, loop=loop,
-                                graph=graph, mode=mode, origin_landmark=origin_landmark,
+                                graph=graph, mode=replace(mode, profile=profile),
+                                origin_landmark=origin_landmark,
                                 note=graph_note or route_note(lang, loop=loop, graph=True),
-                                partly_note=texts["partly_straight"])
+                                texts=texts, profile=profile)
         if routed is not None:
             return routed
     unique: list[Candidate] = []
@@ -268,6 +324,7 @@ def plan_route(
     path = [origin, *(c.poi.geo for c in ordered)]
     if loop:
         path.append(origin)
+    note = note or route_note("ru", loop=loop)
     return MiniRoute(
         stop_ids=[c.poi.id for c in ordered],
         legs=legs,
@@ -275,7 +332,12 @@ def plan_route(
         total_min=total,
         fits_budget=budget_min is None or total <= budget_min,
         path=path,
-        note=note or route_note("ru", loop=loop),
+        note=note if profile == "fastest" else f"{note} {texts['no_profile']}",
+        profile="fastest",  # straight segments know nothing of stairs or lighting
+        lit_share=0.0,
+        unlit_share=0.0,
+        unknown_lit_share=1.0,
+        max_outdoor_leg_min=max(leg.walk_min for leg in legs),
     )
 
 
@@ -291,13 +353,14 @@ def _plan_on_graph(
     mode: walkgraph.Mode,
     origin_landmark: str | None,
     note: str,
-    partly_note: str,
+    texts: dict[str, str],
+    profile: RouteProfile,
 ) -> MiniRoute | None:
     """plan_route on the graph; None (-> straight route) on any failure, a bug included."""
     try:
         return _plan_on_graph_unsafe(origin, stops, budget_min, visit_min, max_stops, loop=loop,
                                      graph=graph, mode=mode, origin_landmark=origin_landmark,
-                                     note=note, partly_note=partly_note)
+                                     note=note, texts=texts, profile=profile)
     except Exception as exc:  # noqa: BLE001 - the straight route is always there
         log.error("walk graph route failed (%s): straight segments", type(exc).__name__)
         return None
@@ -315,7 +378,8 @@ def _plan_on_graph_unsafe(
     mode: walkgraph.Mode,
     origin_landmark: str | None,
     note: str,
-    partly_note: str,
+    texts: dict[str, str],
+    profile: RouteProfile,
 ) -> MiniRoute | None:
     unique: list[Candidate] = []
     for cand in stops:
@@ -332,8 +396,8 @@ def _plan_on_graph_unsafe(
             return None  # no leg follows the graph: the plain straight route, with its note
         total = _graph_total(legs, ordered, visit_min)
         if budget_min is None or total <= budget_min or len(kept) == 1:
-            return _graph_route(origin, ordered, legs, loop, total, budget_min, note,
-                                partly_note)
+            return _graph_route(origin, ordered, legs, loop, total, budget_min, note, texts,
+                                profile)
         kept = kept[:-1]  # over budget by the graph: drop the lowest-ranked card
 
 
@@ -395,6 +459,7 @@ def plan_walk(
     graph: walkgraph.WalkGraph | None = None,
     mode: walkgraph.Mode = walkgraph.WALK,
     origin_landmark: str | None = None,
+    profile: RouteProfile = "fastest",
 ) -> list[Candidate]:
     """Up to `max_stops` candidates that fit `budget_min` together, in visiting order.
 
@@ -406,8 +471,9 @@ def plan_walk(
     Never a stop: places closer than AT_ORIGIN_M (where the person already is), fast food /
     bars / nightlife unless in `wanted_categories`. At most MAX_SAME_CATEGORY of one category
     and no two places with the same name. [] when not even one stop fits.
-    With `graph` (T91) the picked walk is checked with graph minutes: the lowest-scored stop
-    is dropped until it fits; a graph failure keeps the straight pick.
+    With `graph` (T91) the picked walk is checked with graph minutes (edge costs of `profile`,
+    which replaces mode.profile): the lowest-scored stop is dropped until it fits; a graph
+    failure keeps the straight pick.
     """
     pool = [c for c in candidates if walk_eligible(c, wanted_categories)][:WALK_POOL]
     visits = {c.poi.id: walk_visit_minutes(c) for c in pool}
@@ -436,8 +502,8 @@ def plan_walk(
             if best_key is None or key > best_key:
                 best_key, best = key, ordered
     if graph is not None and best:  # T91: the budget is checked with the graph minutes
-        on_graph = _fit_walk_on_graph(origin, best, budget_min, loop, graph, mode,
-                                      origin_landmark)
+        on_graph = _fit_walk_on_graph(origin, best, budget_min, loop, graph,
+                                      replace(mode, profile=profile), origin_landmark)
         if on_graph is not None:
             return on_graph
     return best
