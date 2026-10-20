@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from app.schemas import GeoPoint
-from app.walkgraph import Mode, WalkGraph, load_graph
+from app.walkgraph import Mode, WalkGraph, crossing_kind, load_graph
 
 LAT0, LON0 = 51.09, 71.41
 M_PER_DEG = 111_320.0
@@ -293,6 +293,7 @@ def test_lengths_from_one_search(tmp_path: Path) -> None:
 
 
 UNLIT, KERB_RAISED = 32, 16  # edge: lit=no; node: kerb known and not lowered
+MARKINGS = 32  # node: markings known (crossing=marked / zebra / uncontrolled)
 
 
 def stairs_in_the_middle(tmp_path: Path, detour_y: float | None) -> WalkGraph:
@@ -449,7 +450,68 @@ def test_kerb_of_a_crossing_segment_without_a_crossing_node(tmp_path: Path) -> N
     nodes = {"S": (0, 0, LOWERED), "N": (0, 30, LOWERED)}
     path = graph(tmp_path, nodes, [("S", "N", CROSS_SEG)]).route(at(0, -1), at(0, 31))
     assert path is not None
-    assert [(c.kind, c.kerb) for c in path.crossings] == [("unmarked", "lowered")]
+    assert [(c.kind, c.kerb) for c in path.crossings] == [("unknown", "lowered")]
+
+
+@pytest.mark.parametrize(
+    ("flags", "kind"),
+    [
+        (CROSSING | SIGNALS, "signals"),
+        (CROSSING | SIGNALS | MARKINGS, "signals"),
+        (CROSSING | UNMARKED, "unmarked"),
+        (CROSSING | UNMARKED | MARKINGS, "unmarked"),  # bit 8 before bit 32
+        (CROSSING | MARKINGS, "marked"),
+        (CROSSING, "unknown"),  # OSM gives no crossing type: never shown as a zebra
+        (CROSSING | LOWERED, "unknown"),
+    ],
+)
+def test_crossing_kind_from_the_bits(tmp_path: Path, flags: int, kind: str) -> None:
+    nodes = {"S": (0, 0, 0), "C": (0, 15, flags), "N": (0, 30, 0)}
+    path = graph(tmp_path, nodes, [("S", "C", CROSS_SEG), ("C", "N", CROSS_SEG)]).route(
+        at(0, -1), at(0, 31))
+    assert path is not None
+    assert [c.kind for c in path.crossings] == [kind]
+
+
+def test_crossing_kind_without_the_crossing_bit() -> None:
+    assert crossing_kind(SIGNALS) == "signals"  # traffic lights on the road itself
+    assert crossing_kind(MARKINGS) == "marked"
+    assert crossing_kind(0) is None and crossing_kind(LOWERED) is None
+
+
+def near_or_far_crossing(tmp_path: Path, near: int, far: int, far_x: float) -> WalkGraph:
+    """Across a road from (0, 0) to (0, 30): a crossing right there or one far_x m along."""
+    nodes = {
+        "S0": (0, 0, 0), "S1": (far_x, 0, 0), "N0": (0, 30, 0), "N1": (far_x, 30, 0),
+        "CN": (0, 15, near), "CF": (far_x, 15, far),
+    }
+    edges = [
+        ("S0", "S1", FOOTWAY), ("N0", "N1", FOOTWAY),
+        ("S0", "CN", CROSS_SEG), ("CN", "N0", CROSS_SEG),
+        ("S1", "CF", CROSS_SEG), ("CF", "N1", CROSS_SEG),
+    ]
+    return graph(tmp_path, nodes, edges)
+
+
+@pytest.mark.parametrize(
+    ("profile", "near", "far", "far_x", "taken"),
+    [
+        # fastest: unknown +20 s, between marked +10 s and unmarked +40 s
+        ("fastest", CROSSING | UNMARKED, CROSSING, 10, "unknown"),  # 24+40 > 40+20
+        ("fastest", CROSSING, CROSSING | MARKINGS, 5, "marked"),  # 24+20 > 32+10
+        ("fastest", CROSSING, CROSSING | MARKINGS, 20, "unknown"),  # 24+20 < 56+10
+        # accessible: unknown +60 s, between marked +10 s and unmarked +120 s (kerbs +15 both)
+        ("accessible", CROSSING, CROSSING | MARKINGS, 20, "marked"),  # 24+60 > 56+10
+        ("accessible", CROSSING | UNMARKED, CROSSING, 30, "unknown"),  # 24+120 > 72+60
+    ],
+)
+def test_unknown_crossings_cost_between_marked_and_unmarked(
+    tmp_path: Path, profile: str, near: int, far: int, far_x: float, taken: str
+) -> None:
+    g = near_or_far_crossing(tmp_path, near, far, far_x)
+    path = g.route(at(0, 0), at(0, 30), Mode(profile=profile))  # type: ignore[arg-type]
+    assert path is not None
+    assert [c.kind for c in path.crossings] == [taken]
 
 
 @pytest.mark.parametrize(("detour_y", "expected_m"), [(30, 560), (100, 500), (None, 500)])

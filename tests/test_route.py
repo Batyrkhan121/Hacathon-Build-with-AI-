@@ -522,3 +522,12 @@ def test_plan_walk_checks_minutes_with_the_profile(tmp_path, monkeypatch) -> Non
     east, north = cand_at("east", at(200, -5), score=0.9), cand_at("north", at(0, 135))
     plan_walk(at(0, -5), [east, north], 60, graph=g, profile="lit")
     assert seen and set(seen) == {"lit"}
+
+
+def test_crossing_of_unknown_type_reaches_the_answer(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import CROSS_SEG, CROSSING
+
+    nodes = {"S": (0, 0, 0), "C": (0, 15, CROSSING), "N": (0, 30, 0)}
+    g = load_graph(write_graph(tmp_path, nodes, [("S", "C", CROSS_SEG), ("C", "N", CROSS_SEG)]))
+    r = plan_route(at(0, -1), [cand_at("n", at(0, 31))], None, {}, graph=g)
+    assert r is not None and [c.kind for c in r.crossings] == ["unknown"]
