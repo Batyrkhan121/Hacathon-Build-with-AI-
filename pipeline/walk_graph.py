@@ -14,14 +14,17 @@ within 150 m.
 Format = the DATA -> FEATURES contract, docs/ARCHITECTURE.md section 5:
 walk_graph.npz (np.savez_compressed), node number = row in the node arrays:
   node_lat, node_lon float32[N]; node_flags uint8[N] (1 crossing, 2 traffic signals,
-  4 lowered kerb, 8 unmarked crossing)
+  4 lowered kerb, 8 unmarked crossing, 16 kerb known and not lowered; wave 8)
   edge_u, edge_v int32[E]: undirected, every edge once, u != v; edge_len_m float32[E] along
   the OSM line, never shorter than the straight line between the stored (float32) ends;
-  edge_flags uint8[E] (1 steps, 2 lit, 4 footway, 8 major road, 16 crossing)
+  edge_flags uint8[E] (1 steps, 2 lit=yes, 4 footway, 8 major road, 16 crossing,
+  32 lit=no; wave 8). No bit = no data, never "yes".
 A footway=crossing way gives its own crossing tags to an untyped crossing node, to the node
 where it meets a road with cars, or (no such node) to its middle node, a new one for a
 two-node way; bit 16 stays only on segments ending at a crossing node, so a crossing
-segment always has its crossing node at one end.
+segment always has its crossing node at one end. A crossing node also carries the kerbs of
+its crossing way (OSM maps them on the way's nodes): 16 if any side is not lowered, else 4
+if every known side is lowered.
 walk_graph_meta.json: osm_snapshot, bbox [south, west, north, east], nodes, edges,
   crossings, signals, largest_component_share, poi_nodes {poi_id: node},
   landmark_nodes {landmark_id: node}, created_at (+ reference counters and flag legend).
@@ -36,7 +39,7 @@ import math
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -75,19 +78,20 @@ CROSSING_TYPES = frozenset({"traffic_signals", "marked", "zebra", "uncontrolled"
 CAR_ROADS = frozenset(
     {"residential", "service", "unclassified", "tertiary", "secondary", "primary"}
 )
-KERB_LOW = frozenset({"lowered", "flush"})
+KERB_LOW = frozenset({"lowered", "flush", "no"})  # kerb=no: no kerb at all
+KERB_HIGH = frozenset({"raised", "rolled", "regular", "normal"})  # kerb=yes: height unknown
 # foot=* overrides access=* for pedestrians: access=private + foot=yes is walkable
 FOOT_ALLOWED = frozenset({"yes", "designated", "permissive"})
 
-NODE_CROSSING, NODE_SIGNALS, NODE_KERB, NODE_UNMARKED = 1, 2, 4, 8
-EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING = 1, 2, 4, 8, 16
+NODE_CROSSING, NODE_SIGNALS, NODE_KERB, NODE_UNMARKED, NODE_KERB_HIGH = 1, 2, 4, 8, 16
+EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING, EDGE_UNLIT = 1, 2, 4, 8, 16, 32
 NODE_FLAGS = {
     "crossing": NODE_CROSSING, "traffic_signals": NODE_SIGNALS, "kerb_lowered": NODE_KERB,
-    "unmarked_crossing": NODE_UNMARKED,
+    "unmarked_crossing": NODE_UNMARKED, "kerb_raised": NODE_KERB_HIGH,
 }
 EDGE_FLAGS = {
     "steps": EDGE_STEPS, "lit": EDGE_LIT, "footway": EDGE_FOOTWAY, "major_road": EDGE_MAJOR,
-    "crossing": EDGE_CROSSING,
+    "crossing": EDGE_CROSSING, "unlit": EDGE_UNLIT,
 }
 FORMAT_VERSION = 1
 NPZ_KEYS = ("node_lat", "node_lon", "node_flags", "edge_u", "edge_v", "edge_len_m", "edge_flags")
@@ -191,6 +195,12 @@ class WalkGraph:
     edge_len_m: np.ndarray
     edge_flags: np.ndarray
     node_osm_id: np.ndarray  # for tests and debugging only: not written to the npz
+    # for the tag-coverage table (pipeline.walk_coverage) only, not written either: the OSM
+    # tags of each edge's way; per crossing node (index) its crossing tags (its own, else
+    # its crossing way's) and the kerb=* values on it and on the nodes of its crossing ways
+    edge_tags: list[Mapping[str, str]] = field(default_factory=list)
+    crossing_tags: dict[int, dict[str, str]] = field(default_factory=dict)
+    crossing_kerbs: dict[int, list[str]] = field(default_factory=dict)
 
 
 def walkable(tags: Mapping[str, str]) -> bool:
@@ -223,6 +233,8 @@ def node_flags_of(tags: Mapping[str, str]) -> int:
         flags |= NODE_SIGNALS
     if tags.get("kerb") in KERB_LOW:
         flags |= NODE_KERB
+    elif tags.get("kerb") in KERB_HIGH:
+        flags |= NODE_KERB_HIGH
     return flags
 
 
@@ -233,6 +245,8 @@ def edge_flags_of(tags: Mapping[str, str]) -> int:
         flags |= EDGE_STEPS
     if tags.get("lit") == "yes":
         flags |= EDGE_LIT
+    elif tags.get("lit") == "no":
+        flags |= EDGE_UNLIT
     if highway in FOOT_INFRA or tags.get("foot") == "designated":
         flags |= EDGE_FOOTWAY
     if highway in MAJOR_ROADS:
@@ -269,14 +283,20 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         for ref in refs:
             uses[ref] += 1
     node_flags = {r: node_flags_of(node_tags.get(r, {})) for r in uses}
-    from_ways = _crossings_from_ways(kept_ways, node_tags, node_flags, coords)
+    from_ways, way_types = _crossings_from_ways(kept_ways, node_tags, node_flags, coords)
+    kerbs = _kerbs_at_crossings(kept_ways, node_tags, node_flags)
+    for r, values in kerbs.items():  # one kerb verdict per crossing node
+        if any(k in KERB_HIGH for k in values):
+            node_flags[r] = (node_flags[r] | NODE_KERB_HIGH) & ~NODE_KERB
+        elif any(k in KERB_LOW for k in values):
+            node_flags[r] |= NODE_KERB
     keep: set[int] = {r for r, c in uses.items() if c > 1}
     keep |= {r for r, f in node_flags.items() if f}
     for refs, _ in kept_ways:
         keep.update((refs[0], refs[-1]))
 
     # split ways into edges between kept nodes; plain nodes in between only add length
-    raw_edges: list[tuple[int, int, float, int]] = []
+    raw_edges: list[tuple[int, int, float, int, Mapping[str, str]]] = []
     missing = approaches = 0
     for refs, tags in kept_ways:
         flags = edge_flags_of(tags)
@@ -298,21 +318,21 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
                     ):
                         seg &= ~EDGE_CROSSING
                         approaches += 1
-                    raw_edges.append((start, ref, length, seg))
+                    raw_edges.append((start, ref, length, seg, tags))
                 start, length = ref, 0.0
             prev = ref
 
     largest, components, total_nodes = _largest_component(raw_edges)
     # every undirected edge once: of parallel ways between the same two nodes keep the shortest
-    best: dict[tuple[int, int], tuple[int, int, float, int]] = {}
+    best: dict[tuple[int, int], tuple[int, int, float, int, Mapping[str, str]]] = {}
     in_largest = 0
-    for u, v, length, flags in raw_edges:
+    for u, v, length, flags, tags in raw_edges:
         if u not in largest:
             continue
         in_largest += 1
         key = (u, v) if u < v else (v, u)
         if key not in best or length < best[key][2]:
-            best[key] = (u, v, length, flags)
+            best[key] = (u, v, length, flags, tags)
     edges = [best[k] for k in sorted(best)]
     node_ids = sorted({u for u, *_ in edges} | {v for _, v, *_ in edges})
     index = {osm_id: i for i, osm_id in enumerate(node_ids)}
@@ -334,7 +354,14 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         ),
         edge_flags=edge_flag_arr,
         node_osm_id=np.array(node_ids, dtype=np.int64),
+        edge_tags=[e[4] for e in edges],
     )
+    for osm_id, i in index.items():
+        if node_flags[osm_id] & NODE_CROSSING:
+            graph.crossing_tags[i] = {**way_types.get(osm_id, {}),
+                                      **_crossing_part(node_tags.get(osm_id, {}))}
+            graph.crossing_kerbs[i] = kerbs.get(osm_id, [])
+    is_crossing = (node_flag_arr & NODE_CROSSING) > 0
     stats = {
         "ways_used": len(kept_ways),
         "ways_excluded": excluded,
@@ -350,9 +377,17 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "crossing_nodes_added": sum(1 for r in from_ways if r < 0 and r in index),
         "crossing_approach_segments": approaches,
         "kerbs_lowered": int(np.count_nonzero(node_flag_arr & NODE_KERB)),
+        "kerbs_raised": int(np.count_nonzero(node_flag_arr & NODE_KERB_HIGH)),
+        "crossings_kerb_lowered": int(
+            np.count_nonzero(is_crossing & ((node_flag_arr & NODE_KERB) > 0))
+        ),
+        "crossings_kerb_raised": int(
+            np.count_nonzero(is_crossing & ((node_flag_arr & NODE_KERB_HIGH) > 0))
+        ),
         "crossing_edges": int(np.count_nonzero(edge_flag_arr & EDGE_CROSSING)),
         "steps_edges": int(np.count_nonzero(edge_flag_arr & EDGE_STEPS)),
         "lit_edges": int(np.count_nonzero(edge_flag_arr & EDGE_LIT)),
+        "unlit_edges": int(np.count_nonzero(edge_flag_arr & EDGE_UNLIT)),
         "total_length_km": round(float(graph.edge_len_m.sum()) / 1000, 1),
     }
     return graph, stats
@@ -363,7 +398,7 @@ def _crossings_from_ways(
     node_tags: Mapping[int, Mapping[str, str]],
     node_flags: dict[int, int],
     coords: dict[int, tuple[float, float]],
-) -> set[int]:
+) -> tuple[set[int], dict[int, dict[str, str]]]:
     """Crossing tags of footway=crossing ways onto nodes (updates node_flags in place).
 
     OSM puts crossing=* both on the crossing node and on the crossing way; when the node is
@@ -373,9 +408,11 @@ def _crossings_from_ways(
     - an inner node where the way meets a road with cars becomes a crossing of that type;
     - no such node: the middle node of the way, or a new node (negative id) in the middle
       of a two-node way, inserted into its refs.
-    Returns the nodes that got flags this way."""
+    Returns the nodes that got flags this way and, for every node typed by a way, that way's
+    crossing tags."""
     road_nodes = {r for refs, tags in kept_ways if tags.get("highway") in CAR_ROADS for r in refs}
     changed: set[int] = set()
+    way_types: dict[int, dict[str, str]] = {}
     synthetic = 0
     for refs, tags in kept_ways:
         if tags.get("footway") != "crossing" or not (flags := crossing_flags_of(tags)):
@@ -395,10 +432,36 @@ def _crossings_from_ways(
                 refs.insert(1, synthetic)
                 at = [synthetic]
         for r in at:
+            way_types.setdefault(r, _crossing_part(tags))
             if node_flags.get(r, 0) | flags != node_flags.get(r, 0):
                 node_flags[r] = node_flags.get(r, 0) | flags
                 changed.add(r)
-    return changed
+    return changed, way_types
+
+
+def _crossing_part(tags: Mapping[str, str]) -> dict[str, str]:
+    return {k: tags[k] for k in ("crossing", "crossing:markings") if k in tags}
+
+
+def _kerbs_at_crossings(
+    kept_ways: Sequence[tuple[list[int], Mapping[str, str]]],
+    node_tags: Mapping[int, Mapping[str, str]],
+    node_flags: Mapping[int, int],
+) -> dict[int, list[str]]:
+    """kerb=* values at each crossing node: its own and those on the nodes of the
+    footway=crossing ways through it (OSM puts the kerbs of a crossing there)."""
+    found: dict[int, dict[int, str]] = defaultdict(dict)  # crossing -> {kerb node: kerb}
+    for r, f in node_flags.items():
+        if f & NODE_CROSSING and "kerb" in node_tags.get(r, {}):
+            found[r][r] = node_tags[r]["kerb"]
+    for refs, tags in kept_ways:
+        if tags.get("footway") != "crossing":
+            continue
+        kerbs = {r: node_tags[r]["kerb"] for r in refs if "kerb" in node_tags.get(r, {})}
+        for r in refs:
+            if kerbs and node_flags.get(r, 0) & NODE_CROSSING:
+                found[r].update(kerbs)
+    return {r: list(k.values()) for r, k in found.items()}
 
 
 def _not_shorter_than_straight(

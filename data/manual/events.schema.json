@@ -1,0 +1,329 @@
+{
+  "$defs": {
+    "EventIn": {
+      "additionalProperties": false,
+      "description": "One event as a person writes it in data/manual/events.json.",
+      "properties": {
+        "id": {
+          "description": "латиница, цифры и дефис: opera-tosca-2026-11-01",
+          "pattern": "^[a-z0-9][a-z0-9-]{2,79}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Title"
+            }
+          ],
+          "description": "строка по-русски или {ru, kk, en}",
+          "title": "Title"
+        },
+        "category": {
+          "description": "категория места, как у POI: theatre, museum...",
+          "enum": [
+            "cafe",
+            "restaurant",
+            "fast_food",
+            "bar",
+            "nightlife",
+            "museum",
+            "gallery",
+            "theatre",
+            "cinema",
+            "library",
+            "park",
+            "playground",
+            "viewpoint",
+            "attraction",
+            "monument",
+            "religious",
+            "mall",
+            "sport",
+            "entertainment",
+            "other"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "starts_at": {
+          "description": "ISO с поясом: 2026-11-01T19:00:00+05:00",
+          "format": "date-time",
+          "title": "Starts At",
+          "type": "string"
+        },
+        "ends_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "если известно",
+          "title": "Ends At"
+        },
+        "venue_poi_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "id места из poi.jsonl",
+          "title": "Venue Poi Id"
+        },
+        "geo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GeoPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "точка площадки, если нет id"
+        },
+        "venue": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "название площадки",
+          "title": "Venue"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "tags": {
+          "description": "только из TAG_VOCAB",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/PriceRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "тенге: 0 — бесплатно, 3000 или {min, max}; нет — null",
+          "title": "Price"
+        },
+        "indoor": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Indoor"
+        },
+        "kids_ok": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kids Ok"
+        },
+        "source_url": {
+          "description": "https-страница события у источника",
+          "maxLength": 2048,
+          "title": "Source Url",
+          "type": "string"
+        },
+        "fetched_at": {
+          "description": "когда сверено с источником: 2026-10-20",
+          "format": "date",
+          "title": "Fetched At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "starts_at",
+        "source_url",
+        "fetched_at"
+      ],
+      "title": "EventIn",
+      "type": "object"
+    },
+    "GeoPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Lon",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "GeoPoint",
+      "type": "object"
+    },
+    "PriceRange": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "minimum": 0,
+          "title": "Min",
+          "type": "integer"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max"
+        }
+      },
+      "required": [
+        "min"
+      ],
+      "title": "PriceRange",
+      "type": "object"
+    },
+    "Title": {
+      "additionalProperties": false,
+      "properties": {
+        "ru": {
+          "maxLength": 160,
+          "minLength": 2,
+          "title": "Ru",
+          "type": "string"
+        },
+        "kk": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kk"
+        },
+        "en": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "En"
+        }
+      },
+      "required": [
+        "ru"
+      ],
+      "title": "Title",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "data/manual/events.json as a whole (only for the JSON schema editors check against).",
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "format_version": {
+      "const": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/EventIn"
+      },
+      "title": "Events",
+      "type": "array"
+    }
+  },
+  "required": [
+    "format_version",
+    "events"
+  ],
+  "title": "Qadam: события, внесённые вручную (data/manual/events.json)",
+  "type": "object"
+}

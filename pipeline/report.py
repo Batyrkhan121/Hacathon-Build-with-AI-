@@ -19,11 +19,12 @@ from pathlib import Path
 import h3
 
 from app.config import get_settings
-from app.hours import ASTANA_TZ
+from app.hours import ASTANA_TZ, evaluate_hours
 from app.schemas import POI
 from pipeline.fetch_osm import area_chunks, is_partial
 from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import (
+    WARM_CATEGORIES,
     fetched_date,
     haversine_m,
     load_outlines,
@@ -38,6 +39,8 @@ LANDMARK_POI_IDS = frozenset(f"osm:{ref}" for ref in LANDMARK_OSM.values())
 DENSITY_RES = 7  # ~5 km2 hexagons
 SPARSE_MAX = 3
 LANDMARK_LABEL_M = 2500
+# a weekday noon: only checks that app.hours understands the opening_hours string
+HOURS_PARSE_AT = datetime(2026, 10, 21, 12, 0, tzinfo=ASTANA_TZ)
 
 
 def pct(part: int, total: int) -> str:
@@ -50,6 +53,31 @@ def raw_tags_by_id(payloads: Iterable[Mapping]) -> dict[str, Mapping[str, str]]:
         for el in payload.get("elements", []):
             out.setdefault(f"osm:{el.get('type')}/{el.get('id')}", el.get("tags") or {})
     return out
+
+
+def warm_lines(pois: Sequence[POI]) -> list[str]:
+    """The «в тепле» label: how many such places there are and how many have usable hours."""
+    warm = [p for p in pois if p.category in WARM_CATEGORIES]
+    known = [p for p in warm if p.opening_hours]
+    parsed = [p for p in known
+              if evaluate_hours(p.opening_hours, HOURS_PARSE_AT).status != "unknown"]
+    by_cat = Counter(p.category for p in warm)
+    lines = [
+        "",
+        "## Метка «в тепле»",
+        "ТРЦ, музеи, библиотеки, кафе, театры и кино по категории OSM (`WARM_CATEGORIES` в "
+        f"pipeline/normalize.py), мест: **{len(warm)}**. Часы работы известны у {len(known)} "
+        f"({pct(len(known), len(warm))}), из них ядро (app.hours) разбирает {len(parsed)}: "
+        "только у них карточка может сказать «открыто сейчас». Тег `indoor` шире "
+        f"(мест: {sum(1 for p in pois if p.indoor)}; ещё рестораны, бары, храмы и т. п.).",
+        "",
+        "| Категория | мест | часы известны | разбираются |",
+        "|---|---:|---:|---:|",
+        *(f"| {cat} | {by_cat[cat]} | {sum(1 for p in known if p.category == cat)} | "
+          f"{sum(1 for p in parsed if p.category == cat)} |"
+          for cat in sorted(WARM_CATEGORIES, key=lambda c: -by_cat[c])),
+    ]
+    return lines
 
 
 def nearest_landmark(lat: float, lon: float, landmarks: Sequence[Mapping]) -> str:
@@ -83,11 +111,17 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
         f"{100 * (meta.get('largest_component_share') or 0):.1f}% узлов (остальные отброшены).",
         f"- Переходов: {meta.get('crossings', 0)} (из них нерегулируемых без разметки "
         f"{meta.get('unmarked_crossings', 0)}); светофоров: {meta.get('signals', 0)}; "
-        f"понижённых бордюров: {meta.get('kerbs_lowered', 0)}. Тип перехода взят с линии "
+        f"узлов с понижённым бордюром: {meta.get('kerbs_lowered', 0)}"
+        + (f" (из них переходов {meta['crossings_kerb_lowered']}), с непониженным: "
+           f"{meta.get('kerbs_raised', 0)} (переходов {meta.get('crossings_kerb_raised', 0)})"
+           if "crossings_kerb_lowered" in meta else "")
+        + ". Тип перехода взят с линии "
         f"footway=crossing у {meta.get('crossings_from_way_tags', 0)} узлов (из них "
         f"{meta.get('crossing_nodes_added', 0)} новых, в середине перехода без узла в OSM).",
         f"- Рёбер с лестницами: {meta.get('steps_edges', 0)}; освещённых: "
-        f"{meta.get('lit_edges', 0)}; рёбер-переходов: {meta.get('crossing_edges', 0)}.",
+        f"{meta.get('lit_edges', 0)}"
+        + (f"; неосвещённых (lit=no): {meta['unlit_edges']}" if "unlit_edges" in meta else "")
+        + f"; рёбер-переходов: {meta.get('crossing_edges', 0)}.",
         f"- POI привязано к узлу (≤{meta.get('snap_max_m', 150)} м): "
         f"{meta.get('poi_snapped', 0)} из {meta.get('poi_total', 0)} "
         f"({100 * (meta.get('poi_snapped_share') or 0):.1f}%)"
@@ -119,6 +153,97 @@ def walk_graph_lines(meta: Mapping) -> list[str]:
     return lines
 
 
+LIT_LABELS = {"yes": "освещено (lit=yes)", "no": "не освещено (lit=no)",
+              "unknown": "нет данных об освещении"}
+CROSSING_LABELS = {
+    "signals": "со светофором",
+    "marked": "с разметкой (zebra, marked, uncontrolled, crossing:markings)",
+    "unmarked": "без разметки (unmarked, crossing:markings=no)",
+    "unknown": "тип не указан",
+}
+KERB_LABELS = {
+    "lowered": "занижен (lowered, flush, kerb=no)",
+    "raised": "не занижен хотя бы с одной стороны (raised, rolled)",
+    "unknown": "нет данных",
+}
+
+
+def walk_coverage_lines(cov: Mapping) -> list[str]:
+    """Tag coverage of the walk graph, from data/processed/walk_coverage.json."""
+    def row(label: str, item: Mapping) -> str:
+        return (f"| {label} | {item['km']} | {100 * item['length_share']:.1f}% | "
+                f"{item['edges']} | {100 * item['edges_share']:.1f}% |")
+
+    lit, foot, steps = cov["lit"], cov["lit_footways"], cov["steps"]
+    lines = [
+        "",
+        "## Покрытие тегов OSM по пешеходному графу",
+        f"Считает `python -m pipeline.walk_coverage` по тому же графу (снимок "
+        f"{(cov.get('osm_snapshot') or '—')[:10]}): {cov['nodes']} узлов, {cov['edges']} рёбер, "
+        f"{cov['length_km']} км, из них тротуары и дорожки {cov['footway_length_km']} км.",
+        "",
+        "| Рёбра | км | % длины | рёбер | % рёбер |",
+        "|---|---:|---:|---:|---:|",
+        *(row(LIT_LABELS[k], lit[k]) for k in LIT_LABELS),
+        *(row(f"тротуары и дорожки: {LIT_LABELS[k]}", foot[k]) for k in LIT_LABELS),
+        row("ступени (highway=steps)", steps),
+        "",
+        f"| Переходы: {cov['crossings_total']} узлов | узлов | % |",
+        "|---|---:|---:|",
+        *(f"| {CROSSING_LABELS[k]} | {v['nodes']} | {100 * v['share']:.1f}% |"
+          for k, v in cov["crossings"].items()),
+        *(f"| бордюр: {KERB_LABELS[k]} | {v['nodes']} | {100 * v['share']:.1f}% |"
+          for k, v in cov["kerbs"].items()),
+        "",
+        "Освещённость и бордюр — биты npz (edge 2/32, node 4/16), как их видит маршрут; нет "
+        "бита — «нет данных», а не «да». Бордюр перехода — kerb=* на его узле и на узлах линии "
+        "footway=crossing. Тип перехода «не указан» в npz не отличим от разметки (бит 1 без "
+        f"2 и 8). Ступеней с тегами пандуса (ramp*): {steps['with_ramp_tags']} из "
+        f"{steps['edges']}.",
+    ]
+    if cov.get("same_graph_as_npz") is False:
+        lines.append("**Граф не совпал с walk_graph.npz по числу узлов и рёбер: пересоберите "
+                     "оба из одних и тех же сырых файлов.**")
+    return lines
+
+
+def events_lines(summary: Mapping) -> list[str]:
+    """Hand-added events (pipeline.events): how many passed the check, by source."""
+    bound = summary.get("bound_by") or {}
+    by_source = summary.get("by_source") or {}
+    lines = [
+        "",
+        "## События",
+        "Вносят люди в `data/manual/events.json` (только факты и ссылка на источник из "
+        "`data/manual/event_sources.json`), проверяет и привязывает к POI "
+        "`python -m pipeline.events`, результат — `data/events.json`.",
+        f"- Записей: {summary.get('total', 0)}; прошли проверку: {summary.get('valid', 0)}; "
+        f"предстоящих в data/events.json: {summary.get('upcoming', 0)}; прошедших: "
+        f"{summary.get('past', 0)}; ошибок: {len(summary.get('errors') or [])}.",
+        "- Площадка привязана к POI: по id " f"{bound.get('id', 0)}, по названию "
+        f"{bound.get('name', 0)}, ближайшее место {bound.get('nearest', 0)}; не привязана "
+        f"{bound.get('none', 0)}.",
+        "- По источникам: "
+        + (", ".join(f"{name} — {n}" for name, n in by_source.items()) or "событий пока нет")
+        + ".",
+    ]
+    lines += [f"- Ошибка: {e}" for e in (summary.get("errors") or [])[:10]]
+    return lines
+
+
+def wheelchair_lines(pois: Sequence[POI]) -> list[str]:
+    counts = Counter(p.wheelchair for p in pois)
+    n = len(pois)
+    return [
+        "",
+        "## Доступность (wheelchair у POI)",
+        "| wheelchair | мест | % |",
+        "|---|---:|---:|",
+        *(f"| {value} | {counts[value]} | {100 * counts[value] / n if n else 0:.1f}% |"
+          for value in ("yes", "limited", "no", "unknown")),
+    ]
+
+
 def build_report(
     pois: Sequence[POI],
     payloads: Sequence[Mapping],
@@ -129,10 +254,13 @@ def build_report(
     generated_at: datetime | None = None,
     outlines_meta: Mapping | None = None,
     walk_meta: Mapping | None = None,
+    walk_coverage: Mapping | None = None,
+    events: Mapping | None = None,
 ) -> str:
     """`missing_chunks`: city tiles not on disk; None when the build is not the whole city.
     `outlines_meta`: the `qadam` block of data/raw/osm_mall_outlines.json, if any.
-    `walk_meta`: data/processed/walk_graph_meta.json, if the graph is built."""
+    `walk_meta`, `walk_coverage`: data/processed/walk_graph_meta.json, walk_coverage.json.
+    `events`: the summary of pipeline.events (data/manual/events.json), if checked."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
     now = generated_at or datetime.now(ASTANA_TZ)
@@ -229,6 +357,9 @@ def build_report(
         ),
     ]
 
+    lines += warm_lines(pois)
+    lines += wheelchair_lines(pois)
+
     desc_sources = Counter(p.description_source or "нет" for p in pois)
     with_wikidata = sum(1 for p in pois if "wikidata" in tags_by_id.get(p.id, {}))
     lines += [
@@ -295,6 +426,10 @@ def build_report(
 
     if walk_meta:
         lines += walk_graph_lines(walk_meta)
+    if walk_coverage:
+        lines += walk_coverage_lines(walk_coverage)
+    if events:
+        lines += events_lines(events)
 
     examples = sorted(pois, key=lambda p: (-p.data_confidence, -p.popularity, p.id))[:5]
     lines += ["", "## Примеры записей", "```json"]
@@ -311,6 +446,7 @@ def missing_astana_chunks(raw_dir: Path) -> list[str]:
 
 
 def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) -> Path:
+    from pipeline import events
     from pipeline.build_index import index_status
 
     settings = get_settings()
@@ -323,12 +459,16 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
     all_notes = [*notes, index_status(settings.index_dir, pois)]
     out = out or settings.poi_path.parent / "REPORT.md"
     outlines = load_outlines(raw_dir) if area != "fixture" else None
-    walk_meta_path = settings.poi_path.parent / "walk_graph_meta.json"
-    walk_meta = (json.loads(walk_meta_path.read_text(encoding="utf-8"))
-                 if area == "astana" and walk_meta_path.exists() else None)
+    def processed(name: str) -> dict | None:
+        path = settings.poi_path.parent / name
+        return (json.loads(path.read_text(encoding="utf-8"))
+                if area == "astana" and path.exists() else None)
+
     text = build_report(
         pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
-        outlines_meta=(outlines or {}).get("qadam"), walk_meta=walk_meta,
+        outlines_meta=(outlines or {}).get("qadam"), walk_meta=processed("walk_graph_meta.json"),
+        walk_coverage=processed("walk_coverage.json"),
+        events=events.check_files().summary() if area == "astana" else None,
     )
     out.write_text(text, encoding="utf-8")
     return out
