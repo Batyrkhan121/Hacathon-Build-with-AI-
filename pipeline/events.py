@@ -188,6 +188,7 @@ class CheckResult:
     past: int = 0
     bound_by: Counter = field(default_factory=Counter)  # id / name / nearest / none
     by_source: Counter = field(default_factory=Counter)
+    readable: bool = True  # False: a manual file is not valid JSON -> keep data/events.json
 
     def summary(self) -> dict:
         return {
@@ -367,8 +368,14 @@ def check(
     return res
 
 
-def _load_json(path: Path, default: object) -> object:
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+def _load_json(path: Path, default: object) -> tuple[object, str | None]:
+    """(data, None), or (None, why) when the file is not readable JSON."""
+    if not path.exists():
+        return default, None
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, f"{path.name}: не читается как JSON ({exc})"
 
 
 def check_files(now: datetime | None = None) -> CheckResult:
@@ -376,12 +383,14 @@ def check_files(now: datetime | None = None) -> CheckResult:
     manual = settings.data_dir / "manual"
     with settings.poi_path.open(encoding="utf-8") as fh:
         pois = [POI.model_validate_json(line) for line in fh if line.strip()]
-    return check(
-        _load_json(manual / "events.json", {"format_version": FORMAT_VERSION, "events": []}),
-        pois,
-        _load_json(manual / "event_sources.json", {"format_version": 1, "sources": []}),
-        now or datetime.now(ASTANA_TZ),
-    )
+    raw, raw_error = _load_json(
+        manual / "events.json", {"format_version": FORMAT_VERSION, "events": []})
+    sources, sources_error = _load_json(
+        manual / "event_sources.json", {"format_version": 1, "sources": []})
+    unreadable = [e for e in (raw_error, sources_error) if e]
+    if unreadable:
+        return CheckResult(errors=unreadable, readable=False)
+    return check(raw, pois, sources, now or datetime.now(ASTANA_TZ))
 
 
 def write_events(events: Sequence[Mapping], path: Path) -> None:
@@ -390,9 +399,11 @@ def write_events(events: Sequence[Mapping], path: Path) -> None:
 
 
 def run(now: datetime | None = None) -> CheckResult:
-    """Check and write data/events.json (only the valid upcoming events)."""
+    """Check and write data/events.json (only the valid upcoming events). A manual file that
+    is not JSON at all leaves the published data/events.json as it was."""
     res = check_files(now)
-    write_events(res.events, get_settings().data_dir / "events.json")
+    if res.readable:
+        write_events(res.events, get_settings().data_dir / "events.json")
     return res
 
 

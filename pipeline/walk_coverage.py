@@ -5,9 +5,9 @@
 The graph is built from the same raw files the same way as data/processed/walk_graph.npz
 (the counts are checked against walk_graph_meta.json), and lighting and kerbs are read from
 the same npz bits a reader sees (edge 2 lit=yes, 32 lit=no; node 4 lowered kerb, 16 kerb not
-lowered), so the shares here are what the route can report. Edges are counted by length and
-by number, crossings and their kerbs by number of crossing nodes. The crossing type also
-tells "type not in OSM" apart, which the npz bits do not.
+lowered; crossing 2 signals, 8 unmarked, 32 marked), so the shares here are what the route
+can report. Edges are counted by length and by number, crossings and their kerbs by number
+of crossing nodes.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -31,15 +31,13 @@ from pipeline.walk_graph import (
     EDGE_UNLIT,
     NODE_KERB,
     NODE_KERB_HIGH,
+    NODE_MARKED,
     NODE_SIGNALS,
     NODE_UNMARKED,
     WalkGraph,
     build_graph,
     walk_files,
 )
-
-# crossing=uncontrolled is a marked crossing without lights (iD writes it for a zebra)
-MARKED = frozenset({"marked", "zebra", "uncontrolled"})
 
 LIT_CLASSES = ("yes", "no", "unknown")
 CROSSING_CLASSES = ("signals", "marked", "unmarked", "unknown")
@@ -53,16 +51,13 @@ def lit_class(edge_flags: int) -> str:
     return "no" if edge_flags & EDGE_UNLIT else "unknown"
 
 
-def crossing_class(flags: int, tags: Mapping[str, str]) -> str:
-    """Signals first; markings from crossing=* or crossing:markings=* (any value but "no")."""
+def crossing_class(flags: int) -> str:
+    """The reader's rule: bit 2 signals, else 8 unmarked, else 32 marked, else unknown."""
     if flags & NODE_SIGNALS:
         return "signals"
     if flags & NODE_UNMARKED:
         return "unmarked"
-    markings = tags.get("crossing:markings")
-    if tags.get("crossing") in MARKED or (markings is not None and markings != "no"):
-        return "marked"
-    return "unknown"
+    return "marked" if flags & NODE_MARKED else "unknown"
 
 
 def kerb_class(node_flags: int) -> str:
@@ -126,8 +121,7 @@ def measure(graph: WalkGraph) -> dict:
         },
         "crossings_total": len(crossings),
         "crossings": _by_count(
-            [crossing_class(int(graph.node_flags[i]), graph.crossing_tags[i])
-             for i in crossings], CROSSING_CLASSES),
+            [crossing_class(int(graph.node_flags[i])) for i in crossings], CROSSING_CLASSES),
         "kerbs": _by_count(kerbs, KERB_CLASSES),
         "lit_values": dict(Counter(t["lit"] for t in graph.edge_tags if "lit" in t)
                            .most_common()),

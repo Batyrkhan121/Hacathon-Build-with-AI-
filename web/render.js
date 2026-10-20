@@ -215,6 +215,7 @@ export function renderAnswer(root, answer, ctx) {
     noAi ? h('span', { class: 'pill pill-noai', text: t('answer.noAi') }) : null,
   );
 
+  const warm = renderWarmOffer(answer, ctx);
   const warnings = answer.warnings?.length
     ? h(
         'ul',
@@ -229,7 +230,9 @@ export function renderAnswer(root, answer, ctx) {
         h(
           'ol',
           { class: 'cards' },
-          answer.cards.map((c) => renderCard(c, when, { ...ctx, origin: answer.context?.origin })),
+          answer.cards.map((c) =>
+            renderCard(c, when, { ...ctx, origin: answer.context?.origin, nowIso: answer.context?.local_time }),
+          ),
         ),
       ]
     : [renderEmpty(ctx)];
@@ -239,11 +242,144 @@ export function renderAnswer(root, answer, ctx) {
       'article',
       { class: 'answer', lang: answer.lang || null },
       head,
+      warm,
       warnings,
       body,
+      renderRefineChips(answer, ctx),
       renderDataUsed(answer, ctx),
       answer.disclaimer ? h('p', { class: 'disclaimer', text: answer.disclaimer }) : null,
     ),
+  );
+}
+
+// 1.3.0, «в тепле»: при морозе — плашка-предложение повторить запрос с меткой warm (разово, без сохранения).
+// Температура и «гулять ок» — из answer.context.weather (может быть null — тогда плашки нет).
+const FROST_C = -10;
+
+function isFrost(weather) {
+  if (!weather || typeof weather.temp_c !== 'number') return false;
+  return weather.temp_c <= FROST_C || (weather.temp_c < 0 && weather.outdoor_ok === false);
+}
+
+function renderWarmOffer(answer, ctx) {
+  const weather = answer.context?.weather;
+  if (!isFrost(weather) || !ctx.onWarm) return null;
+  const req = ctx.request || {};
+  if (req.prefs?.likes?.includes('warm') || req.overrides?.indoor_only) return null; // уже «в тепле»
+  const temp = `${weather.temp_c > 0 ? '+' : weather.temp_c < 0 ? '−' : ''}${Math.abs(Math.round(weather.temp_c))}${' '}°C`;
+  const leg = answer.route?.max_outdoor_leg_min;
+  return h(
+    'div',
+    { class: 'warm-offer', role: 'note' },
+    h('p', { class: 'warm-offer-text', text: t('warm.offer', { temp }) }),
+    leg ? h('p', { class: 'warm-offer-leg', text: t('warm.leg', { min: leg }) }) : null,
+    h('button', { type: 'button', class: 'btn btn-primary warm-offer-btn', onclick: ctx.onWarm }, t('warm.btn')),
+  );
+}
+
+// 1.3.0, событие: «сегодня в 19:00–21:00», площадка (address), кнопка «Источник» (source_url, только https).
+// «Идёт сейчас» — только при starts_at ≤ сейчас < ends_at; «сейчас» — момент запроса (context.local_time).
+// Часы работы у события не показываем: вместо них — время события.
+function localParts(iso) {
+  // ISO с +05:00: дата и время Астаны берём прямо из строки, без пересчёта часовых поясов
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+
+function dayDiff(dateA, dateB) {
+  return Math.round((Date.parse(`${dateA}T00:00:00Z`) - Date.parse(`${dateB}T00:00:00Z`)) / 86400000);
+}
+
+function eventWhen(card, nowIso) {
+  const start = localParts(card.starts_at);
+  const end = card.ends_at ? localParts(card.ends_at) : null;
+  const span = end && end.date === start.date ? `${start.time}–${end.time}` : start.time;
+  const diff = nowIso ? dayDiff(start.date, localParts(nowIso).date) : null;
+  if (diff === 0) return t('event.today', { time: span });
+  if (diff === 1) return t('event.tomorrow', { time: span });
+  const [, m, d] = start.date.split('-');
+  return t('event.onDate', { date: `${d}.${m}`, time: span });
+}
+
+function eventIsNow(card, nowIso) {
+  if (!nowIso || !card.ends_at) return false;
+  const now = Date.parse(nowIso);
+  return Date.parse(card.starts_at) <= now && now < Date.parse(card.ends_at);
+}
+
+function httpsOnly(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderEventBlock(card, ctx) {
+  const src = card.source_url ? httpsOnly(card.source_url) : null;
+  return h(
+    'div',
+    { class: 'event-block' },
+    h(
+      'p',
+      { class: 'event-when' },
+      h('span', { class: 'event-badge', text: t('event.badge') }),
+      h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
+      eventIsNow(card, ctx.nowIso) ? h('span', { class: 'event-now', text: t('event.now') }) : null,
+    ),
+    card.address ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.address }) }) : null,
+    src
+      ? h(
+          'a',
+          {
+            class: 'btn btn-ghost event-source',
+            href: src,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            'aria-label': t('event.sourceAria', { title: cardTitle(card) }),
+          },
+          t('event.source'),
+        )
+      : null,
+  );
+}
+
+// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min, «без кафе» → prefs.avoids coffee.
+// Это разовый повтор запроса, без сохранения. «Ещё» (исключить показанные места) в 1.3.0 не выражается.
+function renderRefineChips(answer, ctx) {
+  if (!answer.cards.length || !ctx.onCloser) return null;
+  const req = ctx.request || {};
+  const maxWalk = Math.max(...answer.cards.map((c) => c.walk_min || 0));
+  const closer = Math.max(5, Math.round(maxWalk * 0.6));
+  const chips = [];
+  if (maxWalk > 5 && closer < maxWalk) {
+    chips.push(
+      h('button', { type: 'button', class: 'chip', onclick: () => ctx.onCloser(closer) }, t('refineChip.closer')),
+    );
+  }
+  if (!req.prefs?.avoids?.includes('coffee')) {
+    chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
+  }
+  if (!chips.length) return null;
+  return h(
+    'div',
+    { class: 'refine-chips', role: 'group', 'aria-label': t('refineChip.aria') },
+    h('span', { class: 'refine-chips-label', text: t('refineChip.label') }),
+    chips,
+  );
+}
+
+// Тёплая остановка — тег indoor у карточки (нового поля в 1.3.0 нет)
+export function isWarmStop(card) {
+  return Array.isArray(card.tags) && card.tags.includes('indoor');
+}
+
+function warmMark() {
+  return h(
+    'span',
+    { class: 'warm-mark', title: t('warm.mark') },
+    h('span', { class: 'warm-icon', 'aria-hidden': 'true' }),
+    h('span', { class: 'visually-hidden', text: t('warm.mark') }),
   );
 }
 
@@ -267,7 +403,7 @@ function renderEmpty(ctx) {
   );
 }
 
-const CROSSING_KINDS = ['signals', 'marked', 'unmarked']; // schemas 1.1.0 CrossingKind
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked', 'unknown']; // schemas 1.3.0 CrossingKind
 
 // Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
 // + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
@@ -285,22 +421,75 @@ function renderGraphSummary(route, ctx) {
       })
     : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
   const steps = route.steps_count || 0;
-  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
-  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
-  const stepsText = steps
-    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
-    : t('route.noSteps');
+  // 1.3.0: ступени уходят в строку профиля маршрута (renderProfileLine), здесь только тротуары и переходы
+  const withSteps = !hasProfileFacts(route);
   // line — в заголовке свёрнутого маршрута (итог виден без раскрытия), caveat — внутри
   return {
     line: h(
       'span',
       { class: 'route-graph-line' },
       base,
-      ' · ',
-      h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
+      withSteps ? ' · ' : null,
+      withSteps
+        ? h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText(route, ctx) })
+        : null,
     ),
     caveat: h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
   };
+}
+
+function stepsText(route, ctx) {
+  const steps = route.steps_count || 0;
+  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
+  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
+  return steps
+    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
+    : t('route.noSteps');
+}
+
+// В note сервер пишет о прямых отрезках («часть отрезков по прямой», «профиль не учтён: отрезки прямые»).
+// На прямых участках ступени и бордюры не проверены — «без ступенек» тогда не пишем.
+const STRAIGHT_NOTE = /прям|түзу|straight/i;
+
+// 1.3.0: у маршрута есть факты профиля (доли освещённости, бордюры)
+function hasProfileFacts(route) {
+  return route.lit_share != null || route.kerb_lowered != null;
+}
+
+const pct = (x) => Math.round((x || 0) * 100);
+
+// 1.3.0, итог маршрута одной строкой без точек-разделителей: «без ступенек, освещено 78 % по данным OSM,
+// нет данных 15 %». Все числа — из ответа (их считает код на сервере). «Без ступенек» — только по графу
+// и при нуле ступеней; у прямых отрезков ступени и освещённость неизвестны — так и пишем.
+function renderProfileLine(route, ctx) {
+  const asked = ctx.request?.route_profile;
+  if (!hasProfileFacts(route) && !(asked && asked !== 'fastest')) return null;
+  const graph = route.path_source === 'graph';
+  const partlyStraight = STRAIGHT_NOTE.test(route.note || '');
+  const parts = [];
+  // Показываем фактический профиль (route.profile), а не выбранный в переключателе
+  if (asked && route.profile && asked !== route.profile) {
+    parts.push(t('route.profileFallback', { asked: t(`profile.${asked}`), actual: t(`profile.${route.profile}`) }));
+  }
+  if (graph && route.steps_count === 0 && !partlyStraight) parts.push(t('route.stepFree'));
+  else if (graph && route.steps_count > 0) parts.push(stepsText(route, ctx));
+  if (route.lit_share != null) {
+    if (!graph || (route.unknown_lit_share ?? 1) >= 0.995) {
+      parts.push(t('route.litNoData'));
+    } else {
+      parts.push(t('route.litShare', { lit: pct(route.lit_share) }));
+      if (pct(route.unknown_lit_share) > 0) parts.push(t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }));
+    }
+  }
+  // Бордюры — только из kerb_lowered / kerb_unknown (по всему пути); из обрезанного списка crossings не считаем
+  if (graph && route.profile === 'accessible' && route.kerb_lowered != null) {
+    if (route.kerb_lowered > 0) parts.push(t('route.kerbs', { n: route.kerb_lowered }));
+    if (route.kerb_unknown) parts.push(t('route.kerbsUnknown', { n: route.kerb_unknown }));
+  }
+  if (!parts.length) return null;
+  const text = parts.join(', ');
+  const warn = graph && route.steps_count > 0;
+  return h('span', { class: warn ? 'route-profile-line is-warn' : 'route-profile-line', text: text[0].toUpperCase() + text.slice(1) });
 }
 
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
@@ -329,6 +518,7 @@ function renderRoute(route, byId, ctx, originName) {
             { class: 'tl-name' },
             h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
             h('strong', { text: cardTitle(card) }),
+            isWarmStop(card) ? warmMark() : null,
             h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
           ),
         ),
@@ -359,6 +549,7 @@ function renderRoute(route, byId, ctx, originName) {
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
       graph ? graph.line : null,
+      renderProfileLine(route, ctx),
       route.fits_budget === false ? h('span', { class: 'route-over', text: t('route.overBudget') }) : null,
     ),
     h('ol', { class: 'timeline' }, items),
@@ -378,6 +569,7 @@ function renderCard(card, when, ctx) {
   const pct = Math.round((card.data_confidence ?? 0) * 100);
   const site = card.website ? safeUrl(card.website) : null;
   const unnamed = isUnnamed(card);
+  const isEvent = card.kind === 'event';
 
   const li = h(
     'li',
@@ -394,6 +586,7 @@ function renderCard(card, when, ctx) {
           { class: 'card-title' },
           h('span', { class: 'visually-hidden', text: `${card.rank}. ` }),
           cardTitle(card),
+          isWarmStop(card) ? warmMark() : null,
         ),
         h(
           'p',
@@ -412,9 +605,10 @@ function renderCard(card, when, ctx) {
       h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
       h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
       // v2.1: статус часов — в строке фактов (тот же текст и та же логика, что у бейджа; бейдж скрыт в v2)
-      h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
+      isEvent ? null : h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
     ),
-    card.address ? h('p', { class: 'card-address', text: card.address }) : null,
+    isEvent ? renderEventBlock(card, ctx) : null,
+    card.address && !isEvent ? h('p', { class: 'card-address', text: card.address }) : null,
     h(
       'div',
       { class: 'badges' },
@@ -423,9 +617,9 @@ function renderCard(card, when, ctx) {
         title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
         text: poi ? t('badge.poi') : t('badge.ai'),
       }),
-      h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
+      isEvent ? null : h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
     ),
-    h('p', { class: `hours-note is-${badge.cls}`, text: card.open_note || t('hours.noData') }),
+    isEvent ? null : h('p', { class: `hours-note is-${badge.cls}`, text: card.open_note || t('hours.noData') }),
     poi ? null : h('p', { class: 'ai-note', text: t('badge.aiTitle') }),
     h(
       'dl',

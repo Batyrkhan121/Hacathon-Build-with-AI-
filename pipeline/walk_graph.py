@@ -14,7 +14,8 @@ within 150 m.
 Format = the DATA -> FEATURES contract, docs/ARCHITECTURE.md section 5:
 walk_graph.npz (np.savez_compressed), node number = row in the node arrays:
   node_lat, node_lon float32[N]; node_flags uint8[N] (1 crossing, 2 traffic signals,
-  4 lowered kerb, 8 unmarked crossing, 16 kerb known and not lowered; wave 8)
+  4 lowered kerb, 8 unmarked crossing, 16 kerb known and not lowered, 32 markings known;
+  wave 8)
   edge_u, edge_v int32[E]: undirected, every edge once, u != v; edge_len_m float32[E] along
   the OSM line, never shorter than the straight line between the stored (float32) ends;
   edge_flags uint8[E] (1 steps, 2 lit=yes, 4 footway, 8 major road, 16 crossing,
@@ -24,7 +25,9 @@ where it meets a road with cars, or (no such node) to its middle node, a new one
 two-node way; bit 16 stays only on segments ending at a crossing node, so a crossing
 segment always has its crossing node at one end. A crossing node also carries the kerbs of
 its crossing way (OSM maps them on the way's nodes): 16 if any side is not lowered, else 4
-if every known side is lowered.
+if every known side is lowered; and 32 when its own or its way's tags say it is marked
+(crossing=marked|zebra|uncontrolled, crossing:markings other than "no"). A crossing without
+2, 8 and 32 is of unknown type, not a zebra.
 walk_graph_meta.json: osm_snapshot, bbox [south, west, north, east], nodes, edges,
   crossings, signals, largest_component_share, poi_nodes {poi_id: node},
   landmark_nodes {landmark_id: node}, created_at (+ reference counters and flag legend).
@@ -78,16 +81,21 @@ CROSSING_TYPES = frozenset({"traffic_signals", "marked", "zebra", "uncontrolled"
 CAR_ROADS = frozenset(
     {"residential", "service", "unclassified", "tertiary", "secondary", "primary"}
 )
-KERB_LOW = frozenset({"lowered", "flush", "no"})  # kerb=no: no kerb at all
-KERB_HIGH = frozenset({"raised", "rolled", "regular", "normal"})  # kerb=yes: height unknown
+# kerb=no: no kerb at all. kerb=yes only says a kerb is there, not its height: no bit
+KERB_LOW = frozenset({"lowered", "flush", "no"})
+KERB_HIGH = frozenset({"raised", "rolled"})
+# crossing=uncontrolled is a marked crossing without lights (iD writes it for a zebra)
+MARKED_TYPES = frozenset({"marked", "zebra", "uncontrolled"})
 # foot=* overrides access=* for pedestrians: access=private + foot=yes is walkable
 FOOT_ALLOWED = frozenset({"yes", "designated", "permissive"})
 
 NODE_CROSSING, NODE_SIGNALS, NODE_KERB, NODE_UNMARKED, NODE_KERB_HIGH = 1, 2, 4, 8, 16
+NODE_MARKED = 32
 EDGE_STEPS, EDGE_LIT, EDGE_FOOTWAY, EDGE_MAJOR, EDGE_CROSSING, EDGE_UNLIT = 1, 2, 4, 8, 16, 32
 NODE_FLAGS = {
     "crossing": NODE_CROSSING, "traffic_signals": NODE_SIGNALS, "kerb_lowered": NODE_KERB,
     "unmarked_crossing": NODE_UNMARKED, "kerb_raised": NODE_KERB_HIGH,
+    "markings_known": NODE_MARKED,
 }
 EDGE_FLAGS = {
     "steps": EDGE_STEPS, "lit": EDGE_LIT, "footway": EDGE_FOOTWAY, "major_road": EDGE_MAJOR,
@@ -290,6 +298,12 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
             node_flags[r] = (node_flags[r] | NODE_KERB_HIGH) & ~NODE_KERB
         elif any(k in KERB_LOW for k in values):
             node_flags[r] |= NODE_KERB
+    for r, f in node_flags.items():
+        # an unmarked crossing (bit 8, from the node or its way) never gets 32: "no" wins
+        if f & NODE_CROSSING and not f & NODE_UNMARKED and markings_known(
+            {**way_types.get(r, {}), **_crossing_part(node_tags.get(r, {}))}
+        ):
+            node_flags[r] |= NODE_MARKED
     keep: set[int] = {r for r, c in uses.items() if c > 1}
     keep |= {r for r, f in node_flags.items() if f}
     for refs, _ in kept_ways:
@@ -384,6 +398,13 @@ def build_graph(payloads: Iterable[Mapping]) -> tuple[WalkGraph, dict]:
         "crossings_kerb_raised": int(
             np.count_nonzero(is_crossing & ((node_flag_arr & NODE_KERB_HIGH) > 0))
         ),
+        "crossings_marked": int(
+            np.count_nonzero(is_crossing & ((node_flag_arr & NODE_MARKED) > 0))
+        ),
+        # of them with lights: the reader shows those as "signals", not "marked"
+        "crossings_marked_signals": int(np.count_nonzero(
+            is_crossing & ((node_flag_arr & NODE_MARKED) > 0) & ((node_flag_arr & NODE_SIGNALS) > 0)
+        )),
         "crossing_edges": int(np.count_nonzero(edge_flag_arr & EDGE_CROSSING)),
         "steps_edges": int(np.count_nonzero(edge_flag_arr & EDGE_STEPS)),
         "lit_edges": int(np.count_nonzero(edge_flag_arr & EDGE_LIT)),
@@ -437,6 +458,15 @@ def _crossings_from_ways(
                 node_flags[r] = node_flags.get(r, 0) | flags
                 changed.add(r)
     return changed, way_types
+
+
+def markings_known(tags: Mapping[str, str]) -> bool:
+    """Any crossing:markings=* but "no" (it wins: uncontrolled + markings=no is unmarked),
+    else crossing=marked|zebra|uncontrolled."""
+    markings = tags.get("crossing:markings")
+    if markings is not None:
+        return markings != "no"
+    return tags.get("crossing") in MARKED_TYPES
 
 
 def _crossing_part(tags: Mapping[str, str]) -> dict[str, str]:
@@ -535,6 +565,16 @@ def snap_points(
 # ------------------------------------------------------------------------- save
 
 
+def check_flag_rules(node_flags: np.ndarray) -> None:
+    """Contract pairs that never meet on one node (ARCHITECTURE section 5): 8 and 32 (unmarked
+    and marked), 4 and 16 (kerb lowered and not). Raises before anything is written."""
+    for a, b, what in ((NODE_UNMARKED, NODE_MARKED, "8 and 32"),
+                       (NODE_KERB, NODE_KERB_HIGH, "4 and 16")):
+        both = int(np.count_nonzero(((node_flags & a) > 0) & ((node_flags & b) > 0)))
+        if both:
+            raise ValueError(f"{both} nodes carry node bits {what} together")
+
+
 def save_graph(
     graph: WalkGraph,
     poi_snaps: Mapping[str, tuple[int, float]],
@@ -548,6 +588,7 @@ def save_graph(
     osm_snapshot: str,
     extra_meta: Mapping | None = None,
 ) -> dict:
+    check_flag_rules(graph.node_flags)
     npz_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = npz_path.with_suffix(".tmp.npz")
     np.savez_compressed(tmp, **{key: getattr(graph, key) for key in NPZ_KEYS})

@@ -531,3 +531,37 @@ def test_crossing_of_unknown_type_reaches_the_answer(tmp_path) -> None:  # type:
     g = load_graph(write_graph(tmp_path, nodes, [("S", "C", CROSS_SEG), ("C", "N", CROSS_SEG)]))
     r = plan_route(at(0, -1), [cand_at("n", at(0, 31))], None, {}, graph=g)
     assert r is not None and [c.kind for c in r.crossings] == ["unknown"]
+
+
+STEPS_UNCHECKED = {
+    "ru": "На прямых отрезках ступени не проверены.",
+    "kk": "Түзу кесінділерде баспалдақ тексерілмеген.",
+    "en": "Steps are not checked on the straight segments.",
+}
+PARTLY_STRAIGHT = {
+    "ru": "Часть отрезков посчитана по прямой × 1,3.",
+    "kk": "Кейбір кесінділер түзу сызықпен × 1,3 есептелген.",
+    "en": "Some segments are straight lines × 1.3.",
+}
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_accessible_route_with_straight_segments_says_steps_are_not_checked(
+    tmp_path, lang
+) -> None:  # type: ignore[no-untyped-def]
+    """steps_count sees only the graph legs: a step-free claim needs every leg on the graph."""
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    near, north = cand_at("near", at(2, -3)), cand_at("north", at(0, 35))
+    visits = {"test:poi/near": 10, "test:poi/north": 10}
+    note = route_note(lang, graph=True)
+    r = plan_route(at(0, -5), [near, north], None, visits, graph=g, lang=lang, graph_note=note,
+                   profile="accessible")
+    assert r is not None and r.path_source == "graph" and r.profile == "accessible"
+    assert r.legs[0].distance_m <= 4  # the straight leg
+    assert r.note == f"{note} {PARTLY_STRAIGHT[lang]} {STEPS_UNCHECKED[lang]}"
+    fastest = plan_route(at(0, -5), [near, north], None, visits, graph=g, lang=lang,
+                         graph_note=note)
+    assert fastest is not None and fastest.note == f"{note} {PARTLY_STRAIGHT[lang]}"
+    whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g, lang=lang,
+                       graph_note=note, profile="accessible")
+    assert whole is not None and whole.note == note  # every leg on the graph
