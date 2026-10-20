@@ -126,3 +126,30 @@ def test_skip_index_keeps_a_known_stale_reason(tmp_data: Path) -> None:
     run("zones", skip_fetch=True, skip_enrich=True, skip_index=True)
     meta = _json.loads((index / "meta.json").read_text(encoding="utf-8"))
     assert meta["stale_reason"] == "дневная квота Gemini исчерпана"
+
+
+def test_broken_events_file_is_logged_and_the_build_goes_on(
+    tmp_data: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import pipeline.events
+    from pipeline.run_all import run
+
+    (tmp_data / "manual").mkdir()
+    (tmp_data / "manual" / "events.json").write_text('{"events": [', encoding="utf-8")
+    published = tmp_data / "events.json"
+    published.write_text('[{"id": "event:kept"}]\n', encoding="utf-8")
+    with caplog.at_level("ERROR", logger="pipeline.run_all"):
+        run("zones", skip_fetch=True, skip_enrich=True)
+    assert (tmp_data / "processed" / "poi.jsonl").exists()
+    assert "events.json: не читается как JSON" in caplog.text
+    assert published.read_text(encoding="utf-8") == '[{"id": "event:kept"}]\n'  # not wiped
+
+    def crash(now=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(pipeline.events, "run", crash)
+    caplog.clear()
+    with caplog.at_level("ERROR", logger="pipeline.run_all"):
+        run("zones", skip_fetch=True, skip_enrich=True)
+    assert "the check failed" in caplog.text
+    assert (tmp_data / "processed" / "REPORT.md").exists()

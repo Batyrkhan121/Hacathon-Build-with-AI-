@@ -19,6 +19,8 @@ from pipeline.walk_graph import (
     EDGE_STEPS,
     NODE_CROSSING,
     NODE_KERB,
+    NODE_KERB_HIGH,
+    NODE_MARKED,
     NODE_SIGNALS,
     NODE_UNMARKED,
     NPZ_KEYS,
@@ -104,7 +106,9 @@ def test_split_compress_largest_component_and_single_edges(built) -> None:
 def test_node_and_edge_flags(built) -> None:
     graph, stats = built
     flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
-    assert flags[3] == NODE_CROSSING and flags[4] == NODE_SIGNALS and flags[5] == NODE_KERB
+    # node 3: crossing=zebra -> markings known (bit 32, wave 8)
+    assert flags[3] == NODE_CROSSING | NODE_MARKED and flags[4] == NODE_SIGNALS
+    assert flags[5] == NODE_KERB
     # node 6 also takes the lowered kerb of its crossing way 5-6 (wave 8)
     assert flags[6] == NODE_CROSSING | NODE_UNMARKED | NODE_KERB and flags[1] == 0
 
@@ -271,7 +275,9 @@ def test_new_middle_node_approach_segments_and_second_carriageway() -> None:
     k = ids.index(new[0])
     assert graph.node_lat[k] == pytest.approx(LAT0 + DLAT, abs=1e-6)  # between 81 and 83
     assert stats["crossing_nodes_added"] == 1
-    assert flags[95] == NODE_CROSSING and flags[94] == NODE_CROSSING and flags[91] == 0
+    # crossing=uncontrolled on 94 and on the way to road node 95: marked
+    marked = NODE_CROSSING | NODE_MARKED
+    assert flags[95] == marked and flags[94] == marked and flags[91] == 0
     assert graph.edge_flags[edge_index(graph, 91, 92)] == EDGE_FOOTWAY
     assert graph.edge_flags[edge_index(graph, 90, 91)] == EDGE_FOOTWAY | EDGE_CROSSING
     assert stats["crossing_approach_segments"] == 1
@@ -314,3 +320,37 @@ def test_foot_yes_overrides_access_private() -> None:
     assert not walkable({"highway": "footway", "foot": "no"})
     q = walk_query("51.03,71.35,51.11,71.5")
     assert '["access"="private"]["foot"~"^(designated|permissive|yes)$"]' in q
+
+
+@pytest.mark.parametrize(("node_tags", "way_tags"), [
+    # node says markings, its crossing way says unmarked
+    ({"highway": "crossing", "crossing:markings": "yes"}, {"crossing": "unmarked"}),
+    # node says zebra, its way says no markings: "no" wins
+    ({"highway": "crossing", "crossing:markings": "zebra"}, {"crossing:markings": "no"}),
+    # the node contradicts itself
+    ({"highway": "crossing", "crossing": "unmarked", "crossing:markings": "yes"}, {}),
+])
+def test_unmarked_crossing_never_gets_the_markings_bit(node_tags: dict, way_tags: dict) -> None:
+    payload = {"osm3s": {"timestamp_osm_base": "2026-10-19T08:00:00Z"}, "elements": [
+        n(1, 0, 0), n(2, 0, 1, **node_tags), n(3, 0, 2), n(4, -1, 1), n(5, 1, 1),
+        w(400, [1, 2, 3], highway="residential"),
+        w(401, [4, 2, 5], highway="footway", footway="crossing", **way_tags),
+    ]}
+    graph, stats = build_graph([payload])
+    flags = dict(zip(graph.node_osm_id.tolist(), graph.node_flags.tolist(), strict=True))
+    assert flags[2] == NODE_CROSSING | NODE_UNMARKED
+    assert stats["crossings_marked"] == 0
+
+
+def test_save_refuses_contradicting_node_bits(built, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    graph, stats = built
+    for bad in (NODE_CROSSING | NODE_UNMARKED | NODE_MARKED, NODE_KERB | NODE_KERB_HIGH):
+        flags = graph.node_flags.copy()
+        flags[0] = bad
+        with pytest.raises(ValueError, match="together"):
+            save_graph(replace(graph, node_flags=flags), {}, {}, stats, tmp_path / "g.npz",
+                       tmp_path / "m.json", poi_total=0, landmark_total=0,
+                       osm_snapshot="2026-10-19")
+        assert not list(tmp_path.iterdir())  # nothing written
