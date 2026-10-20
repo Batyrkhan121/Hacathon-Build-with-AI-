@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.geo import haversine_m, walk_minutes
 from app.route import plan_route, plan_walk, route_note, walk_visit_minutes
 from app.schemas import POI, Candidate, GeoPoint, HoursVerdict
@@ -258,7 +260,7 @@ def test_plan_walk_respects_budget_and_diversity() -> None:
 
 # ------------------------------------------------ T91: route on the walk graph
 
-from app.walkgraph import Mode, load_graph  # noqa: E402
+from app.walkgraph import WALK, Mode, load_graph  # noqa: E402
 
 from .test_walkgraph import STREET, STREET_EDGES, at, write_graph  # noqa: E402
 
@@ -403,3 +405,120 @@ def test_graph_route_with_some_straight_legs_says_so(tmp_path) -> None:  # type:
     whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g)
     assert whole is not None and whole.path_source == "graph"
     assert "по прямой" not in whole.note  # every leg on the graph: the note stays as it was
+
+
+# ------------------------------------------- wave 8 (T121): route profiles, 1.3.0 facts
+
+
+STAIRS_FALLBACK = {
+    "ru": "Без ступеней пути нет или он длиннее больше чем на 30 % — на маршруте есть ступени.",
+    "kk": "Баспалдақсыз жол жоқ немесе ол 30 %-дан астам ұзын — маршрутта баспалдақ бар.",
+    "en": "No step-free way, or it is over 30% longer: the route has steps.",
+}
+
+
+def test_graph_route_facts_by_default(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))  # every way is lit=yes
+    r = plan_route(at(0, -5), [cand_at("north", at(0, 35))], None, {}, graph=g)
+    assert r is not None and r.path_source == "graph" and r.profile == "fastest"
+    assert r.lit_share is not None and r.unlit_share == 0 and r.unknown_lit_share is not None
+    assert r.lit_share == pytest.approx(230 / 240, abs=0.002)  # the two 5 m links: no data
+    assert r.lit_share + r.unlit_share + r.unknown_lit_share == pytest.approx(1, abs=0.002)
+    assert (r.kerb_lowered, r.kerb_unknown, r.steps_count) == (0, 1, 0)
+    assert r.max_outdoor_leg_min == max(leg.walk_min for leg in r.legs)
+
+
+def test_lit_shares_are_never_rounded_up_to_lit(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import FOOTWAY, LIT
+
+    nodes = {"A": (0, 0, 0), "B": (2999.9, 0, 0), "C": (3000, 0, 0)}
+    g = load_graph(write_graph(tmp_path, nodes, [("A", "B", FOOTWAY | LIT), ("B", "C", FOOTWAY)]))
+    r = plan_route(at(0, 0), [cand_at("c", at(3000, 0))], None, {}, graph=g)
+    assert r is not None and r.lit_share is not None  # 99.99% lit: round() would say 100%
+    assert r.lit_share == 0.999 and r.unknown_lit_share == 0.001
+
+
+def test_kerbs_are_counted_per_crossing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import CROSS_SEG, CROSSING, KERB_RAISED, LOWERED, SIGNALS
+
+    nodes = {"S": (0, 0, 0), "C1": (0, 15, CROSSING | LOWERED), "N": (0, 30, 0),
+             "C2": (0, 45, CROSSING | SIGNALS), "M": (0, 60, 0),
+             "C3": (0, 75, CROSSING | KERB_RAISED), "T": (0, 90, 0)}
+    edges = [("S", "C1", CROSS_SEG), ("C1", "N", CROSS_SEG), ("N", "C2", CROSS_SEG),
+             ("C2", "M", CROSS_SEG), ("M", "C3", CROSS_SEG), ("C3", "T", CROSS_SEG)]
+    g = load_graph(write_graph(tmp_path, nodes, edges))
+    stops = [cand_at("n", at(0, 30)), cand_at("t", at(0, 90))]
+    r = plan_route(at(0, -1), stops, None, {}, graph=g)
+    assert r is not None and len(r.crossings) == 3
+    assert (r.kerb_lowered, r.kerb_unknown) == (1, 1)  # the raised one is neither
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_accessible_route_with_stairs_says_why(tmp_path, lang) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import stairs_in_the_middle
+
+    g = stairs_in_the_middle(tmp_path, None)  # no way round the stairs
+    note = route_note(lang, graph=True)
+    r = plan_route(at(0, 0), [cand_at("b", at(500, 0))], None, {}, graph=g,
+                   profile="accessible", lang=lang, graph_note=note)
+    assert r is not None and r.path_source == "graph"
+    assert r.profile == "accessible" and r.steps_count == 1
+    assert r.note == f"{note} {STAIRS_FALLBACK[lang]}"
+
+
+def test_accessible_route_goes_round_the_stairs(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import stairs_in_the_middle
+
+    g = stairs_in_the_middle(tmp_path, 30)
+    stops = [cand_at("b", at(500, 0))]
+    fastest = plan_route(at(0, 0), stops, None, {}, graph=g)
+    accessible = plan_route(at(0, 0), stops, None, {}, graph=g, profile="accessible",
+                            graph_note="graph note")
+    assert fastest is not None and accessible is not None
+    assert (fastest.profile, fastest.steps_count) == ("fastest", 1)
+    assert (accessible.profile, accessible.steps_count) == ("accessible", 0)
+    assert accessible.total_walk_m > fastest.total_walk_m and accessible.note == "graph note"
+
+
+def test_lit_route_shares(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from .test_walkgraph import UNLIT, lit_or_not
+
+    g = lit_or_not(tmp_path, UNLIT, 130)
+    stops = [cand_at("b", at(100, 0))]
+    fastest = plan_route(at(0, 0), stops, None, {}, graph=g)
+    lit = plan_route(at(0, 0), stops, None, {}, graph=g, profile="lit")
+    assert fastest is not None and lit is not None and lit.profile == "lit"
+    assert (fastest.lit_share, fastest.unlit_share) == (0, pytest.approx(1, abs=0.005))
+    assert (lit.lit_share, lit.unlit_share) == (pytest.approx(1, abs=0.005), 0)
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_straight_route_facts_and_profile(lang) -> None:  # type: ignore[no-untyped-def]
+    stops = [NEAR, FAR]
+    plain = plan_route(ORIGIN, stops, None, VISITS, note="note")
+    assert plain is not None and plain.path_source == "straight"
+    assert (plain.profile, plain.lit_share, plain.unlit_share, plain.unknown_lit_share) == (
+        "fastest", 0, 0, 1)
+    assert (plain.kerb_lowered, plain.kerb_unknown) == (None, None)  # crossings not known
+    assert plain.max_outdoor_leg_min == max(leg.walk_min for leg in plain.legs)
+    assert plain.note == "note"
+    asked = plan_route(ORIGIN, stops, None, VISITS, note="note", profile="accessible", lang=lang)
+    assert asked is not None and asked.profile == "fastest"  # what the route really is
+    assert asked.note.startswith("note ") and asked.note != "note"
+
+
+def test_plan_walk_checks_minutes_with_the_profile(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.walkgraph import WalkGraph
+
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    seen: list[str] = []
+    real = WalkGraph.route_through
+
+    def spy(self, points, mode=WALK, **kw):  # type: ignore[no-untyped-def]
+        seen.append(mode.profile)
+        return real(self, points, mode, **kw)
+
+    monkeypatch.setattr(WalkGraph, "route_through", spy)
+    east, north = cand_at("east", at(200, -5), score=0.9), cand_at("north", at(0, 135))
+    plan_walk(at(0, -5), [east, north], 60, graph=g, profile="lit")
+    assert seen and set(seen) == {"lit"}
