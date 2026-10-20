@@ -1,0 +1,262 @@
+{
+  "request_id": "mock-route-0001",
+  "lang": "ru",
+  "summary": "МОК (волна 8): мороз, маршрут без ступенек, вечернее событие у сферы и тёплый ТРЦ.",
+  "cards": [
+    {
+      "rank": 1,
+      "poi_id": "mock:poi/alem_ai",
+      "title": "Alem.ai — Музей Сингулярности",
+      "category": "museum",
+      "geo": {
+        "lat": 51.08925,
+        "lon": 71.41619
+      },
+      "distance_m": 267,
+      "walk_min": 5,
+      "visit_min_low": 60,
+      "visit_min_high": 90,
+      "why": "Иммерсивный музей об искусственном интеллекте в сфере EXPO — подходит под «что-то необычное на 1–2 часа».",
+      "what_to_do": "Начните с верхнего уровня сферы и спускайтесь по залам; заложите 60–90 минут.",
+      "open_status": "open",
+      "open_confidence": "high",
+      "open_note": "по данным alem.ai: вт–вс 10:00–18:30, пн — технический день",
+      "idea_source": "poi_data",
+      "facts_sources": [
+        "mock",
+        "manual"
+      ],
+      "data_confidence": 0.6,
+      "tags": [
+        "interactive",
+        "indoor",
+        "view",
+        "architecture"
+      ],
+      "address": "МОК-адрес"
+    },
+    {
+      "rank": 2,
+      "poi_id": "mock:poi/boulevard",
+      "title": "Световое шоу у сферы Нур Алем (мок)",
+      "category": "entertainment",
+      "geo": {
+        "lat": 51.091109,
+        "lon": 71.411388
+      },
+      "distance_m": 199,
+      "walk_min": 4,
+      "visit_min_low": 15,
+      "visit_min_high": 25,
+      "why": "Вечером сферу подсвечивают — короткое шоу в двух шагах от музея.",
+      "what_to_do": "Подойдите к 19:00 к сцене у сферы; одевайтесь теплее, шоу на улице.",
+      "open_status": "unknown",
+      "open_confidence": "low",
+      "open_note": "нет данных о часах работы (открытая территория)",
+      "idea_source": "poi_data",
+      "facts_sources": [
+        "mock"
+      ],
+      "data_confidence": 0.4,
+      "tags": [
+        "outdoor",
+        "photo_spot"
+      ],
+      "kind": "event",
+      "starts_at": "2026-10-20T19:00:00+05:00",
+      "ends_at": "2026-10-20T21:00:00+05:00",
+      "source_url": "https://example.org/qadam-mock-event",
+      "address": "Бульвар EXPO, сцена у сферы"
+    },
+    {
+      "rank": 3,
+      "poi_id": "mock:poi/mega_silk_way",
+      "title": "ТРЦ Mega Silk Way",
+      "category": "mall",
+      "geo": {
+        "lat": 51.0889,
+        "lon": 71.4103
+      },
+      "distance_m": 157,
+      "walk_min": 3,
+      "visit_min_low": 25,
+      "visit_min_high": 45,
+      "why": "Тёплый финал прогулки рядом: фудкорт и развлечения, если на улице холодно.",
+      "what_to_do": "Перекусите на фудкорте и пройдитесь по галерее — удобная точка, чтобы вызвать такси.",
+      "open_status": "open",
+      "open_confidence": "medium",
+      "open_note": "МОК: по данным OSM ежедневно 10:00–22:00 (часть дней не подтверждена)",
+      "idea_source": "poi_data",
+      "facts_sources": [
+        "mock"
+      ],
+      "data_confidence": 0.7,
+      "tags": [
+        "shopping",
+        "food",
+        "indoor",
+        "wheelchair"
+      ]
+    }
+  ],
+  "route": {
+    "stop_ids": [
+      "mock:poi/alem_ai",
+      "mock:poi/boulevard",
+      "mock:poi/mega_silk_way"
+    ],
+    "legs": [
+      {
+        "from_id": "origin",
+        "to_id": "mock:poi/alem_ai",
+        "distance_m": 308,
+        "walk_min": 5
+      },
+      {
+        "from_id": "mock:poi/alem_ai",
+        "to_id": "mock:poi/boulevard",
+        "distance_m": 422,
+        "walk_min": 6
+      },
+      {
+        "from_id": "mock:poi/boulevard",
+        "to_id": "mock:poi/mega_silk_way",
+        "distance_m": 259,
+        "walk_min": 4
+      }
+    ],
+    "total_walk_m": 989,
+    "total_min": 115,
+    "fits_budget": true,
+    "path": [
+      {
+        "lat": 51.089433,
+        "lon": 71.412381
+      },
+      {
+        "lat": 51.08905,
+        "lon": 71.41245
+      },
+      {
+        "lat": 51.08898,
+        "lon": 71.41455
+      },
+      {
+        "lat": 51.08925,
+        "lon": 71.41619
+      },
+      {
+        "lat": 51.0901,
+        "lon": 71.4156
+      },
+      {
+        "lat": 51.09075,
+        "lon": 71.4139
+      },
+      {
+        "lat": 51.091109,
+        "lon": 71.411388
+      },
+      {
+        "lat": 51.0903,
+        "lon": 71.4112
+      },
+      {
+        "lat": 51.0889,
+        "lon": 71.4103
+      }
+    ],
+    "note": "МОК: путь по тротуарам и переходам OSM, скорость 4,5 км/ч",
+    "path_source": "graph",
+    "crossings": [
+      {
+        "lat": 51.08905,
+        "lon": 71.41245,
+        "kind": "signals"
+      },
+      {
+        "lat": 51.09075,
+        "lon": 71.4139,
+        "kind": "marked"
+      },
+      {
+        "lat": 51.0903,
+        "lon": 71.4112,
+        "kind": "unmarked"
+      }
+    ],
+    "steps_count": 0,
+    "profile": "accessible",
+    "lit_share": 0.78,
+    "unlit_share": 0.07,
+    "unknown_lit_share": 0.15,
+    "kerb_lowered": 2,
+    "kerb_unknown": 1,
+    "max_outdoor_leg_min": 7
+  },
+  "intent": {
+    "raw_query": "Я у EXPO, хочу что-то необычное на 1–2 часа, пешком",
+    "lang": "ru",
+    "time_budget_min": 120,
+    "max_walk_min": 15,
+    "categories": [],
+    "must_tags": [
+      "interactive"
+    ],
+    "avoid_tags": [],
+    "with_kids": false,
+    "wheelchair": false,
+    "group_size": null,
+    "indoor": "any",
+    "night": false,
+    "tourist": false,
+    "landmark_mention": "expo",
+    "parser": "llm"
+  },
+  "context": {
+    "origin": {
+      "lat": 51.089433,
+      "lon": 71.412381
+    },
+    "h3_cell": "892153833a7ffff",
+    "h3_res": 9,
+    "area_label": "ваш район у EXPO (≈0,1 км²)",
+    "landmark_id": null,
+    "local_time": "2026-10-20T15:30:00+05:00",
+    "weather": {
+      "temp_c": -15.0,
+      "precipitation_mm": 0.0,
+      "wind_ms": 6.0,
+      "is_day": true,
+      "summary": "−15°C, ветер 6 м/с",
+      "outdoor_ok": false,
+      "source": "open_meteo",
+      "fetched_at": "2026-10-20T15:30:00+05:00"
+    },
+    "radius_m": 865
+  },
+  "data_used": {
+    "location": "H3-ячейка r9 (≈0,1 км²) — точные координаты не передавались",
+    "time": "вт 20.10, 15:30 (UTC+5)",
+    "weather": "+6°C, ветер 7 м/с (Open-Meteo)",
+    "filters": [
+      "пешком ≤ 15 мин",
+      "бюджет 1–2 часа",
+      "необычное / интерактивное"
+    ],
+    "sources": [
+      "МОК-ДАННЫЕ (для разработки UI)",
+      "OpenStreetMap (ODbL)",
+      "Open-Meteo"
+    ],
+    "candidates_considered": 8,
+    "parser": "llm",
+    "generation": "llm",
+    "model": "claude-sonnet-5-5"
+  },
+  "warnings": [
+    "МОК-ДАННЫЕ для разработки UI (волна 8) — это не реальный ответ системы"
+  ],
+  "disclaimer": "Подсказки основаны на открытых данных и могут устареть. Часы работы проверяйте перед визитом. Тексты «Идея ИИ» сгенерированы моделью.",
+  "latency_ms": 1840
+}
