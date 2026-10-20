@@ -30,9 +30,9 @@ export function initMap(el) {
   return true;
 }
 
-function stopIcon(rank, ideaSource) {
+function stopIcon(rank, ideaSource, warm = false) {
   return L.divIcon({
-    className: `stop-icon is-${ideaSource}`,
+    className: `stop-icon is-${ideaSource}${warm ? ' is-warm' : ''}`,
     // v2.1 (эталон): золотой шестиугольник с контуром --ink; номер — textContent, без HTML из данных
     html: document.body.classList.contains('v2') ? hexStop(rank) : `<span>${Number(rank)}</span>`,
     iconSize: [30, 34],
@@ -80,7 +80,7 @@ export function setZoomTitles(zoomIn, zoomOut) {
 // Легенда в углу карты (на телефоне нет hover): что за линия и какие переходы на пути.
 // Граф OSM (path_source=graph) — сплошная линия по тротуарам; прямые отрезки — пунктир «по прямой…».
 // labels = { straight, graph, crossings: { signals, marked, unmarked } } — тексты на языке интерфейса.
-const CROSSING_KINDS = ['signals', 'marked', 'unmarked'];
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked', 'unknown']; // schemas 1.3.0 CrossingKind
 let lineLegend = null;
 let legendSpec = null; // { solid: boolean, kinds: string[] }
 let legendLabels = null;
@@ -91,6 +91,8 @@ const CROSSING_GLYPHS = {
   signals: '<span class="crossing-glyph is-signals" aria-hidden="true">🚦</span>',
   marked: '<span class="crossing-glyph is-marked" aria-hidden="true"></span>',
   unmarked: '<span class="crossing-glyph is-unmarked" aria-hidden="true">!</span>',
+  // 1.3.0: тип перехода в OSM не указан — нейтральный «переход», не зебра и не «без разметки»
+  unknown: '<span class="crossing-glyph is-unknown" aria-hidden="true"></span>',
 };
 
 function crossingGlyph(kind) {
@@ -209,7 +211,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
     routeLine.bindTooltip(lineTooltip(routeLabel, graph ? legend.graph : legend.straight), { sticky: true });
     const crossings = graph ? route.crossings || [] : [];
     for (const c of crossings) {
-      if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked
+      if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked | unknown
       const label = legend.crossings[c.kind];
       L.marker([c.lat, c.lon], {
         icon: crossingIcon(c.kind),
@@ -226,7 +228,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   for (const card of answer.cards) {
     const ll = [card.geo.lat, card.geo.lon];
     const marker = L.marker(ll, {
-      icon: stopIcon(card.rank, card.idea_source),
+      icon: stopIcon(card.rank, card.idea_source, Array.isArray(card.tags) && card.tags.includes('indoor')),
       // Цвет метки (золото / лаванда) дублируем словами: «Данные POI» или «Идея ИИ».
       title: markerLabel(card),
       alt: markerLabel(card),

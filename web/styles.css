@@ -2696,3 +2696,228 @@ body:not(.v2) .submit-row .btn-primary {
   font-size: var(--v2-fs-s);
   color: var(--ink-2);
 }
+
+/* ================================================================== волна 8 (T124, контракт 1.3.0) */
+
+/* Итог профиля маршрута — одна строка в заголовке свёрнутого маршрута */
+.route-profile-line {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+}
+
+.route-profile-line.is-warn {
+  color: var(--warn-ink);
+}
+
+.v2 .route-profile-line {
+  font-size: var(--v2-fs-s);
+}
+
+/* «В тепле»: плашка-предложение при морозе */
+.warm-offer {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.warm-offer-text {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.warm-offer-leg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.warm-offer-btn {
+  justify-self: start;
+  min-height: 44px;
+}
+
+/* Значок «в тепле» у тёплой остановки (тег indoor): домик, встроенный SVG */
+.warm-mark {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: -2px;
+}
+
+.warm-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: #b4530a; /* тёплый янтарный, 5,0:1 на белом */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 1 7.4l1 1.2 1-.9V14h4v-4h2v4h4V7.7l1 .9 1-1.2zM11.5 12.5H10.5v-4h-5v4H4.5V6.4L8 3.5l3.5 2.9z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 1 7.4l1 1.2 1-.9V14h4v-4h2v4h4V7.7l1 .9 1-1.2zM11.5 12.5H10.5v-4h-5v4H4.5V6.4L8 3.5l3.5 2.9z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* На карте у тёплой остановки — маленький янтарный кружок с домиком в углу маркера */
+.stop-icon.is-warm {
+  position: relative;
+}
+
+.stop-icon.is-warm::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b4530a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23fff' d='M8 3 3 7.2V13h3.5v-3h3v3H13V7.2z'/%3E%3C/svg%3E") center / 11px no-repeat;
+  box-shadow: 0 0 0 1.5px #fff;
+}
+
+/* Карточка события: «Событие · сегодня в 19:00–21:00», площадка, кнопка «Источник» */
+.event-block {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.event-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.event-now {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--open-bg);
+  color: var(--open-ink);
+  font-size: 13px;
+}
+
+.event-venue {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.event-source {
+  justify-self: start;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+.v2 .card > .event-block {
+  order: 2; /* после «Почему» и фактов */
+  margin-top: 12px;
+}
+
+/* «Мои предпочтения» — тот же вид, что «Уточнить», но открывается и на широком экране сам по себе */
+.prefs {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.prefs > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.prefs > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prefs > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.prefs[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.prefs[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.prefs-count {
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+.prefs > .prefs-group {
+  margin: 12px 14px 0;
+}
+
+.prefs-note {
+  margin: 12px 14px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.prefs-clear {
+  margin: 8px 14px 12px;
+  min-height: 44px;
+}
+
+/* Чипы уточнения под ответом */
+.refine-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.refine-chips-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.v2 .refine-chips .chip {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: var(--v2-fs-m);
+}
+
+/* 1.3.0: переход без данных о разметке — нейтральный серый кружок с полоской перехода */
+.crossing-glyph.is-unknown {
+  border-color: var(--ink-2);
+  background: #fff linear-gradient(var(--ink-2), var(--ink-2)) center / 10px 2px no-repeat;
+}

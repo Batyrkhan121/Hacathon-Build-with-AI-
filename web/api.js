@@ -108,7 +108,8 @@ function looksLikeAnswer(a) {
 async function mockRecommend(body, signal) {
   await sleep(MOCK === 'slow' ? 3000 : 650, signal);
   if (MOCK === 'error' && body.use_llm) throw new ApiError('mock');
-  const file = MOCK === 'route' ? 'mock/answer_route.json' : 'mock/answer_sample.json';
+  // ?mock=w8 — волна 8 (контракт 1.3.0): мороз, профиль маршрута, событие, тёплые остановки
+  const file = MOCK === 'route' ? 'mock/answer_route.json' : MOCK === 'w8' ? 'mock/answer_w8.json' : 'mock/answer_sample.json';
   const answer = await getJson(file, signal);
   if (MOCK === 'empty') {
     answer.cards = [];
