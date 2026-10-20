@@ -2696,3 +2696,24 @@ body:not(.v2) .submit-row .btn-primary {
   font-size: var(--v2-fs-s);
   color: var(--ink-2);
 }
+
+/* ================================================================== волна 8 (T124, контракт 1.3.0) */
+
+/* Итог профиля маршрута — одна строка в заголовке свёрнутого маршрута */
+.route-profile-line {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+}
+
+.route-profile-line.is-warn {
+  color: var(--warn-ink);
+}
+
+.v2 .route-profile-line {
+  font-size: var(--v2-fs-s);
+}

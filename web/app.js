@@ -17,6 +17,8 @@ const BUDGETS = [30, 60, 120];
 // Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
+// 1.3.0: профиль маршрута (request.route_profile); по умолчанию «быстрее»
+const ROUTE_PROFILES = ['fastest', 'accessible', 'lit'];
 const FLAGS = [...MODES, ...FILTER_FLAGS];
 const MODE_ICON = { tourist: '✈', night: '🌙', with_kids: '🧒', wheelchair: '♿', group: '👥' };
 const DEPARTURES = [90, 120, 180, 240]; // минут до вылета (контракт: 30–1440)
@@ -40,6 +42,7 @@ const state = {
   departure: DEFAULT_DEPARTURE,
   time: null, // null = сейчас, иначе 'HH:MM' по Астане
   backRank: null, // телефон: номер карточки для кнопки «К карточке N» на карте
+  routeProfile: 'fastest', // 1.3.0: fastest | accessible | lit
   hintKey: '', // какие подсказки режимов уже показаны (раскрыть «Уточнить» только при новой)
   day: 0, // 0 = сегодня, 1 = завтра; ведущий выбирает один раз, пресеты день не меняют
   activePreset: null,
@@ -63,6 +66,7 @@ const els = {
   whereNote: $('where-note'),
   presets: $('presets'),
   budgetChips: $('budget-chips'),
+  profileChips: $('profile-chips'),
   refine: $('refine'),
   refineCount: $('refine-count'),
   flagChips: $('flag-chips'),
@@ -183,6 +187,7 @@ function buildRequest(query, useLlm = true) {
     overrides: Object.keys(overrides).length ? overrides : null,
     want_route: true,
     use_llm: useLlm,
+    route_profile: state.routeProfile,
   };
 }
 
@@ -258,6 +263,7 @@ function loadingContext() {
   const out = [when];
   if (state.budget) out.push(t(`budget.${state.budget}`));
   FLAGS.forEach((f) => state.flags[f] && out.push(t(`flag.${f}`)));
+  if (state.routeProfile !== 'fastest') out.push(t(`profile.${state.routeProfile}`));
   return out;
 }
 
@@ -411,6 +417,14 @@ function chip(label, pressed, onClick) {
 }
 
 function renderChips() {
+  els.profileChips.replaceChildren(
+    ...ROUTE_PROFILES.map((p) =>
+      chip(t(`profile.${p}`), state.routeProfile === p, () => {
+        state.routeProfile = p;
+        filtersChanged();
+      }),
+    ),
+  );
   els.budgetChips.replaceChildren(
     ...BUDGETS.map((m) =>
       chip(t(`budget.${m}`), state.budget === m, () => {
@@ -471,7 +485,10 @@ function renderChips() {
   if (hintKey && hintKey !== state.hintKey) els.refine.open = true;
   state.hintKey = hintKey;
   // Сколько уточнений выбрано: видно и при свёрнутом блоке (пресет S4 включает «туриста»).
-  const picked = FLAGS.filter((f) => state.flags[f]).length + [state.budget, state.time, state.day].filter(Boolean).length;
+  const picked =
+    FLAGS.filter((f) => state.flags[f]).length +
+    [state.budget, state.time, state.day].filter(Boolean).length +
+    (state.routeProfile === 'fastest' ? 0 : 1);
   // «· N» — только для глаз; скринридер читает «выбрано: N» (aria-label на span читается ненадёжно)
   els.refineCount.replaceChildren();
   if (picked) {
@@ -500,6 +517,7 @@ function filtersChanged() {
 
 function clearFilters() {
   state.budget = null;
+  state.routeProfile = 'fastest';
   FLAGS.forEach((f) => (state.flags[f] = false));
   renderChips();
 }

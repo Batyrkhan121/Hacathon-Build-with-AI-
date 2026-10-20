@@ -285,22 +285,68 @@ function renderGraphSummary(route, ctx) {
       })
     : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
   const steps = route.steps_count || 0;
-  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
-  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
-  const stepsText = steps
-    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
-    : t('route.noSteps');
+  // 1.3.0: ступени уходят в строку профиля маршрута (renderProfileLine), здесь только тротуары и переходы
+  const withSteps = !hasProfileFacts(route);
   // line — в заголовке свёрнутого маршрута (итог виден без раскрытия), caveat — внутри
   return {
     line: h(
       'span',
       { class: 'route-graph-line' },
       base,
-      ' · ',
-      h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText }),
+      withSteps ? ' · ' : null,
+      withSteps
+        ? h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText(route, ctx) })
+        : null,
     ),
     caveat: h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
   };
+}
+
+function stepsText(route, ctx) {
+  const steps = route.steps_count || 0;
+  // Лестницы важны для коляски: если просили «доступная среда» или «с ребёнком» — говорим прямо.
+  const strollerMode = Boolean(ctx.request?.overrides?.wheelchair || ctx.request?.overrides?.with_kids);
+  return steps
+    ? `${t('route.steps', { n: steps })}${strollerMode ? ` — ${t('route.stepsHint')}` : ''}`
+    : t('route.noSteps');
+}
+
+// 1.3.0: у маршрута есть факты профиля (доли освещённости, бордюры)
+function hasProfileFacts(route) {
+  return route.lit_share != null || route.kerb_lowered != null;
+}
+
+const pct = (x) => Math.round((x || 0) * 100);
+
+// 1.3.0, итог маршрута одной строкой без точек-разделителей: «без ступенек, освещено 78 % по данным OSM,
+// нет данных 15 %». Все числа — из ответа (их считает код на сервере). «Без ступенек» — только по графу
+// и при нуле ступеней; у прямых отрезков ступени и освещённость неизвестны — так и пишем.
+function renderProfileLine(route, ctx) {
+  const asked = ctx.request?.route_profile;
+  if (!hasProfileFacts(route) && !(asked && asked !== 'fastest')) return null;
+  const graph = route.path_source === 'graph';
+  const parts = [];
+  if (asked && route.profile && asked !== route.profile) {
+    parts.push(t('route.profileFallback', { asked: t(`profile.${asked}`), actual: t(`profile.${route.profile}`) }));
+  }
+  if (graph && route.steps_count === 0) parts.push(t('route.stepFree'));
+  else if (graph && route.steps_count > 0) parts.push(stepsText(route, ctx));
+  if (route.lit_share != null) {
+    if (!graph || (route.unknown_lit_share ?? 1) >= 0.995) {
+      parts.push(t('route.litNoData'));
+    } else {
+      parts.push(t('route.litShare', { lit: pct(route.lit_share) }));
+      if (pct(route.unknown_lit_share) > 0) parts.push(t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }));
+    }
+  }
+  if (graph && route.profile === 'accessible' && route.kerb_lowered != null) {
+    parts.push(t('route.kerbs', { n: route.kerb_lowered }));
+    if (route.kerb_unknown) parts.push(t('route.kerbsUnknown', { n: route.kerb_unknown }));
+  }
+  if (!parts.length) return null;
+  const text = parts.join(', ');
+  const warn = graph && route.steps_count > 0;
+  return h('span', { class: warn ? 'route-profile-line is-warn' : 'route-profile-line', text: text[0].toUpperCase() + text.slice(1) });
 }
 
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
@@ -359,6 +405,7 @@ function renderRoute(route, byId, ctx, originName) {
         text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
       }),
       graph ? graph.line : null,
+      renderProfileLine(route, ctx),
       route.fits_budget === false ? h('span', { class: 'route-over', text: t('route.overBudget') }) : null,
     ),
     h('ol', { class: 'timeline' }, items),
