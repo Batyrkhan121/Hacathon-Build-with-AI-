@@ -403,7 +403,7 @@ function renderEmpty(ctx) {
   );
 }
 
-const CROSSING_KINDS = ['signals', 'marked', 'unmarked']; // schemas 1.1.0 CrossingKind
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked', 'unknown']; // schemas 1.3.0 CrossingKind
 
 // Маршрут по графу OSM: «По тротуарам: 1,2 км · 16 мин · переходов 3, со светофором 2 · без лестниц»
 // + честная приписка. Числа считает браузер из полей ответа (legs, crossings, steps_count), не модель.
@@ -447,6 +447,10 @@ function stepsText(route, ctx) {
     : t('route.noSteps');
 }
 
+// В note сервер пишет о прямых отрезках («часть отрезков по прямой», «профиль не учтён: отрезки прямые»).
+// На прямых участках ступени и бордюры не проверены — «без ступенек» тогда не пишем.
+const STRAIGHT_NOTE = /прям|түзу|straight/i;
+
 // 1.3.0: у маршрута есть факты профиля (доли освещённости, бордюры)
 function hasProfileFacts(route) {
   return route.lit_share != null || route.kerb_lowered != null;
@@ -461,11 +465,13 @@ function renderProfileLine(route, ctx) {
   const asked = ctx.request?.route_profile;
   if (!hasProfileFacts(route) && !(asked && asked !== 'fastest')) return null;
   const graph = route.path_source === 'graph';
+  const partlyStraight = STRAIGHT_NOTE.test(route.note || '');
   const parts = [];
+  // Показываем фактический профиль (route.profile), а не выбранный в переключателе
   if (asked && route.profile && asked !== route.profile) {
     parts.push(t('route.profileFallback', { asked: t(`profile.${asked}`), actual: t(`profile.${route.profile}`) }));
   }
-  if (graph && route.steps_count === 0) parts.push(t('route.stepFree'));
+  if (graph && route.steps_count === 0 && !partlyStraight) parts.push(t('route.stepFree'));
   else if (graph && route.steps_count > 0) parts.push(stepsText(route, ctx));
   if (route.lit_share != null) {
     if (!graph || (route.unknown_lit_share ?? 1) >= 0.995) {
@@ -475,8 +481,9 @@ function renderProfileLine(route, ctx) {
       if (pct(route.unknown_lit_share) > 0) parts.push(t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }));
     }
   }
+  // Бордюры — только из kerb_lowered / kerb_unknown (по всему пути); из обрезанного списка crossings не считаем
   if (graph && route.profile === 'accessible' && route.kerb_lowered != null) {
-    parts.push(t('route.kerbs', { n: route.kerb_lowered }));
+    if (route.kerb_lowered > 0) parts.push(t('route.kerbs', { n: route.kerb_lowered }));
     if (route.kerb_unknown) parts.push(t('route.kerbsUnknown', { n: route.kerb_unknown }));
   }
   if (!parts.length) return null;

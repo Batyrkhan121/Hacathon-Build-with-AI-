@@ -80,7 +80,7 @@ export function setZoomTitles(zoomIn, zoomOut) {
 // Легенда в углу карты (на телефоне нет hover): что за линия и какие переходы на пути.
 // Граф OSM (path_source=graph) — сплошная линия по тротуарам; прямые отрезки — пунктир «по прямой…».
 // labels = { straight, graph, crossings: { signals, marked, unmarked } } — тексты на языке интерфейса.
-const CROSSING_KINDS = ['signals', 'marked', 'unmarked'];
+const CROSSING_KINDS = ['signals', 'marked', 'unmarked', 'unknown']; // schemas 1.3.0 CrossingKind
 let lineLegend = null;
 let legendSpec = null; // { solid: boolean, kinds: string[] }
 let legendLabels = null;
@@ -91,6 +91,8 @@ const CROSSING_GLYPHS = {
   signals: '<span class="crossing-glyph is-signals" aria-hidden="true">🚦</span>',
   marked: '<span class="crossing-glyph is-marked" aria-hidden="true"></span>',
   unmarked: '<span class="crossing-glyph is-unmarked" aria-hidden="true">!</span>',
+  // 1.3.0: тип перехода в OSM не указан — нейтральный «переход», не зебра и не «без разметки»
+  unknown: '<span class="crossing-glyph is-unknown" aria-hidden="true"></span>',
 };
 
 function crossingGlyph(kind) {
@@ -209,7 +211,7 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
     routeLine.bindTooltip(lineTooltip(routeLabel, graph ? legend.graph : legend.straight), { sticky: true });
     const crossings = graph ? route.crossings || [] : [];
     for (const c of crossings) {
-      if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked
+      if (!CROSSING_KINDS.includes(c.kind)) continue; // контракт: signals | marked | unmarked | unknown
       const label = legend.crossings[c.kind];
       L.marker([c.lat, c.lon], {
         icon: crossingIcon(c.kind),

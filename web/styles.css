@@ -2915,3 +2915,9 @@ body:not(.v2) .submit-row .btn-primary {
   padding: 0 16px;
   font-size: var(--v2-fs-m);
 }
+
+/* 1.3.0: переход без данных о разметке — нейтральный серый кружок с полоской перехода */
+.crossing-glyph.is-unknown {
+  border-color: var(--ink-2);
+  background: #fff linear-gradient(var(--ink-2), var(--ink-2)) center / 10px 2px no-repeat;
+}

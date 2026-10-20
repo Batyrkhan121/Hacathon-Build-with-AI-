@@ -148,11 +148,13 @@ function legendLabels() {
       signals: t('crossing.signals'),
       marked: t('crossing.marked'),
       unmarked: t('crossing.unmarked'),
+      unknown: t('crossing.unknown'),
     },
     crossingsShort: {
       signals: t('crossing.signalsShort'),
       marked: t('crossing.markedShort'),
       unmarked: t('crossing.unmarkedShort'),
+      unknown: t('crossing.unknownShort'),
     },
   };
 }
