@@ -2921,3 +2921,8 @@ body:not(.v2) .submit-row .btn-primary {
   border-color: var(--ink-2);
   background: #fff linear-gradient(var(--ink-2), var(--ink-2)) center / 10px 2px no-repeat;
 }
+
+/* «Без кафе» включено, а кафе в ответе есть (кофе просили в запросе) — предупреждение над карточками */
+.no-cafe-conflict {
+  margin: 0 0 12px;
+}
