@@ -118,7 +118,8 @@ def fake_finalize(draft: DraftResponse, candidates: list[Candidate], intent: Que
 
 def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | None,
                     visit_min: dict[str, int], max_stops: int = 3, *, loop: bool = False,
-                    note: str | None = None) -> MiniRoute | None:
+                    note: str | None = None, lang: str = "ru", profile: str = "fastest"
+                    ) -> MiniRoute | None:
     if not stops:
         return None
     legs, prev, prev_id = [], origin, "origin"
@@ -1506,3 +1507,89 @@ def test_cell_area_label_in_hectares(res: int, lang: str, label: str) -> None:
 def test_hectares_are_formatted_like_the_browser(ha: float, kk: str, en: str) -> None:
     assert pipeline_mod._format_ha(ha, "kk") == kk
     assert pipeline_mod._format_ha(ha, "en") == en
+
+
+# ------------------------------------- T123: route profile -> plan_route / plan_walk / minutes
+
+
+def _recording_plan_route(calls: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
+    def plan(origin, stops, budget_min, visit_min, max_stops=3, **kw):  # type: ignore[no-untyped-def]
+        calls.append(kw)
+        return fake_plan_route(origin, stops, budget_min, visit_min, max_stops,
+                               loop=kw.get("loop", False), note=kw.get("note"))
+    return plan
+
+
+@pytest.mark.usefixtures("core_fakes")
+@pytest.mark.parametrize(("profile", "overrides", "want", "line"), [
+    ("fastest", None, "fastest", None),
+    ("lit", None, "lit", "маршрут: по освещённым улицам (данные OSM)"),
+    ("accessible", None, "accessible", "маршрут: без ступенек"),
+    # the wheelchair switch turns the default into a step-free way, and the panel says why
+    ("fastest", {"wheelchair": True}, "accessible", "маршрут: без ступенек (коляска)"),
+    # an explicit choice stays (Mode.wheelchair forbids stairs on "lit" too)
+    ("lit", {"wheelchair": True}, "lit", "маршрут: по освещённым улицам (данные OSM)"),
+])
+def test_route_profile_is_passed_without_the_graph(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch, profile: str,
+    overrides: dict[str, Any] | None, want: str, line: str | None,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _recording_plan_route(calls))
+    a = recommend(req("кофе", use_llm=False, route_profile=profile, overrides=overrides), deps)
+    assert a.route is not None and calls
+    assert calls[-1]["profile"] == want and calls[-1]["lang"] == "ru"
+    profile_lines = [f for f in a.data_used.filters if f.startswith("маршрут:")]
+    assert profile_lines == ([line] if line else [])
+
+
+@pytest.mark.parametrize(("lang", "line"), [
+    ("kk", "маршрут: баспалдақсыз (арба)"), ("en", "route: step-free (wheelchair)")])
+def test_route_profile_line_follows_the_answer_language(deps: Deps, lang: str, line: str) -> None:
+    a = recommend(req("кофе", use_llm=False, lang=lang, overrides={"wheelchair": True}), deps)
+    assert line in a.data_used.filters
+
+
+def test_straight_route_says_the_profile_was_not_applied(deps: Deps) -> None:
+    """No graph (tests run with WALK_GRAPH=false): the route is "fastest", honestly noted."""
+    a = recommend(req("кофе", use_llm=False, route_profile="lit"), deps)
+    assert a.route is not None and a.route.path_source == "straight"
+    assert a.route.profile == "fastest"
+    assert "Профиль маршрута не учтён" in a.route.note
+    assert a.route.unknown_lit_share == 1.0
+    en = recommend(req("coffee", use_llm=False, lang="en", route_profile="lit"), deps)
+    assert en.route is not None and "Route profile not applied" in en.route.note
+
+
+@pytest.mark.parametrize("profile", ["accessible", "lit"])
+def test_graph_route_and_card_minutes_use_the_profile(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str
+) -> None:
+    from app.walkgraph import WalkGraph
+
+    modes: list[str] = []
+    real_lengths = WalkGraph.lengths_from
+
+    def spy(self, origin, targets, mode=None, **kw):  # type: ignore[no-untyped-def]
+        modes.append(mode.profile if mode is not None else "none")
+        return real_lengths(self, origin, targets, mode, **kw)
+
+    monkeypatch.setattr(WalkGraph, "lengths_from", spy)
+    a = recommend(req("кофе", use_llm=False, route_profile=profile),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert a.route.profile == profile  # the profile the route was really planned with
+    assert modes and set(modes) == {profile}  # card minutes: the same Mode(profile=...)
+
+
+def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    got: list[str] = []
+    real = route.plan_walk
+
+    def spy(*args: Any, **kw: Any) -> list[Candidate]:
+        got.append(kw.get("profile", "missing"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(route, "plan_walk", spy)
+    recommend(req("прогулка на 60 минут", use_llm=False, overrides={"wheelchair": True}), deps)
+    assert got == ["accessible"]

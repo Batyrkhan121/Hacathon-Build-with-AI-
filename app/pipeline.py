@@ -59,6 +59,7 @@ from app.schemas import (
     MiniRoute,
     QueryIntent,
     RecommendRequest,
+    RouteProfile,
     SearchContext,
 )
 from app.store import Store
@@ -178,6 +179,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_search_lexical": "поиск: по словам", "f_search_claude": ", отбор — Claude",
         "index_stale": "индекс устарел",
         "f_hours_dropped": "по часам работы отсеяно {n}: {parts}",
+        "f_profile_accessible": "маршрут: без ступенек",
+        "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
+        "f_profile_auto": " (коляска)",
     },
     "kk": {
         "llm_down": "LLM қолжетімсіз — деректер бойынша карточкалар көрсетілді.",
@@ -250,6 +254,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_search_lexical": "іздеу: сөздері бойынша", "f_search_claude": ", іріктеу — Claude",
         "index_stale": "индекс ескірген",
         "f_hours_dropped": "жұмыс уақыты бойынша алынып тасталды {n}: {parts}",
+        "f_profile_accessible": "маршрут: баспалдақсыз",
+        "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
+        "f_profile_auto": " (арба)",
     },
     "en": {
         "llm_down": "The LLM is unavailable — showing cards built from the data.",
@@ -319,6 +326,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_search_lexical": "search: by keywords", "f_search_claude": ", picked by Claude",
         "index_stale": "index outdated",
         "f_hours_dropped": "removed by opening hours {n}: {parts}",
+        "f_profile_accessible": "route: step-free",
+        "f_profile_lit": "route: along lit streets (OSM data)",
+        "f_profile_auto": " (wheelchair)",
     },
 }
 
@@ -614,8 +624,11 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
     # T91: the walk graph (loaded once, cached); None -> straight segments as before
     graph = _walk_graph(deps.settings, request_id)
+    # T123: the route profile goes to plan_route / plan_walk as an argument (with and without
+    # the graph) and into the Mode of the card minutes, so cards and route agree
+    profile, profile_auto = route_profile(req.route_profile, intent)
     walk_mode = walkgraph.Mode(wheelchair=intent.wheelchair, night=plan_intent.night,
-                               kids=intent.with_kids)
+                               kids=intent.with_kids, profile=profile)
 
     # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
     walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
@@ -624,13 +637,14 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     if walk_loop and req.want_route and len(candidates) >= 2:
         try:
             budget, wanted_cats = plan_intent.time_budget_min or 0, set(plan_intent.categories)
-            if graph is None:  # without a graph the call is exactly the old one
+            if graph is None:
                 picked = route.plan_walk(ctx.origin, candidates, budget,
-                                         wanted_categories=wanted_cats)
+                                         wanted_categories=wanted_cats, profile=profile)
             else:
                 picked = route.plan_walk(ctx.origin, candidates, budget,
                                          wanted_categories=wanted_cats, graph=graph,
-                                         mode=walk_mode, origin_landmark=ctx.landmark_id)
+                                         mode=walk_mode, origin_landmark=ctx.landmark_id,
+                                         profile=profile)
         except Exception as exc:  # noqa: BLE001 - the cards are still useful without it
             log.error("request %s: plan_walk failed (%s)\n%s", request_id, type(exc).__name__,
                       _frames(exc))
@@ -716,7 +730,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     mini_route, route_broke = _route(ctx, cards, candidates, search_intent,
                                      req.want_route and not at_hub and not night_taxi,
                                      request_id, loop=walk_loop, note=note, graph=graph,
-                                     mode=walk_mode, graph_note=graph_note)
+                                     mode=walk_mode, graph_note=graph_note, profile=profile)
     if route_broke:
         warn.append(t["route_failed"])
 
@@ -768,7 +782,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              hours_dropped=dropped,
                              night_by_clock=night_by_clock,
                              airport=(intent.time_budget_min or 0) if walk_budget is not None
-                             else None),
+                             else None,
+                             profile=profile, profile_auto=profile_auto),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
             parser=intent.parser,
@@ -1072,6 +1087,15 @@ def _retrieve(
         return [], True
 
 
+def route_profile(asked: RouteProfile, intent: QueryIntent) -> tuple[RouteProfile, bool]:
+    """(profile to plan with, switched on by the wheelchair?). A wheelchair (the UI switch or
+    the text) wants a step-free way: the default "fastest" becomes "accessible", and the
+    filters panel says why. An explicit "lit" stays: Mode.wheelchair forbids stairs there too."""
+    if intent.wheelchair and asked == "fastest":
+        return "accessible", True
+    return asked, False
+
+
 def _night_taxi(intent: QueryIntent, cards: list[Card]) -> bool:
     """Night and every card over the walking limit (graph or straight minutes, as shown)."""
     limit = intent.max_walk_min
@@ -1133,21 +1157,25 @@ def _route(
     graph: walkgraph.WalkGraph | None = None,
     mode: walkgraph.Mode = walkgraph.WALK,
     graph_note: str | None = None,
+    profile: RouteProfile = "fastest",
 ) -> tuple[MiniRoute | None, bool]:
-    """(route, failed): a crash in plan_route is reported, not swallowed."""
+    """(route, failed): a crash in plan_route is reported, not swallowed. `profile` is passed
+    with and without the graph: a straight route comes back as "fastest" and its note says the
+    asked profile was not applied (route.plan_route)."""
     if not want_route or len(cards) < 2:
         return None, False
     by_id = {c.poi.id: c for c in candidates}
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
     try:
         visits = {c.poi_id: c.visit_min_low for c in cards}
-        if graph is None:  # without a graph the call is exactly the old one
+        if graph is None:
             return route.plan_route(ctx.origin, stops, intent.time_budget_min, visits,
-                                    loop=loop, note=note), False
+                                    loop=loop, note=note, lang=intent.lang,
+                                    profile=profile), False
         return route.plan_route(
             ctx.origin, stops, intent.time_budget_min, visits, loop=loop, note=note,
             graph=graph, mode=mode, origin_landmark=ctx.landmark_id, graph_note=graph_note,
-            lang=intent.lang,
+            lang=intent.lang, profile=profile,
         ), False
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)\n%s", request_id, type(exc).__name__,
@@ -1248,11 +1276,14 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              *, lang: Lang = "ru", airport: int | None = None,
              night_by_clock: bool = False, semantic: bool = False,
              semantic_reason: str | None = None, claude_picked: bool = False,
-             index_stale: bool = False, hours_dropped: dict[str, int] | None = None
+             index_stale: bool = False, hours_dropped: dict[str, int] | None = None,
+             profile: RouteProfile = "fastest", profile_auto: bool = False
              ) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
-    (embed_query then returns None), so the panel always says which search actually ran."""
-    """`airport` = minutes to departure when the flight rule shaped the time budget."""
+    (embed_query then returns None), so the panel always says which search actually ran.
+    `airport` = minutes to departure when the flight rule shaped the time budget.
+    `profile` = the route profile asked (the default "fastest" is not listed); `profile_auto`:
+    switched to "accessible" by the wheelchair."""
     out = [t["f_radius"].format(v=ctx.radius_m)]
     if intent.time_budget_min and airport is not None:
         out.append(t["f_budget_airport"].format(v=intent.time_budget_min, b=airport,
@@ -1275,6 +1306,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     if intent.must_tags:
         tags = TAG_NAMES[lang]
         out.append(t["f_tags"].format(v=", ".join(tags.get(x, x) for x in intent.must_tags)))
+    if profile != "fastest":
+        out.append(t[f"f_profile_{profile}"] + (t["f_profile_auto"] if profile_auto else ""))
     if semantic:
         out.append(t["f_search_semantic"] + (f" ({t['index_stale']})" if index_stale else ""))
     else:
