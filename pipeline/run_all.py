@@ -103,9 +103,16 @@ def run(
     )
     normalize.write_jsonl(pois, settings.poi_path)
     log.info("normalize: %d POI -> %s", len(pois), settings.poi_path)
-    # hand-added events: checked and bound to the fresh POI -> data/events.json
-    checked = events.run()
-    log.info("events: %d upcoming, %d errors", len(checked.events), len(checked.errors))
+    # hand-added events: checked and bound to the fresh POI -> data/events.json; a broken
+    # data/manual/events.json is logged and shown in REPORT.md, the rest of the build goes on
+    try:
+        checked = events.run()
+    except Exception:  # noqa: BLE001 - events must never stop the POI build
+        log.exception("events: the check failed, data/events.json not updated")
+    else:
+        for error in checked.errors:
+            log.error("events: %s", error)
+        log.info("events: %d upcoming, %d errors", len(checked.events), len(checked.errors))
 
     if skip_enrich:
         notes.append("Обогащение описаниями пропущено (--skip-enrich).")
