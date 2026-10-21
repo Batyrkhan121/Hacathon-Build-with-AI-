@@ -536,8 +536,8 @@ def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) ->
 
 
 PROBE_IDS = ["r11", "raw_coords", "prefs_unknown", "prefs_free_text", "prefs_extra",
-             "prefs_both", "prefs_conflict_kids", "prefs_conflict_coffee", "prefs_no_bars",
-             "prefs_foreign"]
+             "prefs_conflict_kids", "prefs_conflict_coffee", "prefs_foreign",
+             "prefs_no_bars_avoid"]
 
 
 def test_privacy_probes_schema_rejects_all() -> None:
@@ -558,8 +558,8 @@ def test_privacy_probes_over_http() -> None:
     assert not probes["r11"]["passed"] and probes["r11"]["got"] == "200"
     assert probes["raw_coords"]["passed"]
     assert not probes["prefs_unknown"]["passed"]
-    assert len(sent) == 10
-    assert "1/10 отклонены" in run_eval.privacy_summary(list(probes.values()))
+    assert len(sent) == 9
+    assert "1/9 отклонены" in run_eval.privacy_summary(list(probes.values()))
 
 
 def test_privacy_probe_fails_when_422_echoes_the_input() -> None:
@@ -578,7 +578,7 @@ def test_report_has_privacy_block(tmp_path: Path) -> None:
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert [p["id"] for p in report["privacy"]] == PROBE_IDS
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "Приватность: 10/10 отклонены с 422" in md
+    assert "Приватность: 9/9 отклонены с 422" in md
 
 
 # ------------------------------------------------------------ wave 8 (contract 1.3.0)
@@ -728,7 +728,7 @@ def test_capture_logs_sees_info_records() -> None:
 def test_crossing_check_off_for_url_and_noted(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(run_eval, "CROSSING_GRAPH", None)
     assert run_eval.crossing_node_flags() is None
-    assert "--graph-check" in run_eval.crossing_check_note(url_mode=True)
+    assert "--local-data-check" in run_eval.crossing_check_note(url_mode=True)
     broken = tmp_path / "walk_graph.npz"
     broken.write_bytes(b"not a zip")
     monkeypatch.setattr(run_eval, "CROSSING_GRAPH", broken)
@@ -847,3 +847,56 @@ def test_event_venue(mock_answer: Answer, tmp_path: Path) -> None:
                     encoding="utf-8")
     assert run_eval.event_venues(path) == {"event:a": "Опера"}
     assert run_eval.event_venues(tmp_path / "none.json") is None
+
+
+
+def test_event_venue_check_off_for_url_and_noted(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_eval, "EVENTS_FILE", None)
+    assert run_eval.event_venues() is None
+    assert "не сверены" in run_eval.events_check_note(url_mode=True)
+    broken = tmp_path / "events.json"
+    broken.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(run_eval, "EVENTS_FILE", broken)
+    assert run_eval.event_venues() is None
+    assert "не читается" in run_eval.events_check_note(url_mode=False)
+    monkeypatch.setattr(run_eval, "EVENTS_FILE", tmp_path / "none.json")
+    assert "нет файла" in run_eval.events_check_note(url_mode=False)
+
+
+def test_main_url_turns_local_data_checks_off(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_eval, "url_runner", lambda url, no_llm=False: (None, ["нет API"]))
+    monkeypatch.setattr(run_eval, "url_post", lambda url: lambda body: (-1, ""))
+    run_eval.main(["--url", "http://x", "--out", str(tmp_path), "--only", "E18"])
+    assert run_eval.CROSSING_GRAPH is None and run_eval.EVENTS_FILE is None
+    run_eval.main(["--url", "http://x", "--local-data-check", "--out", str(tmp_path),
+                   "--only", "E18"])
+    assert run_eval.CROSSING_GRAPH == run_eval.GRAPH_PATH
+    assert run_eval.EVENTS_FILE == run_eval.EVENTS_PATH
+    run_eval.main(["--mock", "--out", str(tmp_path), "--only", "E18"])  # restore defaults
+
+
+def test_compat_no_bars_probe(mock_answer: Answer) -> None:
+    seen: list[RecommendRequest] = []
+
+    def runner(req: RecommendRequest) -> Outcome:
+        seen.append(req)
+        ans = mock_answer.model_copy(deep=True)
+        ans.data_used.filters = ["предпочтения: —; избегать: бары"]
+        return Outcome(answer=ans)
+
+    ok = run_eval.run_compat_probe(runner)
+    assert ok["passed"], ok
+    assert seen[0].prefs is not None and seen[0].prefs.avoids == ["bars"]  # the synonym
+    plain = run_eval.run_compat_probe(lambda req: Outcome(answer=mock_answer))
+    assert not plain["passed"] and "избегать: бары" in plain["got"]
+    rejected = run_eval.run_compat_probe(lambda req: Outcome(rejected=True))
+    assert not rejected["passed"] and rejected["got"] == "422"
+    assert not run_eval.run_compat_probe(None)["passed"]
+
+
+def test_report_has_compat_line(tmp_path: Path) -> None:
+    run_eval.main(["--mock", "--out", str(tmp_path)])
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["compat"]["id"] == "compat_no_bars"
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Совместимость: likes no_bars" in md
