@@ -607,7 +607,8 @@ function renderRoute(route, byId, ctx, originName) {
     );
     const card = leg.to_id === 'origin' ? null : byId.get(leg.to_id);
     if (card) {
-      const no = ctx.stopNo(card);
+      // номер — из stop_ids; отрезок к карточке не из stop_ids (рассинхрон ответа) — без номера, не «Остановка null»
+      const no = ctx.stopNo ? ctx.stopNo(card) : null;
       items.push(
         h(
           'li',
@@ -616,7 +617,7 @@ function renderRoute(route, byId, ctx, originName) {
           h(
             'span',
             { class: 'tl-name' },
-            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${no}: ` }),
+            h('span', { class: 'visually-hidden', text: no == null ? `${t('route.stop')}: ` : `${t('route.stop')} ${no}: ` }),
             h('strong', { text: cardTitle(card) }),
             isWarmStop(card) ? warmMark() : null,
             h('span', {

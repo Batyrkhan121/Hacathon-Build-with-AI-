@@ -2983,6 +2983,8 @@ body:not(.v2) .submit-row .btn-primary {
    (не золотом: золото — остановка), другое место вне маршрута — точка. */
 .rank.is-event,
 .rank.is-off,
+.tl-rank.is-event,
+.tl-rank.is-off,
 .stop-icon.is-event span,
 .stop-icon.is-off span {
   background: var(--line);
@@ -2990,6 +2992,7 @@ body:not(.v2) .submit-row .btn-primary {
 }
 
 .rank.is-event::before,
+.tl-rank.is-event::before,
 .cal-icon {
   content: "";
   display: block;
@@ -3000,7 +3003,8 @@ body:not(.v2) .submit-row .btn-primary {
   mask: var(--cal-icon) center / contain no-repeat;
 }
 
-.rank.is-off::before {
+.rank.is-off::before,
+.tl-rank.is-off::before {
   content: "•";
 }
 
