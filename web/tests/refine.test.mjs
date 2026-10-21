@@ -93,3 +93,44 @@ test('пустой ответ: одна инструкция — кнопка «
   assert.equal(offerDropNoCafe(ans(['cafe'], []), req(['cafes'])), true);
   assert.equal(cafeAvoidedNote(ans(['cafe'], [{}]), req(['cafes'])), true);
 });
+
+// ---- ревью f8a2d10: возвращённые проверки и серия поправок
+
+test('строка «почему нет кафе» без «Моих предпочтений» — нет', () => {
+  assert.equal(cafeAvoidedNote(ans(['cafe']), req()), false);
+});
+
+test('«без кафе» среди других avoids (bars, cafes) — чип скрыт', () => {
+  assert.equal(noCafeChipState(ans(['park']), req(['bars', 'cafes'])), 'hidden');
+});
+
+test('строка «почему нет кафе» называет метку и группу так же, как они подписаны, ru/kk/en', () => {
+  for (const lang of ['ru', 'kk', 'en']) {
+    setLang(lang);
+    const note = t('noCafe.avoidedForQuery');
+    assert.ok(note.includes(t('avoid.cafes')) && note.includes(t('prefs.avoids')), `${lang}: ${note}`);
+  }
+});
+
+test('«Убрать «Без кафе»» только из сохранённых предпочтений (без чипа) — cafes уходит в этом запросе', () => {
+  const saved = { likes: ['coffee'], avoids: ['cafes', 'noisy'] }; // как после ручной правки хранилища
+  const p = mergePatch({}, { drop: ['cafes'] });
+  assert.deepEqual(p.avoids, []);
+  assert.deepEqual(mergePrefs(saved, p), { likes: ['coffee'], avoids: ['noisy'] });
+  assert.deepEqual(saved.avoids, ['cafes', 'noisy']);
+});
+
+test('серия «Ближе» → «Без кафе» → «Ещё» → «Убрать «Без кафе»»: поправки складываются, drop снимает только cafes', () => {
+  const saved = { likes: ['coffee', 'parks'], avoids: ['bars'] };
+  let p = mergePatch({}, { overrides: { max_walk_min: 12 } });
+  p = mergePatch(p, { avoids: ['cafes'] });
+  assert.deepEqual(mergePrefs(saved, p), { likes: ['parks'], avoids: ['bars', 'cafes'] }); // «без кафе» снимает «кофе»
+  p = mergePatch(p, { exclude: ['osm:node/1', 'osm:node/2'] });
+  p = mergePatch(p, { drop: ['cafes'] });
+  assert.deepEqual(p.overrides, { max_walk_min: 12 });
+  assert.deepEqual(p.exclude, ['osm:node/1', 'osm:node/2']);
+  assert.deepEqual(p.avoids, []);
+  assert.deepEqual(p.drop, ['cafes']);
+  // «Без кафе» убран — сохранённое «кофе» снова действует (его снимал только «Без кафе»)
+  assert.deepEqual(mergePrefs(saved, p), { likes: ['coffee', 'parks'], avoids: ['bars'] });
+});
