@@ -10,6 +10,8 @@ EMBED_PROVIDER picks where they come from:
 - "gemini" (fallback): Gemini via `google-genai`, needs GEMINI_API_KEY and an index built with it.
 WALK_GRAPH (default on): routes follow the OSM walk graph data/processed/walk_graph.npz when the
 file exists (`walk_graph_ready`); off, missing or any error -> straight segments.
+QADAM_EVENTS_PATH (default data/events.json): the dated events file; eval points it at its own
+fixture so a test event never goes into data/.
 Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`.
 """
 
@@ -56,6 +58,8 @@ class Settings:
     embed_provider: str = "openrouter"  # "openrouter" | "gemini"
     walk_graph_enabled: bool = True  # WALK_GRAPH; false -> straight segments
     walk_graph_path: Path | None = None  # data/processed/walk_graph.npz (QADAM_WALK_GRAPH_PATH)
+    # data/events.json (QADAM_EVENTS_PATH); eval points it at its own fixture, data stays as is
+    events_path: Path | None = None
 
     @property
     def has_llm(self) -> bool:
@@ -120,4 +124,5 @@ def get_settings() -> Settings:
         walk_graph_enabled=_bool("WALK_GRAPH", True),
         walk_graph_path=Path(os.getenv("QADAM_WALK_GRAPH_PATH",
                                        data_dir / "processed" / "walk_graph.npz")),
+        events_path=Path(os.getenv("QADAM_EVENTS_PATH", data_dir / "events.json")),
     )
