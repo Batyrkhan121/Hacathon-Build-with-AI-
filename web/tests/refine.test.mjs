@@ -87,3 +87,9 @@ test('кнопка и подсказка пустого ответа на ru/kk/
     assert.ok(t('empty.noCafeHint').includes(chip), `${lang}: ${t('empty.noCafeHint')}`);
   }
 });
+
+test('пустой ответ: одна инструкция — кнопка «Убрать», без строки «снимите в «Не хочу»»', () => {
+  assert.equal(cafeAvoidedNote(ans(['cafe'], []), req(['cafes'])), false);
+  assert.equal(offerDropNoCafe(ans(['cafe'], []), req(['cafes'])), true);
+  assert.equal(cafeAvoidedNote(ans(['cafe'], [{}]), req(['cafes'])), true);
+});

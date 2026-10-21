@@ -63,7 +63,12 @@ export function offerDropNoCafe(answer, request) {
   return !answer?.cards?.length && Boolean(request?.prefs?.avoids?.includes('cafes'));
 }
 
-// Строка «почему нет кафе»: запрос про одни кафе, а «без кафе» включено (в «Моих предпочтениях» или чипом)
+// Строка «почему нет кафе»: запрос про одни кафе, а «без кафе» включено (в «Моих предпочтениях» или чипом).
+// При пустом ответе её нет: там одна инструкция — кнопка «Убрать «Без кафе»» (offerDropNoCafe).
 export function cafeAvoidedNote(answer, request) {
-  return Boolean(request?.prefs?.avoids?.includes('cafes')) && cafeOnlyQuery(answer, request);
+  return (
+    Boolean(request?.prefs?.avoids?.includes('cafes')) &&
+    cafeOnlyQuery(answer, request) &&
+    !offerDropNoCafe(answer, request)
+  );
 }
