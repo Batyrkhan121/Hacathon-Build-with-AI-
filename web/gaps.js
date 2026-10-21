@@ -6,6 +6,8 @@ import { applyI18n, getLang, onLangChange, setLang, t } from './i18n.js';
 import {
   GAP_LAYERS,
   GAP_MIN,
+  attributionUrl,
+  formatBuiltAt,
   formatDate,
   formatLength,
   formatNumber,
@@ -241,8 +243,14 @@ function renderStatic() {
   const d = state.data;
   const poi = d && formatDate(d.poi_date);
   const walk = d && formatDate(d.walk_graph_date);
-  $('gaps-dates').hidden = !(poi && walk);
-  if (poi && walk) $('gaps-dates').textContent = t('gaps.dates', { poi, walk });
+  const built = d && formatBuiltAt(d.built_at);
+  $('gaps-dates').hidden = !(poi && walk && built);
+  if (poi && walk && built) $('gaps-dates').textContent = t('gaps.dates', { built, poi, walk });
+  // атрибуция — ссылки из полей файла (copyright_url, license_url), с проверкой хоста
+  if (d) {
+    $('gaps-attr-osm').setAttribute('href', attributionUrl('copyright', d.copyright_url));
+    $('gaps-attr-license').setAttribute('href', attributionUrl('license', d.license_url));
+  }
   if (state.error) {
     $('gaps-empty-title').textContent = t(state.error === 'notBuilt' ? 'gaps.notBuiltTitle' : 'gaps.errorTitle');
     $('gaps-empty-hint').textContent = t(state.error === 'notBuilt' ? 'gaps.notBuiltHint' : 'gaps.errorHint');

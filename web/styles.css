@@ -3325,3 +3325,18 @@ body:not(.v2) .submit-row .btn-primary {
   border-color: var(--accent);
   color: var(--accent-strong);
 }
+
+/* «Как помочь»: ссылки по клику (StreetComplete, OpenStreetMap), по одной в строке, 44 px */
+.gaps-help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  margin: 6px 0 0;
+}
+
+.gaps-help-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-strong);
+}

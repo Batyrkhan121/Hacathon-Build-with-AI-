@@ -8,6 +8,8 @@ import {
   GAP_BINS,
   GAP_LAYERS,
   GAP_MIN,
+  attributionUrl,
+  formatBuiltAt,
   formatDate,
   formatLength,
   formatNumber,
@@ -127,4 +129,37 @@ test('моки — CityGaps: итог города = сумма по ячейк�
   }
   assert.ok(large.cells.length > 1000 && large.cells.length <= 5000, String(large.cells.length));
   assert.equal(isCityGaps({ format_version: 1, h3_res: 9, city: {}, cells: [] }), false);
+});
+
+test('дата сборки built_at — по Астане (UTC+5)', () => {
+  assert.equal(formatBuiltAt('2026-10-22T09:00:00+05:00'), '22.10.2026');
+  assert.equal(formatBuiltAt('2026-10-21T20:30:00Z'), '22.10.2026');
+  assert.equal(formatBuiltAt('нет'), null);
+});
+
+test('атрибуция — ссылки из полей файла, но только https и свои хосты', () => {
+  assert.equal(attributionUrl('copyright', mock.copyright_url), 'https://www.openstreetmap.org/copyright');
+  assert.equal(attributionUrl('license', mock.license_url), 'https://opendatacommons.org/licenses/odbl/1-0/');
+  assert.equal(attributionUrl('copyright', 'http://www.openstreetmap.org/copyright'), 'https://www.openstreetmap.org/copyright');
+  assert.equal(attributionUrl('license', 'https://example.org/odbl'), 'https://opendatacommons.org/licenses/odbl/1-0/');
+  assert.equal(attributionUrl('copyright', 'javascript:alert(1)'), 'https://www.openstreetmap.org/copyright');
+});
+
+test('внешние ссылки страницы — только по клику, noopener noreferrer; картинок и скриптов извне нет', () => {
+  const html = read('../gaps.html');
+  const hrefs = [...html.matchAll(/<a [^>]*href="(https:[^"]+)"[^>]*>/g)].map((m) => [m[1], m[0]]);
+  assert.deepEqual(hrefs.map(([h]) => h).sort(), [
+    'https://opendatacommons.org/licenses/odbl/1-0/',
+    'https://streetcomplete.app/',
+    'https://www.openstreetmap.org/',
+    'https://www.openstreetmap.org/copyright',
+  ]);
+  for (const [, tag] of hrefs) assert.match(tag, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(html, /<(script|img|link)[^>]+(src|href)="https?:/);
+  for (const lang of ['ru', 'kk', 'en']) {
+    setLang(lang);
+    assert.notEqual(t('gaps.linkStreetComplete'), 'gaps.linkStreetComplete');
+    assert.notEqual(t('gaps.linkOsmEdit'), 'gaps.linkOsmEdit');
+    assert.match(t('gaps.dates', { built: '1', poi: '2', walk: '3' }), /1.*2.*3/);
+  }
 });

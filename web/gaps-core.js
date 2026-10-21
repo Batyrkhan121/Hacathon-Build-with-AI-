@@ -109,3 +109,28 @@ export function formatDate(isoDate) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ''));
   return m ? `${m[3]}.${m[2]}.${m[1]}` : null;
 }
+
+// Время сборки (built_at, с поясом) → дата по Астане (UTC+5): «2026-10-22T09:00:00+05:00» → «22.10.2026»
+export function formatBuiltAt(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return formatDate(new Date(ms + 5 * 3600 * 1000).toISOString().slice(0, 10));
+}
+
+// Ссылки атрибуции — из полей файла (copyright_url, license_url), но только https и только свои хосты:
+// иначе — адрес из контракта 1.4.0 (страница не ведёт туда, куда не обещала)
+const ATTR_HOSTS = { copyright: 'www.openstreetmap.org', license: 'opendatacommons.org' };
+export const ATTR_DEFAULTS = {
+  copyright: 'https://www.openstreetmap.org/copyright',
+  license: 'https://opendatacommons.org/licenses/odbl/1-0/',
+};
+
+export function attributionUrl(kind, url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:' && u.hostname === ATTR_HOSTS[kind]) return u.href;
+  } catch {
+    // не адрес — берём из контракта
+  }
+  return ATTR_DEFAULTS[kind];
+}
