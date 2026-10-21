@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "pattern": "^[a-z0-9.-]+\\.[a-z]{2,}$",
+          "title": "Domain",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 2,
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "description": "venue | organizer | city_portal",
+          "enum": [
+            "venue",
+            "organizer",
+            "city_portal"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "terms_url": {
+          "pattern": "^https://\\S+$",
+          "title": "Terms Url",
+          "type": "string"
+        },
+        "checked_at": {
+          "format": "date",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "domain",
+        "name",
+        "kind",
+        "terms_url",
+        "checked_at"
+      ],
+      "title": "Source",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "data/manual/event_sources.json as a whole (only for the JSON schema).",
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "format_version": {
+      "const": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/Source"
+      },
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "format_version",
+    "sources"
+  ],
+  "title": "Qadam: источники событий (data/manual/event_sources.json)",
+  "type": "object"
+}

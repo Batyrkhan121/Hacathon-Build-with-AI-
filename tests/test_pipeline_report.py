@@ -140,6 +140,7 @@ def test_report_warm_places_wheelchair_coverage_and_events() -> None:
     }
     events = {"total": 3, "valid": 2, "upcoming": 1, "past": 1,
               "bound_by": {"id": 1, "none": 1}, "by_source": {"Astana Opera": 1},
+              "by_kind": {"venue": 1},
               "errors": ["#3 x: source_url: нужна ссылка https://"], "warnings": []}
     text = build_report(pois, [PAYLOAD], LANDMARKS, walk_coverage=cov, events=events)
     for piece in ("## Метка «в тепле»", "мест: **2**", "Часы работы известны у 1 (50%)",
@@ -150,7 +151,7 @@ def test_report_warm_places_wheelchair_coverage_and_events() -> None:
                   "| бордюр: занижен (lowered, flush, kerb=no) | 1 | 25.0% |",
                   "| бордюр: нет данных | 3 | 75.0% |",
                   "предстоящих в data/events.json: 1", "по id 1", "не привязана 1",
-                  "Astana Opera — 1", "Ошибка: #3 x"):
+                  "Astana Opera — 1; по видам: площадки — 1", "Ошибка: #3 x"):
         assert piece in text, piece
     assert "Граф не совпал" not in text
     assert "Граф не совпал" in build_report(

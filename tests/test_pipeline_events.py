@@ -10,7 +10,7 @@ import pytest
 
 from app.hours import ASTANA_TZ
 from app.schemas import POI
-from pipeline.events import check, json_schema
+from pipeline.events import MAPS, TICKETS, check, forbidden_source, json_schemas
 
 ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=ASTANA_TZ)
@@ -32,8 +32,8 @@ POIS = [
     poi("osm:node/4", "Сквер", "park", 51.1500 + 0.3 * DLAT, 71.4300, indoor=False),
 ]
 SOURCES = {"format_version": 1, "sources": [
-    {"domain": "astanaopera.kz", "name": "Astana Opera", "terms_url": "https://astanaopera.kz/terms",
-     "checked_at": "2026-10-20"},
+    {"domain": "astanaopera.kz", "name": "Astana Opera", "kind": "venue",
+     "terms_url": "https://astanaopera.kz/terms", "checked_at": "2026-10-20"},
 ]}
 
 
@@ -68,7 +68,9 @@ def test_event_by_poi_id_gets_the_contract_fields() -> None:
     assert rec["indoor"] is True  # from the venue
     assert rec["tags"] == ["free", "indoor", "kids"]
     assert rec["price"] == {"min": 0, "max": 0, "currency": "KZT"}
+    assert rec["source_kind"] == "venue"
     assert res.summary()["by_source"] == {"Astana Opera": 1}
+    assert res.summary()["by_kind"] == {"venue": 1}
 
 
 def test_coordinates_bind_by_venue_name_before_a_nearer_place() -> None:
@@ -109,7 +111,8 @@ def test_a_named_venue_we_do_not_have_is_not_guessed() -> None:
     ({"source_url": "http://astanaopera.kz/afisha"}, "https"),
     ({"source_url": "https://2gis.kz/astana/firm/1"}, "2GIS и Яндекс"),
     ({"source_url": "https://afisha.yandex.kz/astana"}, "2GIS и Яндекс"),
-    ({"source_url": "https://ticketon.kz/event/1"}, "не в data/manual/event_sources.json"),
+    ({"source_url": "https://www.ticketon.kz/event/1"}, "агрегаторы билетов"),
+    ({"source_url": "https://other-venue.kz/event/1"}, "не в data/manual/event_sources.json"),
     ({"tags": ["kids", "romantic"]}, "не из TAG_VOCAB: romantic"),
     ({"category": "concert"}, "category"),
     ({"price": {"min": 5000, "max": 3000}}, "price.max меньше"),
@@ -158,7 +161,45 @@ def test_committed_files_check_clean_and_the_schema_is_current() -> None:
             if line.strip()]
     res = check(raw, pois, sources, NOW)
     assert raw["format_version"] == FORMAT_VERSION and res.errors == []
-    schema = json.loads((manual / "events.schema.json").read_text(encoding="utf-8"))
-    assert schema == json_schema(), "run: python -m pipeline.events --schema"
+    for name, schema in json_schemas().items():
+        committed = json.loads((manual / name).read_text(encoding="utf-8"))
+        assert committed == schema, f"{name}: run python -m pipeline.events --schema"
     published = json.loads((ROOT / "data" / "events.json").read_text(encoding="utf-8"))
     assert isinstance(published, list)
+
+
+@pytest.mark.parametrize(("host", "reason"), [
+    ("2gis.kz", MAPS), ("2gis.ru", MAPS), ("afisha.yandex.kz", MAPS), ("ya.ru", MAPS),
+    ("ticketon.kz", TICKETS), ("www.ticketon.kz", TICKETS), ("sxodim.com", TICKETS),
+    ("astanaopera.kz", None), ("notyandex.kz", None), ("ticketon.kz.example.com", None),
+])
+def test_forbidden_sources_one_list(host: str, reason: str | None) -> None:
+    assert forbidden_source(host) == reason
+
+
+def source(**over) -> dict:
+    base = {"domain": "astanaopera.kz", "name": "Astana Opera", "kind": "venue",
+            "terms_url": "https://astanaopera.kz/terms", "checked_at": "2026-10-20"}
+    return {k: v for k, v in (base | over).items() if v is not None}
+
+
+@pytest.mark.parametrize(("sources", "fragment"), [
+    ([source(kind=None)], "источник #1: kind: обязательное поле"),
+    ([source(kind="aggregator")], "источник #1: kind"),
+    ([source(domain="ticketon.kz", name="Ticketon", kind="organizer")], "агрегаторы билетов"),
+    ([source(domain="afisha.yandex.kz", name="Афиша")], "2GIS и Яндекс"),
+    ([source(), source(name="Опера ещё раз")], "источник #2: домен astanaopera.kz уже в списке"),
+])
+def test_bad_sources_are_errors(sources: list[dict], fragment: str) -> None:
+    res = run(event(), sources={"format_version": 1, "sources": sources})
+    assert any(fragment in e for e in res.errors), res.errors
+
+
+@pytest.mark.parametrize("kind", ["venue", "organizer", "city_portal"])
+def test_every_source_kind_is_accepted(kind: str) -> None:
+    portal = source(domain="astana.gov.kz", name="Акимат Астаны", kind=kind,
+                    terms_url="https://astana.gov.kz/terms")
+    res = run(event(source_url="https://astana.gov.kz/afisha/1"),
+              sources={"format_version": 1, "sources": [portal]})
+    assert res.errors == [] and res.events[0]["source_kind"] == kind
+    assert res.events[0]["source_name"] == "Акимат Астаны"
