@@ -1,7 +1,7 @@
 {
   "request_id": "mock-route-0001",
   "lang": "ru",
-  "summary": "МОК (волна 8): мороз, маршрут без ступенек, вечернее событие у сферы и тёплый ТРЦ.",
+  "summary": "МОК (волна 8.1): мороз, маршрут без ступенек, вечерний концерт в ТРЦ последней остановкой.",
   "cards": [
     {
       "rank": 1,
@@ -38,8 +38,8 @@
     {
       "rank": 2,
       "poi_id": "mock:poi/boulevard",
-      "title": "Световое шоу у сферы Нур Алем (мок)",
-      "category": "entertainment",
+      "title": "Бульвар у EXPO (мок)",
+      "category": "park",
       "geo": {
         "lat": 51.091109,
         "lon": 71.411388
@@ -48,31 +48,27 @@
       "walk_min": 9,
       "visit_min_low": 15,
       "visit_min_high": 25,
-      "why": "Вечером сферу подсвечивают — короткое шоу в двух шагах от музея.",
-      "what_to_do": "Подойдите к 19:00 к сцене у сферы; одевайтесь теплее, шоу на улице.",
+      "why": "Короткая прогулка на воздухе между павильонами — пауза после музея.",
+      "what_to_do": "Идея: снять сферу Нур Алем с бульвара на закате (≈18:00 в октябре).",
       "open_status": "unknown",
       "open_confidence": "low",
       "open_note": "нет данных о часах работы (открытая территория)",
-      "idea_source": "poi_data",
+      "idea_source": "generated",
       "facts_sources": [
         "mock"
       ],
       "data_confidence": 0.4,
       "tags": [
         "outdoor",
+        "walk",
         "photo_spot"
-      ],
-      "kind": "event",
-      "starts_at": "2026-10-20T19:00:00+05:00",
-      "ends_at": "2026-10-20T21:00:00+05:00",
-      "source_url": "https://example.org/qadam-mock-event",
-      "address": "Бульвар EXPO, сцена у сферы"
+      ]
     },
     {
       "rank": 3,
       "poi_id": "mock:poi/mega_silk_way",
-      "title": "ТРЦ Mega Silk Way",
-      "category": "mall",
+      "title": "Вечер живой музыки в атриуме (мок)",
+      "category": "entertainment",
       "geo": {
         "lat": 51.0889,
         "lon": 71.4103
@@ -81,8 +77,8 @@
       "walk_min": 3,
       "visit_min_low": 25,
       "visit_min_high": 45,
-      "why": "Тёплый финал прогулки рядом: фудкорт и развлечения, если на улице холодно.",
-      "what_to_do": "Перекусите на фудкорте и пройдитесь по галерее — удобная точка, чтобы вызвать такси.",
+      "why": "Вечером в атриуме играют живую музыку — тёплый финал прогулки.",
+      "what_to_do": "Приходите к 19:00, места у сцены занимают заранее.",
       "open_status": "open",
       "open_confidence": "medium",
       "open_note": "МОК: по данным OSM ежедневно 10:00–22:00 (часть дней не подтверждена)",
@@ -92,11 +88,14 @@
       ],
       "data_confidence": 0.7,
       "tags": [
-        "shopping",
-        "food",
         "indoor",
-        "wheelchair"
-      ]
+        "music"
+      ],
+      "kind": "event",
+      "starts_at": "2026-10-20T19:00:00+05:00",
+      "ends_at": "2026-10-20T21:00:00+05:00",
+      "source_url": "https://example.org/qadam-mock-event",
+      "venue": "Атриум Mega Silk Way"
     }
   ],
   "route": {
@@ -192,7 +191,8 @@
     "unknown_lit_share": 0.15,
     "kerb_lowered": 2,
     "kerb_unknown": 1,
-    "max_outdoor_leg_min": 7
+    "max_outdoor_leg_min": 7,
+    "straight_share": 0.0
   },
   "intent": {
     "raw_query": "Я у EXPO, хочу что-то необычное на 1–2 часа, пешком",
@@ -255,7 +255,7 @@
     "model": "claude-sonnet-5-5"
   },
   "warnings": [
-    "МОК-ДАННЫЕ для разработки UI (волна 8) — это не реальный ответ системы"
+    "МОК-ДАННЫЕ для разработки UI (волна 8.1) — это не реальный ответ системы"
   ],
   "disclaimer": "Подсказки основаны на открытых данных и могут устареть. Часы работы проверяйте перед визитом. Тексты «Идея ИИ» сгенерированы моделью.",
   "latency_ms": 1840
