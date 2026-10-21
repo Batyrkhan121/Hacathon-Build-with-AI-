@@ -225,16 +225,25 @@ export function renderAnswer(root, answer, ctx) {
       )
     : null;
 
+  // 1.3.1: событие, до которого больше 30 мин (от context.local_time), — не остановка «сейчас», а отдельный
+  // блок «Вечером рядом»; остальные события — последними среди карточек (как и в маршруте — последней остановкой).
+  const nowIso = answer.context?.local_time;
+  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso };
+  const later = answer.cards.filter((c) => isLaterEvent(c, nowIso));
+  const nowCards = answer.cards.filter((c) => !later.includes(c));
+  nowCards.sort((a, b) => (a.kind === 'event') - (b.kind === 'event'));
   const body = answer.cards.length
     ? [
         answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
-        h(
-          'ol',
-          { class: 'cards' },
-          answer.cards.map((c) =>
-            renderCard(c, when, { ...ctx, origin: answer.context?.origin, nowIso: answer.context?.local_time }),
-          ),
-        ),
+        nowCards.length ? h('ol', { class: 'cards' }, nowCards.map((c) => renderCard(c, when, cardCtx))) : null,
+        later.length
+          ? h(
+              'section',
+              { class: 'later-events', 'aria-labelledby': 'later-events-title' },
+              h('h3', { class: 'later-events-title', id: 'later-events-title', text: laterTitle(later, nowIso) }),
+              h('ol', { class: 'cards' }, later.map((c) => renderCard(c, when, cardCtx))),
+            )
+          : null,
       ]
     : [renderEmpty(ctx)];
 
@@ -309,6 +318,26 @@ function eventWhen(card, nowIso) {
   return t('event.onDate', { date: `${d}.${m}`, time: span });
 }
 
+const LATER_MIN = 30; // до начала больше 30 мин — событие «позже», а не остановка «сейчас»
+
+function isLaterEvent(card, nowIso) {
+  if (card.kind !== 'event' || !card.starts_at || !nowIso) return false;
+  return Date.parse(card.starts_at) - Date.parse(nowIso) > LATER_MIN * 60000;
+}
+
+// «Вечером рядом», если первое из событий начинается с 17:00 по Астане; иначе «Позже рядом»
+function laterTitle(cards, nowIso) {
+  const first = cards.map((c) => c.starts_at).sort()[0];
+  const hour = Number(localParts(first).time.slice(0, 2));
+  return t(hour >= 17 ? 'event.laterEvening' : 'event.later');
+}
+
+function eventDomain(card) {
+  const src = card.source_url ? httpsOnly(card.source_url) : null;
+  if (!src) return '';
+  return new URL(src).hostname.replace(/^www\./, '');
+}
+
 function eventIsNow(card, nowIso) {
   if (!nowIso || !card.ends_at) return false;
   const now = Date.parse(nowIso);
@@ -336,7 +365,9 @@ function renderEventBlock(card, ctx) {
       h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
       eventIsNow(card, ctx.nowIso) ? h('span', { class: 'event-now', text: t('event.now') }) : null,
     ),
-    card.address ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.address }) }) : null,
+    card.venue || card.address
+      ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.venue || card.address }) })
+      : null,
     src
       ? h(
           'a',
@@ -353,7 +384,7 @@ function renderEventBlock(card, ctx) {
   );
 }
 
-// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min (≤ 120), «без кафе» → prefs.avoids coffee,
+// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min (≤ 120), «без кафе» → prefs.avoids cafes,
 // «ещё» → exclude_poi_ids (показанные в серии места). Разовый повтор запроса, поправки складываются, без сохранения.
 function renderRefineChips(answer, ctx) {
   if (!answer.cards.length || !ctx.onCloser) return null;
@@ -366,7 +397,7 @@ function renderRefineChips(answer, ctx) {
       h('button', { type: 'button', class: 'chip', onclick: () => ctx.onCloser(closer) }, t('refineChip.closer')),
     );
   }
-  if (!req.prefs?.avoids?.includes('coffee')) {
+  if (!req.prefs?.avoids?.includes('cafes')) {
     chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
   }
   // «Ещё» (exclude_poi_ids): скрыт, когда в серии показано уже 9 мест
@@ -382,10 +413,10 @@ function renderRefineChips(answer, ctx) {
   );
 }
 
-// «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть — значит, кофе просили
-// в самом запросе и сервер отдал приоритет запросу. Говорим об этом прямо, а не молча.
+// «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть (кофе в тексте запроса
+// или сервер не учёл метку) — говорим об этом прямо, без догадок о причине.
 function renderNoCafeConflict(answer, ctx) {
-  const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('coffee');
+  const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('cafes');
   if (!avoidsCoffee || !answer.cards.some((c) => c.category === 'cafe')) return null;
   return h('p', { class: 'warning no-cafe-conflict', role: 'note', text: t('noCafe.conflict') });
 }
@@ -441,20 +472,9 @@ function renderGraphSummary(route, ctx) {
         s: signals,
       })
     : t('route.graphSummaryNoCross', { dist: formatDistance(route.total_walk_m), min: walkMin });
-  const steps = route.steps_count || 0;
-  // 1.3.0: ступени уходят в строку профиля маршрута (renderProfileLine), здесь только тротуары и переходы
-  const withSteps = !hasProfileFacts(route);
-  // line — в заголовке свёрнутого маршрута (итог виден без раскрытия), caveat — внутри
+  // text — факт «по тротуарам» в заголовке свёрнутого маршрута; ступени — отдельным фактом; caveat — внутри
   return {
-    line: h(
-      'span',
-      { class: 'route-graph-line' },
-      base,
-      withSteps ? ' · ' : null,
-      withSteps
-        ? h('span', { class: steps ? 'route-steps is-warn' : 'route-steps', text: stepsText(route, ctx) })
-        : null,
-    ),
+    text: base,
     caveat: h('p', { class: 'route-caveat', text: t('route.osmCaveat') }),
   };
 }
@@ -468,51 +488,52 @@ function stepsText(route, ctx) {
     : t('route.noSteps');
 }
 
-// В note сервер пишет о прямых отрезках («часть отрезков по прямой», «профиль не учтён: отрезки прямые»).
-// На прямых участках ступени и бордюры не проверены — «без ступенек» тогда не пишем.
-const STRAIGHT_NOTE = /прям|түзу|straight/i;
-
-// 1.3.0: у маршрута есть факты профиля (доли освещённости, бордюры)
-function hasProfileFacts(route) {
-  return route.lit_share != null || route.kerb_lowered != null;
-}
-
 const pct = (x) => Math.round((x || 0) * 100);
 // Доля «освещено» — вниз, как у CORE: «нет данных» не выдаём за «освещено»
 const pctFloor = (x) => Math.floor((x || 0) * 100 + 1e-9);
 
-// 1.3.0, итог маршрута одной строкой без точек-разделителей: «без ступенек, освещено 78 % по данным OSM,
-// нет данных 15 %». Все числа — из ответа (их считает код на сервере). «Без ступенек» — только по графу
-// и при нуле ступеней; у прямых отрезков ступени и освещённость неизвестны — так и пишем.
-function renderProfileLine(route, ctx) {
-  const asked = ctx.request?.route_profile;
-  if (!hasProfileFacts(route) && !(asked && asked !== 'fastest')) return null;
+// 1.3.1, итог маршрута — короткие факты с иконками, по одному на строку (цвет ink-2; бирюзовым — только
+// ссылки и кнопки). Все числа — из ответа (их считает код на сервере).
+// «Без ступенек» — только по графу, при нуле ступеней и straight_share = 0: на прямых отрезках ступени не проверены.
+// Освещение — только при route.profile = lit («Ночью — по крупным улицам»), «по данным OSM».
+// Бордюры — только из kerb_lowered / kerb_unknown (по всему пути), из обрезанного списка crossings не считаем.
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+function routeFact(kind, text, extra = '') {
+  return h('span', { class: `route-fact is-${kind}${extra}`, text: cap(text) });
+}
+
+function renderRouteFacts(route, ctx, graphText) {
   const graph = route.path_source === 'graph';
-  const partlyStraight = STRAIGHT_NOTE.test(route.note || '');
-  const parts = [];
-  // Показываем фактический профиль (route.profile), а не выбранный в переключателе
-  if (asked && route.profile && asked !== route.profile) {
-    parts.push(t('route.profileFallback', { asked: t(`profile.${asked}`), actual: t(`profile.${route.profile}`) }));
+  const facts = [
+    routeFact('time', t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) })),
+  ];
+  if (graphText) facts.push(routeFact('walk', graphText));
+  if (graph && route.steps_count === 0 && route.straight_share === 0) {
+    facts.push(routeFact('steps', t('route.stepFree')));
+  } else if (graph && route.steps_count > 0) {
+    facts.push(routeFact('steps', stepsText(route, ctx), ' is-warn'));
   }
-  if (graph && route.steps_count === 0 && !partlyStraight) parts.push(t('route.stepFree'));
-  else if (graph && route.steps_count > 0) parts.push(stepsText(route, ctx));
-  if (route.lit_share != null) {
-    if (!graph || (route.unknown_lit_share ?? 1) >= 0.995) {
-      parts.push(t('route.litNoData'));
-    } else {
-      parts.push(t('route.litShare', { lit: pctFloor(route.lit_share) }));
-      if (pct(route.unknown_lit_share) > 0) parts.push(t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }));
-    }
-  }
-  // Бордюры — только из kerb_lowered / kerb_unknown (по всему пути); из обрезанного списка crossings не считаем
   if (graph && route.profile === 'accessible' && route.kerb_lowered != null) {
-    if (route.kerb_lowered > 0) parts.push(t('route.kerbs', { n: route.kerb_lowered }));
-    if (route.kerb_unknown) parts.push(t('route.kerbsUnknown', { n: route.kerb_unknown }));
+    const kerbs = [];
+    if (route.kerb_lowered > 0) kerbs.push(t('route.kerbs', { n: route.kerb_lowered }));
+    if (route.kerb_unknown) kerbs.push(t('route.kerbsUnknown', { n: route.kerb_unknown }));
+    if (kerbs.length) facts.push(routeFact('kerb', kerbs.join(', ')));
   }
-  if (!parts.length) return null;
-  const text = parts.join(', ');
-  const warn = graph && route.steps_count > 0;
-  return h('span', { class: warn ? 'route-profile-line is-warn' : 'route-profile-line', text: text[0].toUpperCase() + text.slice(1) });
+  if (route.profile === 'lit' && route.lit_share != null) {
+    const lit =
+      !graph || (route.unknown_lit_share ?? 1) >= 0.995
+        ? t('route.litNoData')
+        : [
+            t('route.litShare', { lit: pctFloor(route.lit_share) }),
+            pct(route.unknown_lit_share) > 0 ? t('route.litUnknownShare', { n: pct(route.unknown_lit_share) }) : null,
+          ]
+            .filter(Boolean)
+            .join(', ');
+    facts.push(routeFact('lit', lit));
+  }
+  if (route.fits_budget === false) facts.push(routeFact('over', t('route.overBudget'), ' is-warn'));
+  return facts;
 }
 
 // Таймлайн: старт → (отрезок) → остановка → … Маршрут может быть петлёй: последний отрезок в origin.
@@ -542,7 +563,13 @@ function renderRoute(route, byId, ctx, originName) {
             h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
             h('strong', { text: cardTitle(card) }),
             isWarmStop(card) ? warmMark() : null,
-            h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
+            h('span', {
+              class: 'tl-visit',
+              text:
+                card.kind === 'event' && card.starts_at
+                  ? ` · ${t('event.by', { time: localParts(card.starts_at).time })}`
+                  : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
+            }),
           ),
         ),
       );
@@ -567,13 +594,7 @@ function renderRoute(route, byId, ctx, originName) {
       'summary',
       { class: 'route-head' },
       h('strong', { text: t('route.title') }),
-      h('span', {
-        class: 'route-total',
-        text: t('route.total', { min: route.total_min, dist: formatDistance(route.total_walk_m) }),
-      }),
-      graph ? graph.line : null,
-      renderProfileLine(route, ctx),
-      route.fits_budget === false ? h('span', { class: 'route-over', text: t('route.overBudget') }) : null,
+      renderRouteFacts(route, ctx, graph ? graph.text : null),
     ),
     h('ol', { class: 'timeline' }, items),
     graph ? graph.caveat : null,
@@ -638,7 +659,7 @@ function renderCard(card, when, ctx) {
       h('span', {
         class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`,
         title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
-        text: poi ? t('badge.poi') : t('badge.ai'),
+        text: isEvent ? t('event.fromListings', { domain: eventDomain(card) }) : poi ? t('badge.poi') : t('badge.ai'),
       }),
       isEvent ? null : h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
     ),
@@ -753,7 +774,11 @@ function renderDirections(card, origin, preciseStart, poi = false) {
     { class: 'directions' },
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
     // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
-    poi ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
+    card.kind === 'event'
+      ? h('span', { class: 'dir-source v2-only', text: t('event.fromListings', { domain: eventDomain(card) }) })
+      : poi
+        ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') })
+        : null,
     link(twogis, t('dir.2gis'), 'twogis'),
     link(yandex, t('dir.yandex'), 'yandex'),
   );

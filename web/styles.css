@@ -816,8 +816,7 @@ input[type="time"] {
   transform: rotate(-135deg);
 }
 
-.route > summary .route-graph-line,
-.route > summary .route-over {
+.route > summary .route-fact {
   flex-basis: 100%;
   margin: 0;
 }
@@ -827,10 +826,6 @@ input[type="time"] {
   border-bottom: 1px solid rgba(10, 86, 106, 0.18);
 }
 
-.route-total {
-  font-size: 13.5px;
-  font-variant-numeric: tabular-nums;
-}
 
 /* Таймлайн маршрута: точки (старт, остановки) и пунктирные отрезки между ними. */
 .timeline {
@@ -893,12 +888,6 @@ input[type="time"] {
   color: var(--ink-2);
 }
 
-.route-over {
-  margin: 8px 0 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--warn-ink);
-}
 
 .route-foot {
   display: flex;
@@ -1381,13 +1370,6 @@ input[type="time"] {
 
 /* Блок «По тротуарам…» под таймлайном маршрута. */
 
-.route-graph-line {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-strong);
-  font-variant-numeric: tabular-nums;
-}
 
 .route-steps.is-warn {
   color: var(--warn-ink);
@@ -2699,24 +2681,8 @@ body:not(.v2) .submit-row .btn-primary {
 
 /* ================================================================== волна 8 (T124, контракт 1.3.0) */
 
-/* Итог профиля маршрута — одна строка в заголовке свёрнутого маршрута */
-.route-profile-line {
-  flex-basis: 100%;
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-strong);
-  font-variant-numeric: tabular-nums;
-  text-wrap: pretty;
-}
 
-.route-profile-line.is-warn {
-  color: var(--warn-ink);
-}
 
-.v2 .route-profile-line {
-  font-size: var(--v2-fs-s);
-}
 
 /* «В тепле»: плашка-предложение при морозе */
 .warm-offer {
@@ -2925,4 +2891,89 @@ body:not(.v2) .submit-row .btn-primary {
 /* «Без кафе» включено, а кафе в ответе есть (кофе просили в запросе) — предупреждение над карточками */
 .no-cafe-conflict {
   margin: 0 0 12px;
+}
+
+/* 1.3.1, итог маршрута — факты с иконками, по одному на строку, цвет ink-2 (бирюзовым — только ссылки и кнопки) */
+.route-fact {
+  display: flex;
+  flex-basis: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-fact::before {
+  content: "";
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  background: var(--ink-2);
+  -webkit-mask: var(--fact-icon) center / contain no-repeat;
+  mask: var(--fact-icon) center / contain no-repeat;
+}
+
+.route-fact.is-warn {
+  color: var(--warn-ink);
+}
+
+.route-fact.is-warn::before {
+  background: var(--warn-ink);
+}
+
+.v2 .route-fact {
+  font-size: var(--v2-fs-s);
+}
+
+/* заголовок маршрута, заметки и оговорка внутри — тоже не бирюзовые */
+.route,
+.route > summary strong,
+.route-note,
+.route-caveat {
+  color: var(--ink);
+}
+
+.route-note,
+.route-caveat {
+  color: var(--ink-2);
+}
+
+.route-fact.is-time {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.6a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zM7.2 4.5h1.6v3.1l2.2 1.3-.8 1.4-3-1.8z'/%3E%3C/svg%3E");
+}
+
+.route-fact.is-walk {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M9 1a1.6 1.6 0 1 1 0 3.2A1.6 1.6 0 0 1 9 1zM7.2 5.2h2.6l1.7 2.7h2v1.6h-2.9L9.6 8.1 9 10.6l2 2.3V16H9.4v-2.4L7.6 11.7 6.7 16H5l1.4-7.1-1 .7V12H3.8V8.7z'/%3E%3C/svg%3E");
+}
+
+.route-fact.is-steps {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 14h4v-3h3V8h3V5h4v1.6h-2.4v3H9.6v3H6.6v3H1z'/%3E%3C/svg%3E");
+}
+
+.route-fact.is-kerb {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 12h6l2-2h6v1.6h-5.3l-2 2H1zM4.5 3a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zm0 1.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z'/%3E%3C/svg%3E");
+}
+
+.route-fact.is-lit {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10.5 1.5A6.5 6.5 0 1 0 14.5 11 5.2 5.2 0 0 1 10.5 1.5z'/%3E%3C/svg%3E");
+}
+
+.route-fact.is-over {
+  --fact-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M7.2 2h1.6v8H7.2zM7.2 11.8h1.6v1.8H7.2z'/%3E%3C/svg%3E");
+}
+
+/* 1.3.1: события, до которых больше 30 мин, — отдельный блок «Вечером рядом» под карточками */
+.later-events {
+  margin-top: 20px;
+}
+
+.later-events-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
 }
