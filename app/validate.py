@@ -125,6 +125,7 @@ VISIT_MIN: dict[str, tuple[int, int]] = {
     "entertainment": (60, 120),
     "other": (20, 40),
 }
+EVENT_VISIT_FLOOR_MIN = 120  # an event up to 2 h is visited whole whatever its category
 _TODO_GROUP: dict[str, str] = {
     "cafe": "food",
     "restaurant": "food",
@@ -488,6 +489,22 @@ def _visit_minutes(category: Category, intent: QueryIntent) -> tuple[int, int]:
     return low, high
 
 
+def _event_visit(event: ev.Event, now: datetime, intent: QueryIntent,
+                 fallback: tuple[int, int]) -> tuple[int, int]:
+    """Minutes on site at an event. What is left of a session, when that is no longer than a
+    usual visit of its kind: the upper VISIT_MIN of the category, at least
+    EVENT_VISIT_FLOOR_MIN (a 2-hour concert stays 120/120, a 3-hour opera 180/180). A longer
+    event (a fair 14:00–21:00, a run of many days) gets the category estimate — nobody stays
+    the whole 7 hours, and the route must not count them. No ends_at: `fallback`."""
+    left = ev.visit_minutes(event, now)  # None: a run or no ends_at
+    usual = max(VISIT_MIN.get(event.category, VISIT_MIN["other"])[1], EVENT_VISIT_FLOOR_MIN)
+    if left is not None and left[1] <= usual:
+        return left
+    if left is not None or not ev.is_session(event):
+        return _visit_minutes(event.category, intent)
+    return fallback
+
+
 def _facts_sources(cand: Candidate) -> list[Source]:
     sources: list[Source] = list(dict.fromkeys(cand.poi.sources))
     facts: list[Source] = [s for s in sources if s != "llm_generated"]
@@ -750,10 +767,8 @@ def finalize(
 
         event = events.get(poi_id)
         low, high = sorted((item.visit_min_low, item.visit_min_high))
-        if event is not None:  # the event times beat the model's guess (a 2-hour concert);
-            # a run (an exhibition of many days) gets the category estimate, as in the template
-            run = None if ev.is_session(event) else _visit_minutes(event.category, intent)
-            low, high = ev.visit_minutes(event, ctx.local_time) or run or (low, high)
+        if event is not None:  # the event times beat the model's guess (a 2-hour concert)
+            low, high = _event_visit(event, ctx.local_time, intent, fallback=(low, high))
         facts = _facts_for(cand, (low, high), intent, _title(cand.poi, intent.lang))
         allow_open = cand.hours.status == "open" and cand.hours.confidence == "high"
         live = event is None or ev.is_live(event, ctx.local_time)
@@ -839,7 +854,8 @@ def _template_card(rank: int, cand: Candidate, intent: QueryIntent, ctx: SearchC
                      why=_template_why(cand, intent, ctx),
                      todo=_template_todo(cand.poi, intent.lang),
                      visit=_visit_minutes(cand.poi.category, intent), idea_source="poi_data")
-    visit = ev.visit_minutes(event, ctx.local_time) or _visit_minutes(event.category, intent)
+    visit = _event_visit(event, ctx.local_time, intent,
+                         fallback=_visit_minutes(event.category, intent))
     return _card(rank=rank, cand=cand, intent=intent,
                  why=_template_why(cand, intent, ctx, event), todo=_event_todo(intent.lang),
                  visit=visit, idea_source="poi_data", event=event)
