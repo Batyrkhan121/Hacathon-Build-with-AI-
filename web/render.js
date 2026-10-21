@@ -3,7 +3,7 @@ import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
 import { dayDiff, eventStatus, eventStopLabel, eventWhen, localParts } from './events.js';
 import { visitLabel } from './visit.js';
-import { cafeAvoidedNote, noCafeChipState } from './refine.js';
+import { cafeAvoidedNote, noCafeChipState, offerDropNoCafe } from './refine.js';
 
 // подпись из чистых модулей (events.js, visit.js): ключ i18n + параметры
 const eventLabel = (st) => t(st.key, st.vars);
@@ -254,7 +254,7 @@ export function renderAnswer(root, answer, ctx) {
           renderCard(c, when, cardCtx),
         ),
       ]
-    : [renderEmpty(ctx)];
+    : [renderEmpty(ctx, answer)];
 
   root.replaceChildren(
     h(
@@ -508,16 +508,21 @@ function warmMark() {
   );
 }
 
-function renderEmpty(ctx) {
+function renderEmpty(ctx, answer) {
   const hasFilters = Boolean(ctx.request?.overrides);
+  // «Без кафе» убрало все места — первым действием предлагаем снять его (разово, refine.js)
+  const dropNoCafe = ctx.onDropNoCafe && offerDropNoCafe(answer, ctx.request);
   return h(
     'div',
     { class: 'empty' },
     h('p', { class: 'empty-title', text: t('empty.title') }),
-    h('p', { class: 'empty-hint', text: t('empty.hint') }),
+    h('p', { class: 'empty-hint', text: dropNoCafe ? t('empty.noCafeHint') : t('empty.hint') }),
     h(
       'div',
       { class: 'empty-actions' },
+      dropNoCafe
+        ? h('button', { type: 'button', class: 'btn btn-primary', onclick: ctx.onDropNoCafe }, t('empty.dropNoCafe'))
+        : null,
       hasFilters
         ? h('button', { type: 'button', class: 'btn btn-ghost', onclick: ctx.onClearFilters }, t('empty.clear'))
         : null,
