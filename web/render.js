@@ -1,6 +1,9 @@
 // Отрисовка результатов. Все тексты с сервера вставляем через textContent: это данные, не разметка.
 import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
+import { dayDiff, eventStatus, eventStopLabel, localParts } from './events.js';
+
+const eventLabel = (st) => t(st.key, st.vars);
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -228,22 +231,25 @@ export function renderAnswer(root, answer, ctx) {
   // 1.3.1: событие, до которого больше 30 мин (от context.local_time), — не остановка «сейчас», а отдельный
   // блок «Вечером рядом»; остальные события — последними среди карточек (как и в маршруте — последней остановкой).
   const nowIso = answer.context?.local_time;
-  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso };
-  const later = answer.cards.filter((c) => isLaterEvent(c, nowIso));
-  const nowCards = answer.cards.filter((c) => !later.includes(c));
-  nowCards.sort((a, b) => (a.kind === 'event') - (b.kind === 'event'));
+  const nums = stopNumbers(answer);
+  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso, stopNo: (c) => nums.get(c.rank) ?? null };
+  // 8.2: событие другого дня (дата starts_at по UTC+5 ≠ дате local_time) — не «Вечером рядом», а свой блок
+  // «Завтра рядом» с подписью «завтра в 19:00». Порядок событий — по времени (Date), не по строке ISO.
+  const byStart = (a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at);
+  const otherDay = answer.cards.filter((c) => isOtherDayEvent(c, nowIso)).sort(byStart);
+  const later = answer.cards.filter((c) => !otherDay.includes(c) && isLaterEvent(c, nowIso)).sort(byStart);
+  const nowCards = answer.cards.filter((c) => !later.includes(c) && !otherDay.includes(c));
+  // карточки с номером — в порядке остановок, без номера (событие вне маршрута) — после них
+  const order = (c) => cardCtx.stopNo(c) ?? Infinity;
+  nowCards.sort((a, b) => order(a) - order(b) || (a.kind === 'event') - (b.kind === 'event') || a.rank - b.rank);
   const body = answer.cards.length
     ? [
-        answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
+        answer.route ? renderRoute(answer.route, byId, cardCtx, ctx.originName) : null,
         nowCards.length ? h('ol', { class: 'cards' }, nowCards.map((c) => renderCard(c, when, cardCtx))) : null,
-        later.length
-          ? h(
-              'section',
-              { class: 'later-events', 'aria-labelledby': 'later-events-title' },
-              h('h3', { class: 'later-events-title', id: 'later-events-title', text: laterTitle(later, nowIso) }),
-              h('ol', { class: 'cards' }, later.map((c) => renderCard(c, when, cardCtx))),
-            )
-          : null,
+        eventSection('later-events', laterTitle(later), later, (c) => renderCard(c, when, cardCtx)),
+        eventSection('other-day-events', otherDayTitle(otherDay, nowIso), otherDay, (c) =>
+          renderCard(c, when, cardCtx),
+        ),
       ]
     : [renderEmpty(ctx)];
 
@@ -261,6 +267,34 @@ export function renderAnswer(root, answer, ctx) {
       answer.disclaimer ? h('p', { class: 'disclaimer', text: answer.disclaimer }) : null,
     ),
   );
+}
+
+// 8.2: номер — только у остановок маршрута, по их порядку и без пропусков (без маршрута — у мест по порядку).
+// Событие вне маршрута — значок календаря, другое место вне маршрута — без номера. card.rank остаётся
+// внутренним ключом (id карточки, метка на карте, подсветка).
+export function stopNumbers(answer) {
+  const nums = new Map();
+  const stops = answer.route?.stop_ids || [];
+  let n = 0;
+  for (const c of [...answer.cards].sort((a, b) => a.rank - b.rank)) {
+    if (stops.length) {
+      const i = stops.indexOf(c.poi_id);
+      nums.set(c.rank, i >= 0 ? i + 1 : null);
+    } else {
+      nums.set(c.rank, c.kind === 'event' ? null : ++n);
+    }
+  }
+  return nums;
+}
+
+// Знак номера (карточка, таймлайн): цифра остановки или значок календаря у события вне маршрута
+function rankMark(card, no, cls) {
+  const off = no == null ? (card.kind === 'event' ? ' is-event' : ' is-off') : '';
+  return h('span', {
+    class: `${cls} rank-${card.idea_source}${off}`,
+    'aria-hidden': 'true',
+    text: no == null ? '' : String(no),
+  });
 }
 
 // 1.3.0, «в тепле»: при морозе — плашка-предложение повторить запрос с меткой warm (разово, без сохранения).
@@ -289,23 +323,8 @@ function renderWarmOffer(answer, ctx) {
 }
 
 // 1.3.0, событие: «сегодня в 19:00–21:00», площадка (address), кнопка «Источник» (source_url, только https).
-// «Идёт сейчас» — только при starts_at ≤ сейчас < ends_at; «сейчас» — момент запроса (context.local_time).
-// Часы работы у события не показываем: вместо них — время события.
-const ASTANA_OFFSET_MS = 5 * 3600 * 1000; // Астана = UTC+5
-
-function localParts(iso) {
-  // Переводим момент в UTC+5 (строка может прийти с любым смещением), а не режем ISO-строку
-  const d = new Date(Date.parse(iso) + ASTANA_OFFSET_MS);
-  const pad = (n) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
-    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
-  };
-}
-
-function dayDiff(dateA, dateB) {
-  return Math.round((Date.parse(`${dateA}T00:00:00Z`) - Date.parse(`${dateB}T00:00:00Z`)) / 86400000);
-}
+// «Идёт до 21:00», «проходит до 30.11 18:00», «началось в 19:00» — events.js (правило ARCHITECTURE §5);
+// «сейчас» — context.local_time. Часы работы у события не показываем: вместо них — время события.
 
 function eventWhen(card, nowIso) {
   const start = localParts(card.starts_at);
@@ -325,11 +344,35 @@ function isLaterEvent(card, nowIso) {
   return Date.parse(card.starts_at) - Date.parse(nowIso) > LATER_MIN * 60000;
 }
 
-// «Вечером рядом», если первое из событий начинается с 17:00 по Астане; иначе «Позже рядом»
-function laterTitle(cards, nowIso) {
-  const first = cards.map((c) => c.starts_at).sort()[0];
-  const hour = Number(localParts(first).time.slice(0, 2));
+function isOtherDayEvent(card, nowIso) {
+  if (card.kind !== 'event' || !card.starts_at || !nowIso) return false;
+  return Date.parse(card.starts_at) > Date.parse(nowIso) && localParts(card.starts_at).date !== localParts(nowIso).date;
+}
+
+// «Вечером рядом», если первое (по времени) из событий начинается с 17:00 по Астане; иначе «Позже рядом».
+// cards уже отсортированы по Date.
+function laterTitle(cards) {
+  if (!cards.length) return '';
+  const hour = Number(localParts(cards[0].starts_at).time.slice(0, 2));
   return t(hour >= 17 ? 'event.laterEvening' : 'event.later');
+}
+
+// «Завтра рядом», если все события — завтра; иначе «В другие дни»
+function otherDayTitle(cards, nowIso) {
+  if (!cards.length) return '';
+  const today = localParts(nowIso).date;
+  const tomorrow = cards.every((c) => dayDiff(localParts(c.starts_at).date, today) === 1);
+  return t(tomorrow ? 'event.tomorrowNearby' : 'event.otherDays');
+}
+
+function eventSection(cls, title, cards, render) {
+  if (!cards.length) return null;
+  return h(
+    'section',
+    { class: `later-events ${cls}`, 'aria-labelledby': `${cls}-title` },
+    h('h3', { class: 'later-events-title', id: `${cls}-title`, text: title }),
+    h('ol', { class: 'cards' }, cards.map(render)),
+  );
 }
 
 function eventDomain(card) {
@@ -338,10 +381,22 @@ function eventDomain(card) {
   return new URL(src).hostname.replace(/^www\./, '');
 }
 
-function eventIsNow(card, nowIso) {
-  if (!nowIso || !card.ends_at) return false;
-  const now = Date.parse(nowIso);
-  return Date.parse(card.starts_at) <= now && now < Date.parse(card.ends_at);
+// 8.2: источник события — афиша, а не «наша база мест»: «Из афиши · домен» и подсказка про афишу
+function listingsLabel(card) {
+  const domain = eventDomain(card);
+  return domain ? t('event.fromListings', { domain }) : t('event.fromListingsBare');
+}
+
+function listingsTitle(card) {
+  const domain = eventDomain(card);
+  return domain ? t('event.listingsTitle', { domain }) : t('event.listingsTitleBare');
+}
+
+// Плашка начавшегося события: зелёная — только у идущего сеанса, иначе нейтральная
+function renderEventStatus(card, nowIso) {
+  const st = eventStatus(card, nowIso);
+  if (!st) return null;
+  return h('span', { class: `event-now${st.live ? '' : ' is-neutral'}`, text: cap(t(st.key, st.vars)) });
 }
 
 function httpsOnly(url) {
@@ -363,7 +418,7 @@ function renderEventBlock(card, ctx) {
       { class: 'event-when' },
       h('span', { class: 'event-badge', text: t('event.badge') }),
       h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
-      eventIsNow(card, ctx.nowIso) ? h('span', { class: 'event-now', text: t('event.now') }) : null,
+      renderEventStatus(card, ctx.nowIso),
     ),
     card.venue || card.address
       ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.venue || card.address }) })
@@ -552,22 +607,24 @@ function renderRoute(route, byId, ctx, originName) {
     );
     const card = leg.to_id === 'origin' ? null : byId.get(leg.to_id);
     if (card) {
+      // номер — из stop_ids; отрезок к карточке не из stop_ids (рассинхрон ответа) — без номера, не «Остановка null»
+      const no = ctx.stopNo ? ctx.stopNo(card) : null;
       items.push(
         h(
           'li',
           { class: 'tl-point' },
-          h('span', { class: `tl-rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+          rankMark(card, no, 'tl-rank'),
           h(
             'span',
             { class: 'tl-name' },
-            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
+            h('span', { class: 'visually-hidden', text: no == null ? `${t('route.stop')}: ` : `${t('route.stop')} ${no}: ` }),
             h('strong', { text: cardTitle(card) }),
             isWarmStop(card) ? warmMark() : null,
             h('span', {
               class: 'tl-visit',
               text:
                 card.kind === 'event' && card.starts_at
-                  ? ` · ${t('event.by', { time: localParts(card.starts_at).time })}`
+                  ? ` · ${eventLabel(eventStopLabel(card, ctx.nowIso))}`
                   : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
             }),
           ),
@@ -614,6 +671,7 @@ function renderCard(card, when, ctx) {
   const site = card.website ? safeUrl(card.website) : null;
   const unnamed = isUnnamed(card);
   const isEvent = card.kind === 'event';
+  const no = ctx.stopNo ? ctx.stopNo(card) : card.rank;
 
   const li = h(
     'li',
@@ -621,14 +679,14 @@ function renderCard(card, when, ctx) {
     h(
       'div',
       { class: 'card-head' },
-      h('span', { class: `rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+      rankMark(card, no, 'rank'),
       h(
         'div',
         { class: 'card-title-wrap' },
         h(
           'h3',
           { class: 'card-title' },
-          h('span', { class: 'visually-hidden', text: `${card.rank}. ` }),
+          no == null ? null : h('span', { class: 'visually-hidden', text: `${no}. ` }),
           cardTitle(card),
           isWarmStop(card) ? warmMark() : null,
         ),
@@ -658,8 +716,8 @@ function renderCard(card, when, ctx) {
       { class: 'badges' },
       h('span', {
         class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`,
-        title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
-        text: isEvent ? t('event.fromListings', { domain: eventDomain(card) }) : poi ? t('badge.poi') : t('badge.ai'),
+        title: isEvent ? listingsTitle(card) : poi ? t('badge.poiTitle') : t('badge.aiTitle'),
+        text: isEvent ? listingsLabel(card) : poi ? t('badge.poi') : t('badge.ai'),
       }),
       isEvent ? null : h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
     ),
@@ -775,7 +833,7 @@ function renderDirections(card, origin, preciseStart, poi = false) {
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
     // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
     card.kind === 'event'
-      ? h('span', { class: 'dir-source v2-only', text: t('event.fromListings', { domain: eventDomain(card) }) })
+      ? h('span', { class: 'dir-source v2-only', text: listingsLabel(card), title: listingsTitle(card) })
       : poi
         ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') })
         : null,
@@ -784,11 +842,17 @@ function renderDirections(card, origin, preciseStart, poi = false) {
   );
 }
 
-export function popupFor(card) {
+export function popupFor(card, no = card.rank) {
   return h(
     'div',
     { class: 'popup' },
-    h('strong', { text: `${card.rank}. ${cardTitle(card)}` }),
+    h(
+      'strong',
+      { class: 'popup-title' },
+      // событие вне маршрута — без номера, но со значком календаря, как на карточке и метке
+      no == null && card.kind === 'event' ? h('span', { class: 'cal-icon', 'aria-hidden': 'true' }) : null,
+      `${no == null ? '' : `${no}. `}${cardTitle(card)}`,
+    ),
     h('span', { text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
   );
 }

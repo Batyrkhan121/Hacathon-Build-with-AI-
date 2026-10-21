@@ -30,11 +30,15 @@ export function initMap(el) {
   return true;
 }
 
-function stopIcon(rank, ideaSource, warm = false) {
+// no — номер остановки маршрута или null: у события вне маршрута — значок календаря, у другого места — точка
+function stopIcon(no, ideaSource, warm = false, isEvent = false) {
+  const off = no == null ? (isEvent ? ' is-event' : ' is-off') : '';
   return L.divIcon({
-    className: `stop-icon is-${ideaSource}${warm ? ' is-warm' : ''}`,
+    className: `stop-icon is-${ideaSource}${warm ? ' is-warm' : ''}${off}`,
     // v2.1 (эталон): золотой шестиугольник с контуром --ink; номер — textContent, без HTML из данных
-    html: document.body.classList.contains('v2') ? hexStop(rank) : `<span>${Number(rank)}</span>`,
+    html: document.body.classList.contains('v2')
+      ? hexStop(no, isEvent)
+      : `<span>${no == null ? (isEvent ? '<i class="cal-icon"></i>' : '•') : Number(no)}</span>`,
     iconSize: [30, 34],
     iconAnchor: [15, 17],
     popupAnchor: [0, -16],
@@ -43,7 +47,12 @@ function stopIcon(rank, ideaSource, warm = false) {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-function hexStop(rank) {
+// Календарь 16×16 (тот же рисунок, что у .cal-icon в styles.css)
+const CAL_PATH =
+  'M4 1h1.6v1.4h4.8V1H12v1.4h1.5c.8 0 1.5.7 1.5 1.5v9.6c0 .8-.7 1.5-1.5 1.5h-11C1.7 15 1 14.3 1 13.5V3.9' +
+  'c0-.8.7-1.5 1.5-1.5H4zM2.6 6.4v7h10.8v-7zM4 8h2.4v2.4H4z';
+
+function hexStop(no, isEvent = false) {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('width', '30');
   svg.setAttribute('height', '34');
@@ -52,13 +61,23 @@ function hexStop(rank) {
   const hex = document.createElementNS(SVG_NS, 'polygon');
   hex.setAttribute('class', 'stop-hex');
   hex.setAttribute('points', '17,1.5 32,10 32,28 17,36.5 2,28 2,10');
+  svg.append(hex);
+  if (no == null && isEvent) {
+    const cal = document.createElementNS(SVG_NS, 'path');
+    cal.setAttribute('class', 'stop-cal');
+    cal.setAttribute('fill-rule', 'evenodd');
+    cal.setAttribute('transform', 'translate(9 11)');
+    cal.setAttribute('d', CAL_PATH);
+    svg.append(cal);
+    return svg;
+  }
   const num = document.createElementNS(SVG_NS, 'text');
   num.setAttribute('class', 'stop-num');
   num.setAttribute('x', '17');
   num.setAttribute('y', '24.5');
   num.setAttribute('text-anchor', 'middle');
-  num.textContent = String(Number(rank));
-  svg.append(hex, num);
+  num.textContent = no == null ? '•' : String(Number(no));
+  svg.append(num);
   return svg;
 }
 
@@ -183,7 +202,10 @@ function lineTooltip(...lines) {
   return el;
 }
 
-export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel, markerLabel, legend }) {
+export function showAnswer(
+  answer,
+  { originLabel, popupFor, onSelect, routeLabel, markerLabel, legend, stopNo = (card) => card.rank },
+) {
   if (!map) return;
   clearAnswer();
   const pts = [];
@@ -228,7 +250,12 @@ export function showAnswer(answer, { originLabel, popupFor, onSelect, routeLabel
   for (const card of answer.cards) {
     const ll = [card.geo.lat, card.geo.lon];
     const marker = L.marker(ll, {
-      icon: stopIcon(card.rank, card.idea_source, Array.isArray(card.tags) && card.tags.includes('indoor')),
+      icon: stopIcon(
+        stopNo(card),
+        card.idea_source,
+        Array.isArray(card.tags) && card.tags.includes('indoor'),
+        card.kind === 'event',
+      ),
       // Цвет метки (золото / лаванда) дублируем словами: «Данные POI» или «Идея ИИ».
       title: markerLabel(card),
       alt: markerLabel(card),

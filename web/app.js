@@ -82,6 +82,8 @@ const els = {
   profileChips: $('profile-chips'),
   prefsLikes: $('prefs-likes'),
   prefsAvoids: $('prefs-avoids'),
+  prefsLikesHint: $('prefs-likes-hint'),
+  prefsAvoidsHint: $('prefs-avoids-hint'),
   prefsCount: $('prefs-count'),
   prefsClear: $('prefs-clear'),
   refine: $('refine'),
@@ -395,9 +397,12 @@ function renderAnswer({ redrawMap = true } = {}) {
   });
   if (!redrawMap) return;
   const route = answer.route;
+  const nums = view.stopNumbers(answer); // номер только у остановок маршрута; событие вне маршрута — без номера
+  const no = (card) => nums.get(card.rank) ?? null;
   mapView.showAnswer(answer, {
     originLabel: t('map.origin', { name: answer.context?.area_label || whereLabel() }),
-    popupFor: view.popupFor,
+    popupFor: (card) => view.popupFor(card, no(card)),
+    stopNo: no,
     onSelect: (rank) => {
       mapView.highlightStop(rank);
       view.highlightCard(rank);
@@ -406,7 +411,13 @@ function renderAnswer({ redrawMap = true } = {}) {
       ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
       : '',
     markerLabel: (card) =>
-      `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
+      `${no(card) == null ? '' : `${no(card)}. `}${card.title} — ${
+        card.kind === 'event'
+          ? t('event.badge')
+          : card.idea_source === 'poi_data'
+            ? t('badge.poi')
+            : t('badge.ai')
+      }`,
     legend: legendLabels(),
   });
 }
@@ -952,22 +963,42 @@ function togglePref(list, tag) {
   const other = list === 'likes' ? 'avoids' : 'likes';
   const on = state.prefs[list].includes(tag);
   state.prefs[list] = on ? state.prefs[list].filter((x) => x !== tag) : [...state.prefs[list], tag];
-  // пара «с ребёнком» + «детские места», «кофе» + «кафе»: выбор одной снимает другую
+  // пара «с ребёнком» + «детские места», «кофе» + «кафе»: второй чип неактивен; снятие — страховка
   if (!on) state.prefs[other] = state.prefs[other].filter((x) => x !== PREF_CONFLICT[tag]);
   savePrefs();
   renderPrefs();
   filtersChanged();
 }
 
+const prefLabel = (list, tag) => t(list === 'likes' ? `pref.${tag}` : `avoid.${tag}`);
+
+// 8.2: из противоречивой пары (PREF_CONFLICTS — на неё сервер отвечает 422) выбрать можно только одну метку:
+// чип второй неактивен (disabled + aria-disabled) и подписан строкой «… нельзя вместе с «…»» под группой.
+function renderPrefGroup(list, tags, box, hint) {
+  const other = list === 'likes' ? 'avoids' : 'likes';
+  const notes = [];
+  box.replaceChildren(
+    ...tags.map((tag) => {
+      const b = chip(prefLabel(list, tag), state.prefs[list].includes(tag), () => togglePref(list, tag));
+      const partner = PREF_CONFLICT[tag];
+      if (partner && state.prefs[other].includes(partner)) {
+        const note = t('prefs.conflict', { tag: prefLabel(list, tag), other: prefLabel(other, partner) });
+        notes.push(note);
+        b.disabled = true;
+        b.setAttribute('aria-disabled', 'true');
+        b.title = note;
+        b.setAttribute('aria-describedby', hint.id);
+      }
+      return b;
+    }),
+  );
+  hint.textContent = notes.join(' ');
+  hint.hidden = notes.length === 0;
+}
+
 function renderPrefs() {
-  els.prefsLikes.replaceChildren(
-    ...LIKE_TAGS.map((tag) => chip(t(`pref.${tag}`), state.prefs.likes.includes(tag), () => togglePref('likes', tag))),
-  );
-  els.prefsAvoids.replaceChildren(
-    ...AVOID_TAGS.map((tag) =>
-      chip(t(`avoid.${tag}`), state.prefs.avoids.includes(tag), () => togglePref('avoids', tag)),
-    ),
-  );
+  renderPrefGroup('likes', LIKE_TAGS, els.prefsLikes, els.prefsLikesHint);
+  renderPrefGroup('avoids', AVOID_TAGS, els.prefsAvoids, els.prefsAvoidsHint);
   const n = state.prefs.likes.length + state.prefs.avoids.length;
   els.prefsCount.replaceChildren();
   if (n) {

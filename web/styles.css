@@ -689,6 +689,7 @@ input[type="time"] {
 .stale .btn-primary {
   min-width: 0;
   flex: none;
+  width: auto; /* на телефоне .btn-primary растягивается на 100% — в строке «условия изменились» это 61 px вбок */
 }
 
 .loading {
@@ -2976,4 +2977,83 @@ body:not(.v2) .submit-row .btn-primary {
   font-size: 17px;
   font-weight: 600;
   color: var(--ink);
+}
+
+/* 8.2: номер — только у остановок маршрута. Событие вне маршрута — значок календаря на нейтральном фоне
+   (не золотом: золото — остановка), другое место вне маршрута — точка. */
+.rank.is-event,
+.rank.is-off,
+.tl-rank.is-event,
+.tl-rank.is-off,
+.stop-icon.is-event span,
+.stop-icon.is-off span {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.rank.is-event::before,
+.tl-rank.is-event::before,
+.cal-icon {
+  content: "";
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: var(--ink);
+  -webkit-mask: var(--cal-icon) center / contain no-repeat;
+  mask: var(--cal-icon) center / contain no-repeat;
+}
+
+.rank.is-off::before,
+.tl-rank.is-off::before {
+  content: "•";
+}
+
+.v2 .stop-icon.is-event .stop-hex,
+.v2 .stop-icon.is-off .stop-hex {
+  fill: var(--surface);
+}
+
+.v2 .stop-cal {
+  fill: var(--ink);
+}
+
+.v2 .stop-icon.is-active .stop-cal {
+  fill: #fff;
+}
+
+:root {
+  --cal-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 1h1.6v1.4h4.8V1H12v1.4h1.5c.8 0 1.5.7 1.5 1.5v9.6c0 .8-.7 1.5-1.5 1.5h-11C1.7 15 1 14.3 1 13.5V3.9c0-.8.7-1.5 1.5-1.5H4zM2.6 6.4v7h10.8v-7zM4 8h2.4v2.4H4z'/%3E%3C/svg%3E");
+}
+
+/* 8.2: метка из противоречивой пары, когда выбрана вторая, — неактивна; причина — строкой под группой */
+.chip:disabled,
+.chip:disabled:hover {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+.prefs-hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* T140: «проходит до 30.11 18:00», «началось в 19:00» — факт, но не «идёт сейчас»: нейтрально, не зелёным */
+.event-now.is-neutral {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+
+/* T140: событие вне маршрута в попапе карты — значок календаря перед названием */
+.popup-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.popup-title .cal-icon {
+  flex: none;
 }
