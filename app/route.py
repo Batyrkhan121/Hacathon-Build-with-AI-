@@ -175,6 +175,7 @@ def _total_min(legs: list[RouteLeg], ordered: list[Candidate], visit_min: dict[s
 
 
 MAX_CROSSINGS = 50  # MiniRoute.crossings max_length
+LINK_GRAPH_MAX_M = 50  # a longer link to the walk graph counts as straight (integrator, 8.1)
 
 
 def _graph_legs(
@@ -275,12 +276,16 @@ def _straight_legs(legs: list[walkgraph.GraphPath]) -> list[walkgraph.GraphPath]
 
 
 def _straight_share(legs: list[walkgraph.GraphPath]) -> float:
-    """Share of the shown length (whole metres, as in legs) on straight legs, 3 decimals,
-    rounded UP: any straight part shows (> 0), so «без ступенек» is never claimed over it. The
-    short links from a place to its nearest walkway node belong to the graph leg they start or
-    end (they are not graph edges, like straight legs, but every graph leg has them)."""
+    """Share of the shown length (whole metres, as in legs) not checked on the walk graph,
+    3 decimals, rounded UP: any such part shows (> 0), so «без ступенек» is never claimed over
+    it. It is the straight legs, plus each link from a place to its walkway node longer than
+    LINK_GRAPH_MAX_M (links up to 150 m, S3: 131 m; shorter ones belong to the graph leg,
+    or «без ступенек» could never be said: every graph leg has two)."""
     total = sum(round(leg.length_m) for leg in legs)
-    straight = sum(round(leg.length_m) for leg in _straight_legs(legs))
+    straight = sum(round(leg.length_m) for leg in _straight_legs(legs)) + sum(
+        round(link) for leg in legs if not leg.straight for link in leg.links_m
+        if round(link) > LINK_GRAPH_MAX_M
+    )
     if straight <= 0 or total <= 0:
         return 0.0
     return min(1.0, max(0.001, math.ceil(straight / total * 1000 - 1e-9) / 1000))
