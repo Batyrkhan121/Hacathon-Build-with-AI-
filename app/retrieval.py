@@ -80,21 +80,36 @@ GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
 # T70 step 15: the user named tags (coffee, power_outlets, quiet …) and the place has none of
 # them -> it must not ride on proximity / popularity / MMR diversity past places that match
 NO_TAG_MATCH_PENALTY = -0.10
-# T123 (contract 1.3.0): prefs for one request, only PrefTag labels (ARCHITECTURE §5 table).
-# likes: a soft plus per matching label, avoids: a penalty (never a filter), no_bars (a like
-# only): no bar / nightlife at all. score_parts["prefs"] keeps the sum for explain().
-PREF_CATEGORIES: dict[str, frozenset[str]] = {
+# T123 / T133 (contract 1.3.1): prefs for one request, labels only (ARCHITECTURE §5 table).
+# likes (LikeTag): a soft plus per matching label. avoids (AvoidTag): "bars" drops bar /
+# nightlife; "noisy", "kids_places", "cafes" are a penalty (never a filter); "cafes" and
+# "bars" also leave the parse of the text (avoided()); "long_outdoor" is a route rule
+# (short walks outside, app.pipeline). score_parts["prefs"] keeps the sum for explain().
+PREF_CATEGORIES: dict[str, frozenset[str]] = {  # likes
     "coffee": frozenset({"cafe"}),
     "museums": frozenset({"museum", "gallery"}),
     "parks": frozenset({"park"}),
 }
-PREF_TAGS: dict[str, frozenset[str]] = {
+PREF_TAGS: dict[str, frozenset[str]] = {  # likes
     "quiet": frozenset({"quiet"}),
     "coffee": frozenset({"coffee"}),
     "kids": frozenset({"kids"}),
     "night": frozenset({"night", "late_open", "24_7"}),
 }
-NO_BARS_CATEGORIES = frozenset({"bar", "nightlife"})
+AVOID_CATEGORIES: dict[str, frozenset[str]] = {
+    "bars": frozenset({"bar", "nightlife"}),
+    "noisy": frozenset({"bar", "nightlife", "entertainment", "mall"}),
+    "kids_places": frozenset({"playground"}),
+    "cafes": frozenset({"cafe"}),
+}
+AVOID_TAGS: dict[str, frozenset[str]] = {
+    "noisy": frozenset({"live_music"}),
+    "kids_places": frozenset({"kids"}),
+    "cafes": frozenset({"coffee"}),
+}
+AVOID_FILTER = frozenset({"bars"})  # a hard filter, not a penalty
+AVOID_FROM_PARSE = frozenset({"bars", "cafes"})  # the explicit choice beats the text parse
+NO_BARS_CATEGORIES = AVOID_CATEGORIES["bars"]
 # «в тепле»: indoor places anyone may walk into to warm up; the same list as
 # pipeline.normalize.WARM_CATEGORIES (DATA, tested equal): restaurants and bars want an order
 WARM_CATEGORIES = frozenset({"mall", "museum", "library", "cafe", "theatre", "cinema"})
@@ -111,6 +126,13 @@ PREF_AVOID_MAX = -0.35
 EVENT_BONUS = 0.08
 EVENT_WORDS = ("событие мероприятие афиша сегодня вечером концерт спектакль выставка шоу "
                "event events today tonight concert show exhibition іс-шара бүгін кеш көрме")
+# Words that ask for events («концерт или шоу?»): then the tags the parser read in the text
+# («концерт» -> live_music) describe places, not the event: no tag filter / penalty for events
+# (retrieve(events_asked=True)). Categories: retrieve(event_categories=...), see there.
+EVENT_ASK_WORDS = ("концерт концерты спектакль спектакли выставка выставки шоу фестиваль афиша "
+                   "мероприятие мероприятия событие события премьера опера балет "
+                   "concert concerts show shows exhibition festival event events gig "
+                   "іс-шара көрме фестиваль қойылым")
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -385,6 +407,12 @@ def is_event(poi: POI) -> bool:
     return poi.id.startswith(EVENT_PREFIX)
 
 
+def asks_for_events(intent: QueryIntent) -> bool:
+    """The query asks for a concert, a show, an exhibition… (EVENT_ASK_WORDS)."""
+    asked = frozenset(t[:_STEM] for t in _tokens(EVENT_ASK_WORDS))
+    return bool(_query_stems(intent) & asked)
+
+
 def poi_text(poi: POI) -> str:
     """Searchable text of a POI: names, description, category and tag words (ru/kk/en)."""
     parts = [poi.name, *poi.name_i18n.values(), poi.description or "", poi.category]
@@ -435,29 +463,35 @@ def warm_stop(poi: POI) -> bool:
 
 
 def pref_match(poi: POI, label: str) -> bool:
-    """Does the place carry this PrefTag (ARCHITECTURE §5)? no_bars: the place is a bar."""
+    """Does the place carry this like (LikeTag)? (ARCHITECTURE §5 table)"""
     if label == "warm":
         return warm_stop(poi)
-    if label == "no_bars":
-        return poi.category in NO_BARS_CATEGORIES
     if label == "kids" and poi.kids_friendly:
         return True
     return (poi.category in PREF_CATEGORIES.get(label, frozenset())
             or bool(PREF_TAGS.get(label, frozenset()) & set(poi.tags)))
 
 
+def avoid_match(poi: POI, label: str) -> bool:
+    """Is the place what this avoid (AvoidTag) names? long_outdoor names no place."""
+    return (poi.category in AVOID_CATEGORIES.get(label, frozenset())
+            or bool(AVOID_TAGS.get(label, frozenset()) & set(poi.tags)))
+
+
 def _passes_prefs(poi: POI, prefs: UserPrefs | None) -> bool:
-    return prefs is None or "no_bars" not in prefs.likes or not pref_match(poi, "no_bars")
+    if prefs is None:
+        return True
+    return not any(avoid_match(poi, label) for label in prefs.avoids if label in AVOID_FILTER)
 
 
 def avoided(prefs: UserPrefs | None) -> tuple[frozenset[str], frozenset[str]]:
-    """(categories, tags) that the person's avoids name, by the ARCHITECTURE §5 table: coffee
-    -> cafe + tag coffee, museums -> museum / gallery, parks -> park, quiet / kids / night ->
-    their tags. The pipeline takes them out of what the parser read in the text."""
+    """(categories, tags) that the person's avoids take out of the parse of the text: cafes ->
+    cafe + tag coffee («Без кафе»), bars -> bar / nightlife (they are filtered anyway)."""
     if prefs is None:
         return frozenset(), frozenset()
-    cats = {c for label in prefs.avoids for c in PREF_CATEGORIES.get(label, frozenset())}
-    tags = {x for label in prefs.avoids for x in PREF_TAGS.get(label, frozenset())}
+    labels = [x for x in prefs.avoids if x in AVOID_FROM_PARSE]
+    cats = {c for label in labels for c in AVOID_CATEGORIES.get(label, frozenset())}
+    tags = {x for label in labels for x in AVOID_TAGS.get(label, frozenset())}
     return frozenset(cats), frozenset(tags)
 
 
@@ -471,11 +505,12 @@ def _avoided_stems(prefs: UserPrefs | None) -> frozenset[str]:
 
 
 def _prefs_fit(poi: POI, prefs: UserPrefs | None) -> float:
-    """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty."""
+    """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty
+    (bars is a filter, long_outdoor a route rule: no penalty from them)."""
     if prefs is None:
         return 0.0
-    liked = sum(pref_match(poi, label) for label in prefs.likes if label != "no_bars")
-    avoided = sum(pref_match(poi, label) for label in prefs.avoids)
+    liked = sum(pref_match(poi, label) for label in prefs.likes)
+    avoided = sum(avoid_match(poi, label) for label in prefs.avoids if label not in AVOID_FILTER)
     return (min(PREF_LIKE_MAX, liked * PREF_LIKE_BONUS)
             + max(PREF_AVOID_MAX, avoided * PREF_AVOID_PENALTY))
 
@@ -828,6 +863,8 @@ def retrieve(
     prefs: UserPrefs | None = None,
     events: Sequence[tuple[POI, HoursVerdict]] = (),
     exclude_ids: AbstractSet[str] = frozenset(),
+    events_asked: bool = False,
+    event_categories: Sequence[str] | None = None,
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -838,13 +875,17 @@ def retrieve(
     deterministic reasons in Russian (e.g. "есть кофе", "≈6 мин пешком").
     Final order is MMR (score vs. redundancy); Candidate.score keeps the raw weighted score.
     Unnamed places with the same generic name are kept once (the best one).
-    T123 `prefs` (contract 1.3.0): likes add PREF_LIKE_BONUS, avoids PREF_AVOID_PENALTY
-    (score_parts["prefs"]), likes "no_bars" drops bar / nightlife.
+    T123 / T133 `prefs` (contract 1.3.1): likes add PREF_LIKE_BONUS, avoids
+    PREF_AVOID_PENALTY (score_parts["prefs"]), avoids "bars" drops bar / nightlife.
     T123 `events`: (POI, verdict) of the events current at ctx.local_time (app.events). The
     same distance / profile / prefs filters; no hours filter (app.events already kept only
     events that are not over); EVENT_BONUS in score_parts["event"].
     `exclude_ids` (request.exclude_poi_ids, the «Ещё» chip): places and events already shown,
     dropped before any scoring.
+    `events_asked` (the query asks for events): events are filtered and scored without the
+    parsed must_tags — those describe places. `event_categories`: the categories events must
+    have (T133, Megah: the ones the text names or the UI set, [] = any; None = as places) —
+    general words («что интересного», «куда сходить») do not hide events.
     """
     if k <= 0 or not store.pois:
         return []
@@ -863,10 +904,16 @@ def retrieve(
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
         if _passes_hours(poi, verdict, intent):
             passed.append((i, poi, distance, verdict))
+    event_update: dict[str, object] = {}
+    if event_categories is not None:
+        event_update["categories"] = list(event_categories)
+    if events_asked:
+        event_update["must_tags"] = []
+    event_intent = intent.model_copy(update=event_update) if event_update else intent
     for poi, verdict in events:
         distance = haversine_m(ctx.origin, poi.geo)
         if (poi.id not in exclude_ids and distance <= ctx.radius_m
-                and _passes_profile(poi, intent)
+                and _passes_profile(poi, event_intent)
                 and _passes_prefs(poi, prefs)):
             passed.append((None, poi, distance, verdict))
 
@@ -887,7 +934,8 @@ def retrieve(
         elif semantic is not None and median is not None:
             sem = median
             info["no_vector"] = 1.0
-        score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems, prefs)
+        score, parts = _score(poi, event_intent if i is None else intent, ctx, distance,
+                              verdict, sem, query_stems, prefs)
         parts.update(info)
         pool.append(
             Candidate(

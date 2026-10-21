@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -506,11 +507,31 @@ def test_default_deps_are_loaded_in_lifespan(
         return deps
 
     monkeypatch.setattr(api, "build_default_deps", fake_build)
+    warmed: list[list[object]] = []
+    monkeypatch.setattr(api.weather, "warm_up", lambda points: warmed.append(list(points)) or 0)
     app = api.create_app()
     assert calls == []  # nothing is loaded at import / creation time
     with TestClient(app) as c:
         assert c.get("/api/health").json()["poi_count"] == 14
     assert calls == [1]
+    # T133: today's weather for the landmark areas is warmed up at start, in the background
+    for _ in range(100):
+        if warmed:
+            break
+        time.sleep(0.01)
+    assert warmed and len(warmed[0]) == len(deps.store.landmarks)
+
+
+def test_no_weather_warm_up_without_a_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken() -> Deps:
+        raise FileNotFoundError("data/processed/poi.jsonl")
+
+    warmed: list[int] = []
+    monkeypatch.setattr(api, "build_default_deps", broken)
+    monkeypatch.setattr(api.weather, "warm_up", lambda points: warmed.append(1) or 0)
+    with TestClient(api.create_app()) as c:
+        assert c.get("/api/health").status_code == 503
+    assert warmed == []
 
 
 # ------------------------------------------------------ T123: prefs through HTTP, never logged
@@ -547,3 +568,27 @@ def test_bad_prefs_are_422_without_echo(client: TestClient, caplog: pytest.LogCa
     assert r.status_code == 422
     for text in (r.text, caplog.text):
         assert "history" not in text and "у воды" not in text and "no_bars" not in text
+
+
+@pytest.mark.parametrize("prefs", [
+    {"likes": ["kids"], "avoids": ["kids_places"]},  # 1.3.1 conflicting pairs
+    {"likes": ["coffee"], "avoids": ["cafes"]},
+    {"likes": ["bars"]},  # a tag of the other list
+])
+def test_conflicting_or_foreign_prefs_are_422(client: TestClient, prefs: dict[str, object]
+                                              ) -> None:
+    r = client.post("/api/recommend", json=body(prefs=prefs))
+    assert r.status_code == 422
+    assert "kids_places" not in r.text and "cafes" not in r.text and "bars" not in r.text
+
+
+def test_a_weather_warm_up_that_cannot_start_never_stops_the_server(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_thread(_deps: Deps) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(api, "build_default_deps", lambda: deps)
+    monkeypatch.setattr(api, "start_weather_warm_up", no_thread)
+    with TestClient(api.create_app()) as c:
+        assert c.get("/api/health").json()["poi_count"] == 14  # rule 5: the demo still runs

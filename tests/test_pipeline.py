@@ -1530,12 +1530,12 @@ def _recording_plan_route(calls: list[dict[str, Any]]):  # type: ignore[no-untyp
 @pytest.mark.parametrize(("profile", "overrides", "want", "line"), [
     # no graph here: the route is straight, so the panel says the profile was only asked for
     ("fastest", None, "fastest", None),
-    ("lit", None, "lit", "запрошен маршрут по освещённым улицам"),
+    ("lit", None, "lit", "запрошен маршрут «ночью — по крупным улицам»"),
     ("accessible", None, "accessible", "запрошен маршрут без ступенек"),
     # the wheelchair switch turns the default into a step-free way, and the panel says why
     ("fastest", {"wheelchair": True}, "accessible", "запрошен маршрут без ступенек (коляска)"),
     # an explicit choice stays (Mode.wheelchair forbids stairs on "lit" too)
-    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут по освещённым улицам"),
+    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут «ночью — по крупным улицам»"),
 ])
 def test_route_profile_is_passed_without_the_graph(
     deps: Deps, monkeypatch: pytest.MonkeyPatch, profile: str,
@@ -1588,9 +1588,35 @@ def test_graph_route_and_card_minutes_use_the_profile(
     assert a.route is not None and a.route.path_source == "graph"
     assert a.route.profile == profile  # the profile the route was really planned with
     assert modes and set(modes) == {profile}  # card minutes: the same Mode(profile=...)
-    line = {"accessible": "маршрут: без ступенек",
-            "lit": "маршрут: по освещённым улицам (данные OSM)"}[profile]
-    assert line in a.data_used.filters  # on the graph, without stairs: really applied
+    if profile == "lit":
+        assert "маршрут: ночью — по крупным улицам" in a.data_used.filters
+    else:  # «без ступенек» needs straight_share == 0 (contract 1.3.1, CORE T131)
+        line = ("маршрут: без ступенек" if a.route.straight_share == 0
+                else "запрошен маршрут без ступенек")
+        assert line in a.data_used.filters
+
+
+@pytest.mark.parametrize(("share", "steps", "line"), [
+    (0.0, 0, "маршрут: без ступенек"),
+    (0.2, 0, "запрошен маршрут без ступенек"),  # part straight: its steps are not known
+    (None, 0, "запрошен маршрут без ступенек"),  # not counted (older CORE): not claimed
+    (0.0, 2, "запрошен маршрут без ступенек"),
+])
+def test_step_free_is_claimed_only_at_straight_share_zero(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, share: float | None,
+    steps: int, line: str,
+) -> None:
+    real = route.plan_route
+
+    def shaped(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"straight_share": share, "steps_count": steps})
+
+    monkeypatch.setattr(route, "plan_route", shaped)
+    a = recommend(req("кофе", use_llm=False, overrides={"wheelchair": True}),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert line + " (коляска)" in a.data_used.filters
 
 
 def test_accessible_with_stairs_is_only_asked_for(deps: Deps, tmp_path: Path,
@@ -1624,7 +1650,7 @@ def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch)
 
 # ---------------------------------------------- T123: prefs -> search, panel, prompt, never logs
 
-PREFS = {"likes": ["museums", "no_bars"], "avoids": ["coffee"]}
+PREFS = {"likes": ["museums"], "avoids": ["bars", "cafes"]}
 
 
 def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.MonkeyPatch
@@ -1638,8 +1664,9 @@ def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(retrieval, "retrieve", spy)
     a = recommend(req("куда сходить", use_llm=False, prefs=PREFS), deps)
-    assert seen and seen[0] is not None and seen[0].likes == ["museums", "no_bars"]
-    assert "предпочтения: музеи, без баров; избегать: кофе" in a.data_used.filters
+    assert seen and seen[0] is not None and seen[0].likes == ["museums"]
+    assert seen[0].avoids == ["bars", "cafes"]
+    assert "предпочтения: музеи; избегать: бары, кафе" in a.data_used.filters
     seen.clear()
     plain = recommend(req("куда сходить", use_llm=False, prefs={}), deps)
     assert seen == [None]  # nothing to apply: the 1.2.0 call
@@ -1647,9 +1674,10 @@ def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.Mon
 
 
 @pytest.mark.parametrize(("lang", "prefs", "line"), [
-    ("kk", PREFS, "қалауыңыз: мұражайлар, барсыз; аулақ болу: кофе"),
-    ("en", PREFS, "likes: museums, no bars; avoid: coffee"),
-    ("en", {"avoids": ["night"]}, "avoid: night"),
+    ("kk", PREFS, "қалауыңыз: мұражайлар; аулақ болу: барлар, кафелер"),
+    ("en", PREFS, "likes: museums; avoid: bars, cafes"),
+    ("en", {"avoids": ["noisy", "long_outdoor", "kids_places"]},
+     "avoid: noisy, long walks outside, kids' places"),
     ("ru", {"likes": ["warm", "kids"]}, "предпочтения: в тепле, с ребёнком"),
 ])
 def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: dict[str, Any],
@@ -1661,7 +1689,7 @@ def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: di
 def test_prefs_shift_the_pick_on_the_real_core(deps: Deps) -> None:
     plain = recommend(req("куда сходить", use_llm=False), deps)
     liked = recommend(req("куда сходить", use_llm=False,
-                          prefs={"likes": ["parks", "no_bars"], "avoids": ["coffee"]}), deps)
+                          prefs={"likes": ["parks"], "avoids": ["bars", "cafes"]}), deps)
     before, after = [c.category for c in plain.cards], [c.category for c in liked.cards]
     assert "park" not in before and "cafe" in before
     assert after[0] == "park" and "cafe" not in after
@@ -1682,8 +1710,8 @@ def test_prefs_go_to_the_card_prompt_as_codes(deps: Deps, monkeypatch: pytest.Mo
     monkeypatch.setattr(llm, "generate_structured", spy)
     recommend(req("куда сходить", prefs=PREFS), deps)
     card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
-    assert '"likes": [\n   "museums",\n   "no_bars"\n  ]' in card_prompt
-    assert '"avoids": [\n   "coffee"\n  ]' in card_prompt
+    assert '"likes": [\n   "museums"\n  ]' in card_prompt
+    assert '"avoids": [\n   "bars",\n   "cafes"\n  ]' in card_prompt
 
 
 # Every PrefTag code and its labels in ru / kk / en: none of them may show up in a log record
@@ -1692,8 +1720,8 @@ PREF_LOG_MARKERS = sorted(
     {*pipeline_mod.PREF_NAMES["ru"], *(v for names in pipeline_mod.PREF_NAMES.values()
                                        for v in names.values()), "prefs", "likes", "avoids"},
     key=len, reverse=True)
-ALL_PREFS = {"likes": ["quiet", "museums", "parks", "no_bars", "warm", "night"],
-             "avoids": ["coffee", "kids"]}
+ALL_PREFS = {"likes": ["quiet", "museums", "parks", "warm", "night"],
+             "avoids": ["bars", "noisy", "long_outdoor", "kids_places", "cafes"]}
 EXCLUDE = ["test:poi/1", "test:poi/12", "event:jazz"]  # «Ещё»: ids of cards already shown
 
 
@@ -1791,9 +1819,6 @@ def test_warm_by_the_indoor_switch_and_by_frost(deps: Deps, monkeypatch: pytest.
     assert "warm: up to 10 min outside at a time (frost −20 °C)" in en.data_used.filters
     kk = recommend(req("қайда баруға болады", use_llm=False, lang="kk"), deps)
     assert "жылыда: далада қатарынан 10 минутқа дейін (аяз −20 °C)" in kk.data_used.filters
-    # the person avoids «в тепле»: frost does not switch it on
-    no = recommend(req("куда сходить", use_llm=False, prefs={"avoids": ["warm"]}), deps)
-    assert not any(f.startswith("в тепле:") for f in no.data_used.filters)
     monkeypatch.setattr(weather, "get_weather", _frost(-9))
     mild = recommend(req("куда сходить", use_llm=False), deps)
     assert not any(f.startswith("в тепле:") for f in mild.data_used.filters)
@@ -1891,7 +1916,7 @@ def test_event_becomes_an_event_card_on_the_template_path(deps: Deps, tmp_path: 
     assert len(ev_cards) == 1
     c = ev_cards[0]
     assert c.poi_id == "event:jazz" and c.title == "Джазовый вечер"
-    assert c.address == "Тест-музей, ул. Тестовая, 3"
+    assert c.venue == "Тест-музей" and c.address == "ул. Тестовая, 3"  # 1.3.1
     assert c.facts_sources == ["manual"] and c.idea_source == "poi_data"
     assert c.starts_at == datetime(2026, 10, 19, 19, 0, tzinfo=ASTANA_TZ)
     assert c.ends_at == datetime(2026, 10, 19, 21, 0, tzinfo=ASTANA_TZ)
@@ -2175,45 +2200,42 @@ def test_llm_run_card_gets_the_category_visit_estimate(deps: Deps, tmp_path: Pat
 
 
 def test_avoids_take_the_parsed_category_out_of_the_search(deps: Deps) -> None:
-    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids coffee): three cafes and the
+    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids cafes): three cafes and the
     panel saying «категории: кафе» next to «избегать: кофе» before. Now the parsed cafe
     category and the coffee tag leave the search; the panel does not contradict itself."""
     q = "Хочу тихое место с кофе"
     plain = recommend(req(q, use_llm=False), deps)
     assert plain.cards and all(c.category == "cafe" for c in plain.cards)
-    a = recommend(req(q, use_llm=False, prefs={"avoids": ["coffee"]}), deps)
+    a = recommend(req(q, use_llm=False, prefs={"avoids": ["cafes"]}), deps)
     # an avoid is a penalty, not a filter: the one quiet place of the test data (a cafe) may
     # stay, the other cafes go
     assert a.cards and sum(c.category == "cafe" for c in a.cards) <= 1
     f = a.data_used.filters
     assert not any(x.startswith("категории:") and "кафе" in x for x in f)
     assert not any(x.startswith("теги:") and "кофе" in x for x in f)
-    assert "избегать: кофе" in f
+    assert "избегать: кафе" in f
     assert a.intent.categories == ["cafe"]  # what was asked stays visible in the intent
 
 
 def test_explicit_ui_categories_stay_with_avoids(deps: Deps) -> None:
-    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["coffee"]},
+    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["cafes"]},
                       overrides={"categories": ["cafe"]}), deps)
     assert a.cards and all(c.category == "cafe" for c in a.cards)  # the UI asked for cafes
     assert "категории: кафе" in a.data_used.filters
 
 
-@pytest.mark.parametrize(("query", "label", "category", "gone"), [
-    ("музей рядом", "museums", "museum", True),
-    # the walk tag (not a parks label) still finds the one walk place of the test data
-    ("парк погулять", "parks", "park", False),
-])
-def test_avoids_drop_their_categories(deps: Deps, query: str, label: str, category: str,
-                                      gone: bool) -> None:
-    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum is open
+@pytest.mark.parametrize(("query", "label", "category"), [
+    ("кафе рядом", "cafes", "cafe"), ("бар рядом", "bars", "bar")])
+def test_avoids_drop_their_categories(deps: Deps, query: str, label: str,
+                                      category: str) -> None:
+    late = "2026-10-19T20:00:00+05:00"  # the test bar is open (18:00–04:00)
     name = pipeline_mod.CATEGORY_NAMES["ru"][category]
-    plain = recommend(req(query, use_llm=False, at=tuesday), deps)
+    plain = recommend(req(query, use_llm=False, at=late), deps)
     assert any(name in x for x in plain.data_used.filters if x.startswith("категории:"))
-    a = recommend(req(query, use_llm=False, at=tuesday, prefs={"avoids": [label]}), deps)
+    a = recommend(req(query, use_llm=False, at=late, prefs={"avoids": [label]}), deps)
     assert not any(name in x for x in a.data_used.filters if x.startswith("категории:"))
-    if gone:  # the query word («музей») no longer pulls the avoided place up either
-        assert a.cards and not any(c.category == category for c in a.cards)
+    # the query word («кафе», «бар») no longer pulls the avoided place up either
+    assert a.cards and not any(c.category == category for c in a.cards)
 
 
 def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
@@ -2223,7 +2245,7 @@ def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
                  settings=deps.settings)
     plain = recommend(req("кофе рядом", use_llm=False), small)
     assert [c.category for c in plain.cards] == ["cafe"]  # the category filter of the text
-    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["coffee"]}), small)
+    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["cafes"]}), small)
     assert a.cards and a.cards[0].category != "cafe"
     assert TEXTS["ru"]["no_match"] not in a.warnings  # the avoided word is not «unmatched»
 
@@ -2231,7 +2253,302 @@ def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
 def test_avoided_categories_and_tags_follow_the_table() -> None:
     from app.schemas import UserPrefs
 
-    cats, tags = retrieval.avoided(UserPrefs(avoids=["coffee", "museums", "night"]))
-    assert cats == {"cafe", "museum", "gallery"}
-    assert tags == {"coffee", "night", "late_open", "24_7"}
+    cats, tags = retrieval.avoided(UserPrefs(avoids=["cafes", "bars", "noisy"]))
+    assert cats == {"cafe", "bar", "nightlife"}  # noisy is a penalty only, not the parse
+    assert tags == {"coffee"}
     assert retrieval.avoided(None) == (frozenset(), frozenset())
+
+
+# ----------------------------------- T133: avoids long_outdoor — short walks, indoor not needed
+
+
+def test_long_outdoor_keeps_walks_outside_short_without_the_indoor_filter(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+    real = route.plan_walk
+    monkeypatch.setattr(route, "plan_walk", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    a = recommend(req("погулять", use_llm=False, prefs={"avoids": ["long_outdoor"]}), deps)
+    f = a.data_used.filters
+    assert "без долгих отрезков на улице: до 10 мин подряд" in f
+    assert "в помещении" not in f and not any(x.startswith("в тепле") for x in f)
+    assert "пешком до 10 мин" in f and a.cards
+    for x in a.cards:
+        for y in a.cards:
+            assert geo.walk_minutes(geo.haversine_m(x.geo, y.geo)) <= 10
+    assert calls == []  # no walk loop: short legs, one way
+    en = recommend(req("walk", use_llm=False, lang="en", prefs={"avoids": ["long_outdoor"]}),
+                   deps)
+    assert "no long walks outside: up to 10 min at a time" in en.data_used.filters
+
+
+# ------------------------------- T133: an event in the route — the last stop, or not a stop
+
+
+def _last_stop_fake(calls: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
+    """plan_route of CORE T131 (last_stop_id=...), faked: records the call, puts it last."""
+    real = route.plan_route
+
+    def plan(origin, stops, budget_min, visit_min, max_stops=3, *, last_stop_id=None,
+             **kw):  # type: ignore[no-untyped-def]
+        calls.append({"stops": [s.poi.id for s in stops], "last": last_stop_id})
+        got = real(origin, stops, budget_min, visit_min, max_stops, **kw)
+        if got is None or last_stop_id is None:
+            return got
+        ids = [i for i in got.stop_ids if i != last_stop_id] + [last_stop_id]
+        return got.model_copy(update={"stop_ids": ids})
+    return plan
+
+
+@pytest.mark.parametrize(("at", "is_stop"), [
+    ("2026-10-19T18:45:00+05:00", True),  # 15 min before the start
+    ("2026-10-19T18:30:00+05:00", True),  # exactly 30 min
+    ("2026-10-19T19:30:00+05:00", True),  # on now
+    ("2026-10-19T18:00:00+05:00", False),  # 60 min before: a card, not a stop
+])
+def test_event_is_the_last_stop_or_not_a_stop(deps: Deps, tmp_path: Path,
+                                              monkeypatch: pytest.MonkeyPatch, at: str,
+                                              is_stop: bool) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _last_stop_fake(calls))
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at=at), d)
+    assert any(c.kind == "event" for c in a.cards)  # the card stays either way
+    assert a.route is not None and calls
+    if is_stop:
+        assert calls[-1]["last"] == "event:jazz" and "event:jazz" in calls[-1]["stops"]
+        assert a.route.stop_ids[-1] == "event:jazz"
+    else:
+        assert calls[-1]["last"] is None and "event:jazz" not in calls[-1]["stops"]
+        assert "event:jazz" not in a.route.stop_ids
+
+
+def test_of_two_soon_events_the_earlier_ends_the_route(deps: Deps, tmp_path: Path,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _last_stop_fake(calls))
+    early = _event_record("early", starts="2026-10-19T18:50:00+05:00",
+                          ends="2026-10-19T20:00:00+05:00")
+    late = _event_record("late", starts="2026-10-19T19:10:00+05:00",
+                         ends="2026-10-19T21:00:00+05:00",
+                         geo={"lat": 51.0886, "lon": 71.4170}, venue_poi_id=None)
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"),
+                  _events_deps(deps, tmp_path, [early, late]))
+    shown = {c.poi_id for c in a.cards if c.kind == "event"}
+    assert shown == {"event:early", "event:late"}
+    assert calls[-1]["last"] == "event:early" and "event:late" not in calls[-1]["stops"]
+
+
+def test_without_last_stop_support_an_event_is_never_a_stop(deps: Deps, tmp_path: Path
+                                                            ) -> None:
+    """Before CORE T131 is merged plan_route has no last_stop_id: the event stays a card and
+    the route covers the places only, so «the event stop is the last one» always holds."""
+    import inspect
+
+    if "last_stop_id" in inspect.signature(route.plan_route).parameters:
+        pytest.skip("CORE plan_route already takes last_stop_id")
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"), d)
+    assert any(c.kind == "event" for c in a.cards)
+    assert a.route is None or "event:jazz" not in a.route.stop_ids
+
+
+
+# ------------------------------- T133: the weather service did not answer in time — say so
+
+REAL_GET_WEATHER = weather.get_weather  # taken before conftest swaps it for «no weather»
+
+
+@pytest.mark.parametrize(("lang", "line"), [
+    ("ru", "погода: нет данных (сервис не ответил)"),
+    ("kk", "ауа райы: дерек жоқ (қызмет жауап бермеді)"),
+    ("en", "weather: no data (the service did not answer)"),
+])
+def test_no_answer_from_the_weather_service_is_said(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                                    lang: str, line: str) -> None:
+    import httpx
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    weather._cache.clear()
+    monkeypatch.setattr(weather, "get_weather", REAL_GET_WEATHER)
+    monkeypatch.setattr(weather, "_make_client", lambda timeout_s=1.5: httpx.Client(
+        transport=httpx.MockTransport(slow)))
+    body = {"query": "кофе", "location": {"landmark_id": "expo"}, "use_llm": False,
+            "lang": lang}  # no `at`: now, so the weather is asked
+    a = recommend(RecommendRequest.model_validate(body), deps)
+    assert a.data_used.weather == line  # (no card check: `now` may be night)
+    assert "open_meteo" not in a.data_used.sources
+    weather._cache.clear()
+
+
+def test_without_a_status_the_old_label_stays(deps: Deps) -> None:
+    """conftest's «no weather» stand-in sets no status: «погода неизвестна», as before."""
+    body = {"query": "кофе", "location": {"landmark_id": "expo"}, "use_llm": False}
+    a = recommend(RecommendRequest.model_validate(body), deps)
+    assert a.data_used.weather == TEXTS["ru"]["weather_unknown"]
+
+
+# ------------------------- CORE T131 merged: the real last_stop_id, and a short time budget
+
+
+def test_with_core_last_stop_id_the_event_really_ends_the_route(deps: Deps, tmp_path: Path
+                                                                ) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"), d)
+    assert a.route is not None and a.route.stop_ids[-1] == "event:jazz"
+    later = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:00:00+05:00"), d)
+    assert any(c.kind == "event" for c in later.cards)
+    assert later.route is None or "event:jazz" not in later.route.stop_ids
+
+
+def test_a_short_budget_drops_a_place_not_the_event(deps: Deps) -> None:
+    """CORE drops the lowest-ranked stop when the time is short. The event is card 3 here, yet
+    it goes first in the stops (kept longest): a place can wait, the event will not."""
+    from app import events as ev
+
+    now = datetime(2026, 10, 19, 18, 45, tzinfo=ASTANA_TZ)
+    show = ev.Event.model_validate(_event_record(ends="2026-10-19T19:20:00+05:00"))
+    by_id = deps.store.by_id
+    ev_cand = Candidate(poi=ev.as_poi(show, "ru"), distance_m=150, walk_min=3, score=0.3,
+                        hours=ev.verdict(show, now, "ru"))
+    places = [Candidate(poi=by_id[i], distance_m=300, walk_min=5, score=0.6,
+                        hours=HoursVerdict(status="unknown", confidence="low", note="-"))
+              for i in ("test:poi/7", "test:poi/1")]
+    intent = QueryIntent(raw_query="x", time_budget_min=40)
+    ctx = SearchContext(origin=GeoPoint(lat=51.0894, lon=71.4161), h3_cell="8a2153806d1ffff",
+                        h3_res=10, area_label="у EXPO", local_time=now, radius_m=1200)
+    cards = validate.template_cards([*places, ev_cand], intent, ctx, events={show.id: show})
+    assert [c.poi_id for c in cards][-1] == show.id  # the event is the lowest-ranked card
+    got, failed = pipeline_mod._route(ctx, cards, [*places, ev_cand], intent, True, "rid")
+    assert not failed and got is not None
+    assert got.stop_ids[-1] == show.id  # kept, and last
+    assert len(got.stop_ids) < 3  # a place was dropped for the time instead
+    two_hours = ev.Event.model_validate(_event_record())  # 120 min > the 40-min budget
+    cards = validate.template_cards([*places, ev_cand], intent, ctx,
+                                    events={show.id: two_hours})
+    got, _ = pipeline_mod._route(ctx, cards, [*places, ev_cand], intent, True, "rid")
+    assert got is None or show.id not in got.stop_ids  # a card, not a stop
+
+
+# ------------- the integrator's case: «концерт или шоу?» with a concert near EXPO in 15 min
+
+SOON = {"id": "event:test-soon", "title": {"ru": "Тестовый концерт"}, "category": "entertainment",
+        "tags": ["outdoor"], "geo": {"lat": 51.0892, "lon": 71.4162},
+        "starts_at": "2026-10-22T15:15:00+05:00", "ends_at": "2026-10-22T16:30:00+05:00",
+        "source_url": "https://example.org/a", "venue": "Тестовая площадка",
+        "address": "пр. Мангилик Ел, 55/23", "fetched_at": "2026-10-21"}
+SOON_Q = "Что интересного рядом — концерт или шоу?"
+
+
+def test_a_soon_concert_is_a_card_and_the_last_stop(deps: Deps, tmp_path: Path) -> None:
+    """The parser reads «что интересного» as sights and «концерт» as live_music: those are
+    place filters. They hid the event (category entertainment); now the query that asks for
+    events gets it — a card, and the last stop of the route (real plan_route of CORE)."""
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert [c.poi_id for c in ev_cards] == ["event:test-soon"]
+    c = ev_cards[0]
+    assert c.title == "Тестовый концерт" and c.venue == "Тестовая площадка"
+    assert c.address == "пр. Мангилик Ел, 55/23" and c.facts_sources == ["manual"]
+    assert a.route is not None and a.route.stop_ids[-1] == "event:test-soon"
+    assert "события: без фильтра по категориям мест" in a.data_used.filters
+    early = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T14:00:00+05:00"), d)
+    assert any(c.kind == "event" for c in early.cards)  # 75 min ahead: a card…
+    assert early.route is None or "event:test-soon" not in early.route.stop_ids  # …not a stop
+    over = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T17:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in over.cards)  # over at 16:30
+
+
+def test_ui_categories_still_hide_events(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00",
+                      overrides={"categories": ["museum"]}), d)
+    assert not any(c.kind == "event" for c in a.cards)  # an explicit choice in the UI
+    assert not any(f.startswith("события:") for f in a.data_used.filters)
+
+
+def test_a_query_without_event_words_keeps_the_place_filters(deps: Deps, tmp_path: Path
+                                                             ) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req("музей рядом", use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in a.cards)  # an entertainment event, not a museum
+
+
+def test_data_lane_records_load_as_they_are_written() -> None:
+    """pipeline.events writes "event:<slug>" with its own slug rule: the reader accepts it."""
+    import inspect
+    from datetime import date
+
+    from app import events as ev
+    from pipeline import events as data_events
+
+    item = data_events.EventIn.model_validate({
+        "id": "opera-tosca-2026-11-01", "title": "Опера «Тоска»", "category": "theatre",
+        "starts_at": "2026-11-01T19:00:00+05:00", "geo": {"lat": 51.1236, "lon": 71.4296},
+        "source_url": "https://astanaopera.kz/afisha/tosca", "fetched_at": "2026-10-21"})
+    venue = data_events.Venue(None, None, None)
+    params = inspect.signature(data_events.to_record).parameters
+    if "source" in params:  # DATA T132 passes the whole source (with its kind)
+        fields = data_events.Source.model_fields
+        src = {"domain": "astanaopera.kz", "name": "Астана Опера",
+               "terms_url": "https://astanaopera.kz/terms", "checked_at": date(2026, 10, 21)}
+        if "kind" in fields:
+            src["kind"] = "venue"
+        record = data_events.to_record(item, venue, data_events.Source.model_validate(src))
+    else:
+        record = data_events.to_record(item, venue, "Астана Опера")
+    got = ev.Event.model_validate(record)
+    assert got.id == "event:opera-tosca-2026-11-01" and got.title_in("ru") == "Опера «Тоска»"
+
+
+# ---------- Megah: general queries do not hide events, an explicit category does (wave 8.1)
+
+GENERAL_QUERIES = [
+    ("ru", "Что интересного рядом"), ("ru", "Куда сходить"), ("ru", "Хочу необычное"),
+    ("kk", "Жақын жерде не қызықты бар"), ("en", "What's interesting nearby"),
+    ("en", "Where to go"),
+]
+
+
+@pytest.mark.parametrize(("lang", "query"), GENERAL_QUERIES)
+def test_general_queries_keep_the_soon_event(deps: Deps, tmp_path: Path, lang: str,
+                                             query: str) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(query, use_llm=False, lang=lang, at="2026-10-22T15:00:00+05:00"), d)
+    assert "event:test-soon" in [c.poi_id for c in a.cards if c.kind == "event"]
+    assert a.route is not None and a.route.stop_ids[-1] == "event:test-soon"  # real CORE
+
+
+@pytest.mark.parametrize(("lang", "query"), [
+    ("ru", "Хочу в музей"), ("kk", "Мұражайға барғым келеді"), ("en", "I want a museum")])
+def test_an_explicit_category_keeps_only_matching_events(deps: Deps, tmp_path: Path,
+                                                         lang: str, query: str) -> None:
+    show = {**SOON, "id": "event:test-show", "title": {"ru": "Выставка-тест"},
+            "category": "gallery", "geo": {"lat": 51.0890, "lon": 71.4160}}
+    d = _events_deps(deps, tmp_path, [SOON, show])
+    a = recommend(req(query, use_llm=False, lang=lang, at="2026-10-22T15:00:00+05:00"), d)
+    shown = {c.poi_id for c in a.cards if c.kind == "event"}
+    assert "event:test-soon" not in shown  # an entertainment event is not a museum
+    assert "event:test-show" in shown  # an exhibition is (museum ~ gallery for events)
+
+
+def test_explicit_categories_are_the_named_ones_only() -> None:
+    from app.query_parser import explicit_categories
+
+    assert explicit_categories("Что интересного рядом") == []
+    assert explicit_categories("What's worth seeing nearby?") == []
+    assert explicit_categories("Хочу в музей") == ["museum"]
+    assert set(explicit_categories("где поесть")) >= {"restaurant", "cafe"}
+    assert explicit_categories("kk бар ма", "kk") == []  # Kazakh «бар» = «there is»
+
+
+def test_no_bars_in_likes_reads_as_avoid_bars(deps: Deps) -> None:
+    """Contract 66a26ca: the 1.3.0 like «no_bars» is a synonym of avoids «bars» (no 422)."""
+    late = "2026-10-19T20:00:00+05:00"  # the test bar is open
+    a = recommend(req("куда сходить", use_llm=False, at=late, prefs={"likes": ["no_bars"]}),
+                  deps)
+    assert "избегать: бары" in a.data_used.filters
+    assert not any(c.category in ("bar", "nightlife") for c in a.cards)

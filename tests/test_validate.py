@@ -774,7 +774,8 @@ def test_template_event_card() -> None:
     e = _event()
     card = template_cards([_event_cand(e)], intent(), ctx(), events={e.id: e})[0]
     assert card.kind == "event" and card.poi_id == "event:quartet"
-    assert card.title == "Струнный квартет" and card.address == "Зал, пр. Тестовый, 7"
+    assert card.title == "Струнный квартет"
+    assert card.venue == "Зал" and card.address == "пр. Тестовый, 7"  # 1.3.1
     assert card.starts_at == e.starts_at and card.ends_at == e.ends_at
     assert card.source_url == "https://example-hall.kz/afisha/1"
     assert card.facts_sources == ["manual"] and card.website is None
@@ -842,3 +843,14 @@ def test_llm_summary_live_claim_follows_the_event_cards() -> None:
     run = _event(starts="2026-10-01T10:00:00+05:00", ends="2026-11-30T18:00:00+05:00")
     run_card = template_cards([_event_cand(run)], intent(), ctx(), events={run.id: run})[0]
     assert sanitize_summary(text, [run_card], llm=True, now=ctx().local_time) == ""
+
+
+def test_event_without_venue_or_address() -> None:
+    e = _event().model_copy(update={"venue": None, "address": None})
+    card = template_cards([_event_cand(e)], intent(), ctx(), events={e.id: e})[0]
+    assert card.venue is None and card.address is None and card.kind == "event"
+    place = template_cards([cand(POI.model_validate({
+        "id": "test:poi/x", "name": "Кафе", "category": "cafe", "sources": ["osm"],
+        "geo": {"lat": EXPO[0], "lon": EXPO[1]}, "data_confidence": 0.5,
+        "fetched_at": "2026-10-18"}))], intent(), ctx())[0]
+    assert place.venue is None  # a place never has a venue (contract 1.3.1)
