@@ -1890,7 +1890,7 @@ def test_event_becomes_an_event_card_on_the_template_path(deps: Deps, tmp_path: 
     assert len(ev_cards) == 1
     c = ev_cards[0]
     assert c.poi_id == "event:jazz" and c.title == "Джазовый вечер"
-    assert c.address == "Тест-музей, ул. Тестовая, 3"
+    assert c.venue == "Тест-музей" and c.address == "ул. Тестовая, 3"  # 1.3.1
     assert c.facts_sources == ["manual"] and c.idea_source == "poi_data"
     assert c.starts_at == datetime(2026, 10, 19, 19, 0, tzinfo=ASTANA_TZ)
     assert c.ends_at == datetime(2026, 10, 19, 21, 0, tzinfo=ASTANA_TZ)

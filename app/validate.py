@@ -545,8 +545,9 @@ def _event_card(
     idea_source: Literal["poi_data", "generated"],
     event: ev.Event,
 ) -> Card:
-    """kind="event" (contract 1.3.0): poi_id = event id, title in the answer language,
-    address = venue and address, facts_sources ["manual"], starts_at / ends_at / source_url
+    """kind="event" (contract 1.3.1): poi_id = event id, title in the answer language,
+    venue = the venue's name, address = its address, facts_sources ["manual"], starts_at /
+    ends_at / source_url
     from data/events.json; open_status unknown / low with the event time as the note (code)."""
     return Card(
         rank=rank,
@@ -567,7 +568,8 @@ def _event_card(
         facts_sources=["manual"],
         data_confidence=cand.poi.data_confidence,
         tags=list(cand.poi.tags),
-        address=event.place_line(),
+        address=(event.address or "").strip() or None,  # 1.3.1: the venue's address only
+        venue=(event.venue or "").strip() or None,  # 1.3.1: the venue's name
         website=None,
         kind="event",
         starts_at=event.starts_at,
