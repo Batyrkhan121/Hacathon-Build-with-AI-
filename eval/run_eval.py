@@ -160,6 +160,9 @@ def check_invariants(ans: Answer) -> list[str]:
     fails += check_route_facts(ans)
     fails += check_crossing_kinds(ans, crossing_node_flags())
     fails += check_event_cards(ans)
+    fails += check_straight_share(ans)
+    fails += check_event_stops(ans)
+    fails += check_event_venue(ans, event_venues())
     return fails
 
 
@@ -168,7 +171,7 @@ def check_invariants(ans: Answer) -> list[str]:
 GRAPH_PATH = ROOT / "data" / "processed" / "walk_graph.npz"
 NODE_CROSSING, NODE_SIGNALS, NODE_UNMARKED, NODE_MARKINGS_KNOWN = 1, 2, 8, 32
 # The crossing check compares with the LOCAL graph file. main() turns it off for --url
-# (the server may run another graph) unless --graph-check says the graph is the same.
+# (the server may run another graph) unless --local-data-check says the data are the same.
 CROSSING_GRAPH: Path | None = GRAPH_PATH
 _node_flags_cache: dict[Path, dict[tuple[float, float], int] | None] = {}
 _graph_load_errors: dict[Path, str] = {}
@@ -204,13 +207,14 @@ def crossing_check_note(url_mode: bool) -> str | None:
     """One report line when the crossing check did not run, or ran against a local file."""
     if CROSSING_GRAPH is None:
         return ("переходы «зебра» не сверены с графом: --url, у сервера может быть другой "
-                "граф (включить: --graph-check, если граф тот же)")
+                "граф (включить: --local-data-check, если граф тот же)")
     crossing_node_flags()
     err = _graph_load_errors.get(CROSSING_GRAPH)
     if err:
         return f"переходы «зебра» не сверены с графом: {CROSSING_GRAPH.name} — {err}"
     if url_mode:
-        return f"переходы «зебра» сверены с локальным {CROSSING_GRAPH.name} (--graph-check)"
+        return (f"переходы «зебра» сверены с локальным {CROSSING_GRAPH.name} "
+                "(--local-data-check)")
     return None
 
 
@@ -281,6 +285,100 @@ def check_event_cards(ans: Answer) -> list[str]:
         if not on_now and any(m in text for m in LIVE_MARKERS):
             fails.append(f"{c.poi_id}: «идёт сейчас», хотя starts_at–ends_at этого не дают")
     return fails
+
+
+# 1.3.1: «без ступенек» in data_used.filters (ru / kk / en, app/pipeline.py f_profile_accessible);
+# «запрошен маршрут без ступенек» (asked, not achieved) is not a claim
+STEP_FREE_CLAIMS = ("маршрут: без ступенек", "маршрут: баспалдақсыз", "route: step-free")
+EVENT_STOP_MAX_WAIT_MIN = 30  # an event starting later than this is not a route stop (1.3.1)
+EVENTS_PATH = ROOT / "data" / "events.json"
+# like CROSSING_GRAPH: off for --url unless --local-data-check (the server may have other events)
+EVENTS_FILE: Path | None = EVENTS_PATH
+_event_venues_cache: dict[Path, dict[str, str] | None] = {}
+_events_load_errors: dict[Path, str] = {}
+
+
+def check_straight_share(ans: Answer) -> list[str]:
+    """1.3.1: straight_share is 1 on a straight route; «без ступенек» only on a graph route with
+    no steps and no straight segments (the text of note is not used for this)."""
+    route = ans.route
+    fails: list[str] = []
+    if route is not None and route.straight_share is not None \
+            and route.path_source == "straight" and route.straight_share < 0.999:
+        fails.append(f"прямой маршрут, а straight_share {route.straight_share}, ожидали 1")
+    claims = [f for f in ans.data_used.filters if any(m in f.lower() for m in STEP_FREE_CLAIMS)]
+    if claims:
+        ok = (route is not None and route.path_source == "graph" and route.steps_count == 0
+              and route.straight_share == 0)
+        if not ok:
+            got = "нет маршрута" if route is None else (
+                f"{route.path_source}, ступеней {route.steps_count}, "
+                f"straight_share {route.straight_share}")
+            fails.append(f"«без ступенек» в filters, а маршрут: {got}")
+    return fails
+
+
+def check_event_stops(ans: Answer) -> list[str]:
+    """1.3.1: an event in the route is the last stop, and only if it starts within 30 min."""
+    route = ans.route
+    if route is None:
+        return []
+    now = ans.context.local_time
+    fails: list[str] = []
+    for c in ans.cards:
+        if c.kind != "event" or c.starts_at is None or c.poi_id not in route.stop_ids:
+            continue
+        if route.stop_ids[-1] != c.poi_id:
+            fails.append(f"{c.poi_id}: событие — не последняя остановка ({route.stop_ids})")
+        wait_min = (c.starts_at - now).total_seconds() / 60
+        if wait_min > EVENT_STOP_MAX_WAIT_MIN:
+            fails.append(f"{c.poi_id}: до начала {wait_min:.0f} мин > "
+                         f"{EVENT_STOP_MAX_WAIT_MIN}, а событие — остановка маршрута")
+    return fails
+
+
+def event_venues(path: Path | None = None) -> dict[str, str] | None:
+    """{event id: venue} from the local data/events.json. None: the check is off (--url),
+    no file or unreadable file (see events_check_note). Default path: EVENTS_FILE."""
+    path = path if path is not None else EVENTS_FILE
+    if path is None:
+        return None
+    if path not in _event_venues_cache:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            _event_venues_cache[path] = {
+                str(e["id"]): str(e["venue"]) for e in raw
+                if isinstance(e, dict) and e.get("id") and e.get("venue")}
+        except FileNotFoundError:
+            _event_venues_cache[path] = None
+            _events_load_errors[path] = "нет файла"
+        except (OSError, ValueError, TypeError) as exc:
+            _event_venues_cache[path] = None
+            _events_load_errors[path] = f"файл не читается ({type(exc).__name__})"
+    return _event_venues_cache[path]
+
+
+def events_check_note(url_mode: bool) -> str | None:
+    """One report line when event venues were not checked, or checked against a local file."""
+    if EVENTS_FILE is None:
+        return ("площадки событий не сверены с data/events.json: --url, у сервера могут быть "
+                "другие события (включить: --local-data-check, если данные те же)")
+    event_venues()
+    err = _events_load_errors.get(EVENTS_FILE)
+    if err:
+        return f"площадки событий не сверены: {EVENTS_FILE.name} — {err}"
+    if url_mode:
+        return f"площадки событий сверены с локальным {EVENTS_FILE.name} (--local-data-check)"
+    return None
+
+
+def check_event_venue(ans: Answer, venues: dict[str, str] | None) -> list[str]:
+    """1.3.1: an event card carries Card.venue when the venue is known in data/events.json."""
+    if venues is None:
+        return []
+    return [f"{c.poi_id}: у события нет venue, а площадка известна («{venues[c.poi_id]}»)"
+            for c in ans.cards
+            if c.kind == "event" and not c.venue and c.poi_id in venues]
 
 
 def _prefs_score(ans: Answer, spec: dict[str, Any]) -> int:
@@ -895,7 +993,53 @@ PRIVACY_PROBES: list[tuple[str, str, dict[str, Any], tuple[str, ...]]] = [
     ("prefs_extra", "лишнее поле в prefs (история)",
      {"query": "кофе рядом", "location": _PROBE_LOC,
       "prefs": {"likes": ["quiet"], "history": ["coffee"]}}, ("history",)),
+    # 1.3.1: separate likes / avoids vocabularies, contradicting pairs
+    ("prefs_conflict_kids", "противоречие: с ребёнком + не хочу детские места",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["kids"], "avoids": ["kids_places"]}}, ("kids_places",)),
+    ("prefs_conflict_coffee", "противоречие: кофе + не хочу кафе",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["coffee"], "avoids": ["cafes"]}}, ("cafes",)),
+    # the vocabularies do not overlap, so «one tag in both lists» is this same case
+    ("prefs_foreign", "метка из чужого списка (музеи в «не хочу»)",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"avoids": ["museums"]}}, ("museums",)),
+    ("prefs_no_bars_avoid", "no_bars в «не хочу»",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"avoids": ["no_bars"]}}, ("no_bars",)),
 ]
+
+# 1.3.1 (Megah, 21.10): the 1.3.0 like «no_bars» is a synonym of the avoid «bars», not a 422.
+# Sent through the scenario runner: it must be answered and say «избегать: бары» in filters.
+COMPAT_NO_BARS = {"query": "Хочу погулять рядом", "location": {"landmark_id": "expo"},
+                  "at": "2026-10-20T15:00:00+05:00", "lang": "ru",
+                  "prefs": {"likes": ["no_bars"]}}
+AVOID_BARS_MARKERS = ("избегать:", "бары")
+
+
+def run_compat_probe(runner: Runner | None, no_llm: bool = False) -> dict[str, Any]:
+    """likes [no_bars] -> an answer (not 422), filters «избегать: бары», no bar cards."""
+    title = "likes no_bars (1.3.0) → синоним «не хочу бары»"
+    if runner is None:
+        return {"id": "compat_no_bars", "title": title, "got": "раннер недоступен",
+                "passed": False}
+    data = dict(COMPAT_NO_BARS, use_llm=not no_llm)
+    try:
+        req = RecommendRequest.model_validate(data)
+    except ValidationError:
+        return {"id": "compat_no_bars", "title": title, "got": "422 (схема)", "passed": False}
+    out = runner(req)
+    if out.answer is None:
+        got = "422" if out.rejected else (out.error or "нет ответа")
+        return {"id": "compat_no_bars", "title": title, "got": got, "passed": False}
+    lines = [f.lower() for f in out.answer.data_used.filters]
+    said = any(all(m in f for m in AVOID_BARS_MARKERS) for f in lines)
+    bars = [c.title for c in out.answer.cards if c.category in ("bar", "nightlife")]
+    problems = ([] if said else ["в filters нет «избегать: бары»"]) + (
+        [f"бары в карточках: {bars}"] if bars else [])
+    return {"id": "compat_no_bars", "title": title,
+            "got": "ответ" + (f" ({'; '.join(problems)})" if problems else ", «избегать: бары»"),
+            "passed": not problems}
 # sends one body; returns the HTTP status (-1 = no answer) or (status, response text)
 PostFn = Callable[[dict[str, Any]], "int | tuple[int, str]"]
 RawPostFn = PostFn
@@ -962,7 +1106,7 @@ def privacy_summary(probes: list[dict[str, Any]]) -> str:
 
 def write_report(
     out_dir: Path, mode: str, results: list[Result], notes: list[str],
-    privacy: list[dict[str, Any]] | None = None,
+    privacy: list[dict[str, Any]] | None = None, compat: dict[str, Any] | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if privacy is not None:
@@ -982,6 +1126,7 @@ def write_report(
         "search": {k: sum(r.search == k for r in results) for k in ("vector", "words")},
         "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
         "privacy": privacy or [],
+        "compat": compat,
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
@@ -1215,8 +1360,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--smoke", action="store_true", help="run team queries, no grading")
     ap.add_argument("--queries", type=Path, default=QUERIES_PATH, help="CSV for --smoke")
     ap.add_argument("--note", action="append", default=[], help="extra line for the report header")
-    ap.add_argument("--graph-check", action="store_true",
-                    help="with --url: check crossings against the local walk graph too")
+    ap.add_argument("--local-data-check", "--graph-check", dest="local_data_check",
+                    action="store_true",
+                    help="with --url: check crossings and event venues against the local "
+                         "walk graph and data/events.json too")
     args = ap.parse_args(argv)
 
     notes: list[str] = []
@@ -1232,8 +1379,10 @@ def main(argv: list[str] | None = None) -> int:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
         runner, notes = inprocess_runner(args.no_llm)
     notes = notes + args.note
-    global CROSSING_GRAPH
-    CROSSING_GRAPH = None if args.url and not args.graph_check else GRAPH_PATH
+    global CROSSING_GRAPH, EVENTS_FILE
+    local = not args.url or args.local_data_check
+    CROSSING_GRAPH = GRAPH_PATH if local else None
+    EVENTS_FILE = EVENTS_PATH if local else None
 
     if args.smoke:
         if not args.queries.is_file():
@@ -1268,18 +1417,22 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("граф тротуаров в этом прогоне не используется (WALK_GRAPH=false или "
                      "нет файла графа): ожидание route_source=graph пропущено для "
                      + ", ".join(wants_graph))
-    graph_note = crossing_check_note(bool(args.url))
-    if graph_note:
-        notes.append(graph_note)
+    for note in (crossing_check_note(bool(args.url)), events_check_note(bool(args.url))):
+        if note:
+            notes.append(note)
     notes.append(CORE_MEASURE_NOTE)
     privacy = run_privacy_probes(url_post(args.url) if args.url else None)
-    write_report(args.out, mode, results, notes, privacy)
+    compat = run_compat_probe(runner, no_llm=args.no_llm)
+    notes.append(f"Совместимость: {compat['title']} — {compat['got']}"
+                 f" ({'pass' if compat['passed'] else 'FAIL'})")
+    write_report(args.out, mode, results, notes, privacy, compat)
     passed = sum(r.passed for r in results)
     for r in results:
         print(f"{r.id:<4} {'pass' if r.passed else 'FAIL'}  {'; '.join(r.failures)[:160]}")
     for n in notes:
         print(f"note: {n}")
     print(f"PRIVACY: {privacy_summary(privacy)}")
+    print(f"COMPAT: {compat['got']} ({'pass' if compat['passed'] else 'FAIL'})")
     print(f"EVAL {mode}: {passed}/{len(results)} ({group_summary(results)}) "
           f"-> {args.out / 'report.md'}")
     return 0
