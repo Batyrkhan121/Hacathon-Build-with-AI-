@@ -498,6 +498,8 @@ function renderChips() {
   );
   const toggle = (f) => () => {
     state.flags[f] = !state.flags[f];
+    // 1.3.1: «Доступная среда» сама включает профиль «Без ступенек» (снять можно в переключателе маршрута)
+    if (f === 'wheelchair' && state.flags.wheelchair) state.routeProfile = 'accessible';
     filtersChanged();
   };
   els.flagChips.replaceChildren(...FILTER_FLAGS.map((f) => chip(t(`flag.${f}`), state.flags[f], toggle(f))));
