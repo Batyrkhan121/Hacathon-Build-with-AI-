@@ -171,7 +171,7 @@ def _event_card(**over: object) -> dict:
 def test_1_2_0_request_gets_1_3_0_defaults() -> None:
     from app.schemas import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == "1.3.0"
+    assert SCHEMA_VERSION == "1.3.1"
     req = RecommendRequest.model_validate({"query": "кофе", "location": {"landmark_id": "expo"}})
     assert (req.route_profile, req.prefs) == ("fastest", None)
     for profile in ("fastest", "accessible", "lit"):
@@ -183,20 +183,35 @@ def test_1_2_0_request_gets_1_3_0_defaults() -> None:
             {"query": "кофе", "location": {"landmark_id": "expo"}, "route_profile": "safe"})
 
 
-def test_prefs_take_only_the_fixed_vocabulary() -> None:
-    from app.schemas import MAX_PREFS, PREF_LABELS_RU, UserPrefs
+def test_prefs_take_only_the_fixed_vocabularies() -> None:
+    """1.3.1: likes and avoids have separate vocabularies; contradicting pairs are a 422."""
+    from app.schemas import (
+        MAX_PREFS,
+        PREF_AVOID_LABELS_RU,
+        PREF_CONFLICTS,
+        PREF_LABELS_RU,
+        PREF_LIKE_LABELS_RU,
+        UserPrefs,
+    )
 
-    assert len(PREF_LABELS_RU) == MAX_PREFS == 8
-    assert set(PREF_LABELS_RU.values()) == {"тихо", "кофе", "с ребёнком", "музеи", "парки",
-                                            "без баров", "в тепле", "ночные"}
-    every = [t for t in PREF_LABELS_RU if t != "no_bars"]
-    ok = UserPrefs(likes=["no_bars", "museums"], avoids=["night"])
-    assert (ok.likes, ok.avoids) == (["no_bars", "museums"], ["night"])
-    assert UserPrefs(likes=list(PREF_LABELS_RU)).likes == list(PREF_LABELS_RU)
-    assert UserPrefs(avoids=every).avoids == every
+    assert set(PREF_LIKE_LABELS_RU.values()) == {"тихо", "кофе", "с ребёнком", "музеи", "парки",
+                                                 "в тепле", "ночные"}
+    assert set(PREF_AVOID_LABELS_RU.values()) == {"бары", "шумно", "долго на улице",
+                                                  "детские места", "кафе"}
+    assert PREF_LABELS_RU == {**PREF_LIKE_LABELS_RU, **PREF_AVOID_LABELS_RU} and MAX_PREFS == 8
+    assert PREF_CONFLICTS == {("kids", "kids_places"), ("coffee", "cafes")}
+    likes, avoids = list(PREF_LIKE_LABELS_RU), list(PREF_AVOID_LABELS_RU)
+    ok = UserPrefs(likes=["museums", "quiet"], avoids=["bars", "noisy"])
+    assert (ok.likes, ok.avoids) == (["museums", "quiet"], ["bars", "noisy"])
+    assert UserPrefs(likes=likes).likes == likes and UserPrefs(avoids=avoids).avoids == avoids
+    assert UserPrefs(likes=["kids"], avoids=["bars"]).likes == ["kids"]
     for bad in ({"likes": ["sushi"]}, {"likes": ["музеи"]}, {"avoids": ["coffee please"]},
-                {"likes": ["museums", "museums"]}, {"likes": ["parks"], "avoids": ["parks"]},
-                {"avoids": ["no_bars"]}, {"likes": list(PREF_LABELS_RU) * 2},
+                {"likes": ["no_bars"]}, {"avoids": ["no_bars"]},  # the 1.3.0 tag is gone
+                {"likes": ["bars"]}, {"avoids": ["museums"]},  # a tag of the other list
+                {"likes": ["quiet"], "avoids": ["quiet"]},  # one tag in both lists
+                {"likes": ["kids"], "avoids": ["kids_places"]},  # contradicting pairs
+                {"likes": ["coffee", "parks"], "avoids": ["cafes"]},
+                {"likes": ["museums", "museums"]}, {"avoids": ["bars", "bars"]},
                 {"likes": [], "history": ["osm:node/1"]}, {"text": "люблю тишину"},
                 {"likes": "quiet"}):
         with pytest.raises(ValidationError):
@@ -206,7 +221,7 @@ def test_prefs_take_only_the_fixed_vocabulary() -> None:
 def test_prefs_stay_out_of_request_repr() -> None:
     req = RecommendRequest.model_validate(
         {"query": "кофе", "location": {"landmark_id": "expo"},
-         "prefs": {"likes": ["museums"], "avoids": ["night"]}})
+         "prefs": {"likes": ["museums"], "avoids": ["noisy"]}})
     assert req.prefs is not None and req.prefs.likes == ["museums"]
     assert "museums" not in repr(req) and "prefs" not in repr(req) and "museums" not in str(req)
 
@@ -224,7 +239,8 @@ def test_unknown_pref_tag_is_a_private_422(synthetic_pois: list[POI], landmarks,
                 settings=make_settings(tmp_path))
     client = TestClient(api.create_app(deps))
     base = {"query": "кофе", "location": {"landmark_id": "expo"}}
-    for prefs in ({"likes": ["secret_tag_x"]}, {"avoids": ["no_bars"]}, {"likes": "museums"}):
+    for prefs in ({"likes": ["secret_tag_x"]}, {"avoids": ["no_bars"]}, {"likes": "museums"},
+                  {"likes": ["kids"], "avoids": ["kids_places"]}):
         r = client.post("/api/recommend", json={**base, "prefs": prefs})
         assert r.status_code == 422, prefs
         assert "secret_tag_x" not in r.text
@@ -296,3 +312,27 @@ def test_exclude_poi_ids_for_more() -> None:
                 ["osm:node/1 2"], ["javascript:alert(1)"], "osm:node/1", [""]):
         with pytest.raises(ValidationError):
             RecommendRequest.model_validate({**base, "exclude_poi_ids": bad})
+
+
+def test_mini_route_1_3_1_straight_share() -> None:
+    from app.schemas import MiniRoute
+
+    assert MiniRoute.model_validate(_route()).straight_share is None
+    for share in (0, 0.25, 1):
+        assert MiniRoute.model_validate(_route(straight_share=share)).straight_share == share
+    for bad in (-0.1, 1.01, "half"):
+        with pytest.raises(ValidationError):
+            MiniRoute.model_validate(_route(straight_share=bad))
+
+
+def test_event_cards_carry_a_venue() -> None:
+    from app.schemas import Card
+
+    raw = json.loads((ROOT / "web" / "mock" / "answer_sample.json").read_text(encoding="utf-8"))
+    assert Card.model_validate(raw["cards"][0]).venue is None
+    assert Card.model_validate(_event_card(venue="Филармония")).venue == "Филармония"
+    assert Card.model_validate(_event_card()).venue is None  # optional for an event
+    with pytest.raises(ValidationError):
+        Card.model_validate({**raw["cards"][0], "venue": "Филармония"})  # a place has none
+    with pytest.raises(ValidationError):
+        Card.model_validate(_event_card(venue="x" * 201))
