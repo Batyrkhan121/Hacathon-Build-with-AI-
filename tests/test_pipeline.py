@@ -2605,13 +2605,15 @@ def test_events_come_from_qadam_events_path(deps: Deps, tmp_path: Path,
     assert "event:test-soon" in [c.poi_id for c in a.cards]
 
     monkeypatch.delenv("QADAM_EVENTS_PATH")
+    data_dir = tmp_path / "data"  # not the repo's data/: the test must not depend on it
+    monkeypatch.setenv("QADAM_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
     default = get_settings()
-    assert default.events_path == default.data_dir / "events.json"
+    assert default.events_path == data_dir / "events.json"  # the default: data_dir/events.json
     b = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"),
                   Deps(store=deps.store, llm=deps.llm, settings=dataclasses.replace(
                       default, cache_dir=tmp_path / "cache", index_dir=tmp_path / "index")))
-    assert "event:test-soon" not in [c.poi_id for c in b.cards]  # data/events.json has none
+    assert not any(c.kind == "event" for c in b.cards)  # no file there: no events
 
 
 def test_no_events_path_means_no_events(deps: Deps) -> None:
@@ -2619,3 +2621,15 @@ def test_no_events_path_means_no_events(deps: Deps) -> None:
              settings=dataclasses.replace(deps.settings, events_path=None))
     a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
     assert a.cards and not any(c.kind == "event" for c in a.cards)
+
+
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_an_event_without_end_gets_the_category_visit_on_both_paths(
+    deps: Deps, tmp_path: Path, use_llm: bool
+) -> None:
+    """No ends_at: the visit is the category estimate, never the model's guess (FakeLLM 20–30)."""
+    d = _events_deps(deps, tmp_path, [_event_record(ends=None)])  # theatre
+    a = recommend(req(MORE_Q, use_llm=use_llm), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == ("llm" if use_llm else "template")
+    assert (c.visit_min_low, c.visit_min_high) == (90, 180)  # VISIT_MIN["theatre"]
