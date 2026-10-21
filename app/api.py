@@ -46,7 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app import generate
+from app import generate, weather
 from app.config import ROOT, get_settings
 from app.llm import LLMClient, load_prompt
 from app.pipeline import Deps, InvalidRequest, index_meta, index_problem, index_status, recommend
@@ -273,6 +273,17 @@ async def get_deps(request: Request) -> Deps:
 DepsDep = Annotated[Deps, Depends(get_deps)]
 
 
+def start_weather_warm_up(deps: Deps) -> threading.Thread:
+    """T133: today's weather for the landmark areas, loaded in the background at start, so
+    requests rarely wait for Open-Meteo (they never wait longer than weather.TIMEOUT_S).
+    Public landmark points only; the server starts without waiting for it."""
+    points = [lm.geo for lm in deps.store.landmarks.values()]
+    thread = threading.Thread(target=weather.warm_up, args=(points,), name="weather-warm-up",
+                              daemon=True)
+    thread.start()
+    return thread
+
+
 def create_app(deps: Deps | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -283,6 +294,8 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             except Exception:  # noqa: BLE001 - serve the UI and a clear 503 instead
                 # No request data exists at startup, so the full traceback is safe to log.
                 log.exception("store failed to load; data endpoints answer 503")
+            else:
+                start_weather_warm_up(app.state.deps)
         yield
 
     app = FastAPI(title="Qadam API", version=SCHEMA_VERSION, lifespan=lifespan)

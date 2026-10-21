@@ -2351,3 +2351,40 @@ def test_without_last_stop_support_an_event_is_never_a_stop(deps: Deps, tmp_path
     a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"), d)
     assert any(c.kind == "event" for c in a.cards)
     assert a.route is None or "event:jazz" not in a.route.stop_ids
+
+
+
+# ------------------------------- T133: the weather service did not answer in time — say so
+
+REAL_GET_WEATHER = weather.get_weather  # taken before conftest swaps it for «no weather»
+
+
+@pytest.mark.parametrize(("lang", "line"), [
+    ("ru", "погода: нет данных (сервис не ответил)"),
+    ("kk", "ауа райы: дерек жоқ (қызмет жауап бермеді)"),
+    ("en", "weather: no data (the service did not answer)"),
+])
+def test_no_answer_from_the_weather_service_is_said(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                                    lang: str, line: str) -> None:
+    import httpx
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    weather._cache.clear()
+    monkeypatch.setattr(weather, "get_weather", REAL_GET_WEATHER)
+    monkeypatch.setattr(weather, "_make_client", lambda timeout_s=1.5: httpx.Client(
+        transport=httpx.MockTransport(slow)))
+    body = {"query": "кофе", "location": {"landmark_id": "expo"}, "use_llm": False,
+            "lang": lang}  # no `at`: now, so the weather is asked
+    a = recommend(RecommendRequest.model_validate(body), deps)
+    assert a.data_used.weather == line  # (no card check: `now` may be night)
+    assert "open_meteo" not in a.data_used.sources
+    weather._cache.clear()
+
+
+def test_without_a_status_the_old_label_stays(deps: Deps) -> None:
+    """conftest's «no weather» stand-in sets no status: «погода неизвестна», as before."""
+    body = {"query": "кофе", "location": {"landmark_id": "expo"}, "use_llm": False}
+    a = recommend(RecommendRequest.model_validate(body), deps)
+    assert a.data_used.weather == TEXTS["ru"]["weather_unknown"]

@@ -186,6 +186,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "summary_n": "Подборка по открытым данным: {n} идеи рядом.",
         "summary_empty": "Рядом не нашлось подходящих мест.",
         "weather_unknown": "погода неизвестна",
+        "weather_no_answer": "погода: нет данных (сервис не ответил)",
         "time_manual": "время задано вручную",
         "f_radius": "радиус {v} м", "f_budget": "время {v} мин", "f_walk": "пешком до {v} мин",
         "f_kids": "с ребёнком", "f_wheelchair": "доступная среда", "f_indoor": "в помещении",
@@ -276,6 +277,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "summary_n": "Ашық деректер бойынша жақын жерде {n} ұсыныс.",
         "summary_empty": "Жақын жерде сәйкес орын табылмады.",
         "weather_unknown": "ауа райы белгісіз",
+        "weather_no_answer": "ауа райы: дерек жоқ (қызмет жауап бермеді)",
         "time_manual": "уақыт қолмен берілген",
         "f_radius": "радиус {v} м", "f_budget": "уақыт {v} мин",
         "f_walk": "жаяу {v} минутқа дейін", "f_kids": "баламен",
@@ -364,6 +366,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "summary_n": "{n} nearby ideas picked from open data.",
         "summary_empty": "No suitable places nearby.",
         "weather_unknown": "weather unknown",
+        "weather_no_answer": "weather: no data (the service did not answer)",
         "time_manual": "time set manually",
         "f_radius": "radius {v} m", "f_budget": "time {v} min", "f_walk": "walk up to {v} min",
         "f_kids": "with kids", "f_wheelchair": "wheelchair access", "f_indoor": "indoor",
@@ -618,7 +621,9 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             and geo.ONE_WAY_SHARE * float(plan_budget) > MAX_ONE_WAY_WALK_MIN):
         plan_update["max_walk_min"] = MAX_ONE_WAY_WALK_MIN
     # T123 «в тепле»: indoor stops close to the start and to each other (see WARM_MAX_LEG_MIN)
+    _clear_weather_status()
     wx = weather.get_weather(origin, local_time)
+    weather_down = _weather_status() == "unavailable"  # T133: asked, no answer in time
     warm = warm_reason(req, wx)
     # T133: avoids long_outdoor («долго на улице») — the same short walks outside as «в тепле»,
     # but without the indoor requirement
@@ -913,7 +918,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
         data_used=DataUsed(
             location=area_label if landmark_id else f"{area_label} · H3 r{ctx.h3_res}",
             time=_time_label(t, local_time, manual=req.at is not None),
-            weather=_weather_label(t, wx, intent.lang, local_time, manual=req.at is not None),
+            weather=_weather_label(t, wx, intent.lang, local_time, manual=req.at is not None,
+                                   down=weather_down),
             filters=_filters(t, search_intent, ctx, req.use_llm, lang=intent.lang,
                              semantic=query_vec is not None,
                              claude_picked=wide_pool and generation == "llm",
@@ -969,12 +975,25 @@ def _llm_down(t: dict[str, str], lang: Lang, reason: str | None) -> str:
 
 
 def _weather_label(t: dict[str, str], wx: object, lang: Lang, local_time: datetime, *,
-                   manual: bool) -> str:
+                   manual: bool, down: bool = False) -> str:
     if wx is not None:
         return weather.summary_for(wx, lang)  # type: ignore[arg-type]
     if manual and weather.is_time_machine(local_time):
         return t["weather_manual"]  # not asked on purpose, not a failure
+    if down:  # Open-Meteo did not answer within weather.TIMEOUT_S: the answer goes on without it
+        return t["weather_no_answer"]
     return t["weather_unknown"]
+
+
+def _clear_weather_status() -> None:
+    fn = getattr(weather, "clear_status", None)
+    if fn is not None:
+        fn()
+
+
+def _weather_status() -> str | None:
+    fn = getattr(weather, "last_status", None)
+    return fn() if fn is not None else None
 
 
 def _usable_vector(vec: np.ndarray | None, index: np.ndarray | None) -> np.ndarray | None:
