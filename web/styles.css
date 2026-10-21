@@ -689,6 +689,7 @@ input[type="time"] {
 .stale .btn-primary {
   min-width: 0;
   flex: none;
+  width: auto; /* на телефоне .btn-primary растягивается на 100% — в строке «условия изменились» это 61 px вбок */
 }
 
 .loading {
