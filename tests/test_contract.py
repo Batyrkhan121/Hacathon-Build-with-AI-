@@ -206,7 +206,7 @@ def test_prefs_take_only_the_fixed_vocabularies() -> None:
     assert UserPrefs(likes=likes).likes == likes and UserPrefs(avoids=avoids).avoids == avoids
     assert UserPrefs(likes=["kids"], avoids=["bars"]).likes == ["kids"]
     for bad in ({"likes": ["sushi"]}, {"likes": ["музеи"]}, {"avoids": ["coffee please"]},
-                {"likes": ["no_bars"]}, {"avoids": ["no_bars"]},  # the 1.3.0 tag is gone
+                {"avoids": ["no_bars"]},  # the 1.3.0 tag is only a synonym in likes
                 {"likes": ["bars"]}, {"avoids": ["museums"]},  # a tag of the other list
                 {"likes": ["quiet"], "avoids": ["quiet"]},  # one tag in both lists
                 {"likes": ["kids"], "avoids": ["kids_places"]},  # contradicting pairs
@@ -336,3 +336,23 @@ def test_event_cards_carry_a_venue() -> None:
         Card.model_validate({**raw["cards"][0], "venue": "Филармония"})  # a place has none
     with pytest.raises(ValidationError):
         Card.model_validate(_event_card(venue="x" * 201))
+
+
+def test_the_1_3_0_like_no_bars_is_read_as_the_avoid_bars() -> None:
+    """Synonym for one version (Megah 21.10): an old saved «без баров» never gives a 422."""
+    from app.schemas import DEPRECATED_LIKES, UserPrefs
+
+    assert DEPRECATED_LIKES == {"no_bars": "bars"}
+    p = UserPrefs.model_validate({"likes": ["no_bars", "museums"]})
+    assert (p.likes, p.avoids) == (["museums"], ["bars"])
+    p = UserPrefs.model_validate({"likes": ["no_bars"], "avoids": ["bars", "noisy"]})
+    assert (p.likes, p.avoids) == ([], ["bars", "noisy"])
+    p = UserPrefs.model_validate({"likes": ["no_bars", "no_bars"]})
+    assert (p.likes, p.avoids) == ([], ["bars"])
+    req = RecommendRequest.model_validate({"query": "кофе", "location": {"landmark_id": "expo"},
+                                           "prefs": {"likes": ["no_bars"]}})
+    assert req.prefs is not None and req.prefs.avoids == ["bars"]
+    for bad in ({"likes": ["no_bars"], "avoids": "bars"}, {"likes": ["no_bars", "sushi"]},
+                {"likes": ["no_bars", "kids"], "avoids": ["kids_places"]}):
+        with pytest.raises(ValidationError):
+            UserPrefs.model_validate(bad)
