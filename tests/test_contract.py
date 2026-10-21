@@ -412,8 +412,7 @@ def test_city_gaps_mock_valid() -> None:
 
 
 def test_city_gaps_data_file_valid() -> None:
-    if not GAPS_DATA.exists():
-        pytest.skip("data/processed/city_gaps.json is built by DATA (T141)")
+    # built by DATA (pipeline/city_gaps.py, T141) and committed; the image serves it as is
     gaps = CityGaps.model_validate_json(GAPS_DATA.read_text(encoding="utf-8"))
     assert gaps.cells and gaps.city.poi > 0 and gaps.city.walk_m > 0
 
