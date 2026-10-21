@@ -535,7 +535,9 @@ def test_graph_expectation_skipped_when_run_has_no_graph(mock_answer: Answer) ->
 # ------------------------------------------------------------- privacy probes (1.2.0)
 
 
-PROBE_IDS = ["r11", "raw_coords", "prefs_unknown", "prefs_free_text", "prefs_extra"]
+PROBE_IDS = ["r11", "raw_coords", "prefs_unknown", "prefs_free_text", "prefs_extra",
+             "prefs_both", "prefs_conflict_kids", "prefs_conflict_coffee", "prefs_no_bars",
+             "prefs_foreign"]
 
 
 def test_privacy_probes_schema_rejects_all() -> None:
@@ -556,8 +558,8 @@ def test_privacy_probes_over_http() -> None:
     assert not probes["r11"]["passed"] and probes["r11"]["got"] == "200"
     assert probes["raw_coords"]["passed"]
     assert not probes["prefs_unknown"]["passed"]
-    assert len(sent) == 5
-    assert "1/5 отклонены" in run_eval.privacy_summary(list(probes.values()))
+    assert len(sent) == 10
+    assert "1/10 отклонены" in run_eval.privacy_summary(list(probes.values()))
 
 
 def test_privacy_probe_fails_when_422_echoes_the_input() -> None:
@@ -576,7 +578,7 @@ def test_report_has_privacy_block(tmp_path: Path) -> None:
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert [p["id"] for p in report["privacy"]] == PROBE_IDS
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "Приватность: 5/5 отклонены с 422" in md
+    assert "Приватность: 10/10 отклонены с 422" in md
 
 
 # ------------------------------------------------------------ wave 8 (contract 1.3.0)
@@ -791,3 +793,57 @@ def test_marked_crossing_needs_known_markings(mock_answer: Answer, tmp_path: Pat
     assert "2 из 3" in run_eval.check_crossing_kinds(bad, nodes)[0]
     assert run_eval.check_crossing_kinds(bad, None) == []  # no graph file: not checked
     assert run_eval.crossing_node_flags(tmp_path / "none.npz") is None
+
+
+
+# ------------------------------------------------------------ wave 8.1 (contract 1.3.1)
+
+
+def test_straight_share_invariants(mock_answer: Answer) -> None:
+    # the mock route is straight
+    assert check_invariants(_routed(mock_answer, straight_share=1)) == []
+    bad = _routed(mock_answer, straight_share=0.4)
+    assert any("ожидали 1" in f for f in check_invariants(bad))
+    claim = mock_answer.model_dump(mode="json")
+    claim["data_used"]["filters"] = ["маршрут: без ступенек"]
+    claim["route"].update(path_source="graph", straight_share=0.2, steps_count=0)
+    fails = run_eval.check_straight_share(Answer.model_validate(claim))
+    assert any("«без ступенек» в filters" in f for f in fails)
+    claim["route"]["straight_share"] = 0
+    assert run_eval.check_straight_share(Answer.model_validate(claim)) == []
+    claim["data_used"]["filters"] = ["запрошен маршрут без ступенек"]  # asked, not claimed
+    claim["route"]["straight_share"] = 0.5
+    assert run_eval.check_straight_share(Answer.model_validate(claim)) == []
+
+
+def _event_in_route(ans: Answer, rank: int, starts_at: str) -> Answer:
+    raw = ans.model_dump(mode="json")
+    card = raw["cards"][rank]
+    card.update({"kind": "event", "facts_sources": ["manual"], "starts_at": starts_at,
+                 "source_url": "https://example.org/afisha"})
+    return Answer.model_validate(raw)
+
+
+def test_event_stop_rules(mock_answer: Answer) -> None:
+    # mock local_time 20.10 15:30; stops: alem_ai, boulevard, mega_silk_way
+    last_soon = _event_in_route(mock_answer, 2, "2026-10-20T15:50:00+05:00")
+    assert run_eval.check_event_stops(last_soon) == []
+    first = _event_in_route(mock_answer, 0, "2026-10-20T15:50:00+05:00")
+    assert any("не последняя остановка" in f for f in run_eval.check_event_stops(first))
+    late = _event_in_route(mock_answer, 2, "2026-10-20T19:00:00+05:00")
+    assert any("до начала 210 мин" in f for f in run_eval.check_event_stops(late))
+
+
+def test_event_venue(mock_answer: Answer, tmp_path: Path) -> None:
+    ev = _event_in_route(mock_answer, 2, "2026-10-20T15:50:00+05:00")
+    venues = {"mock:poi/mega_silk_way": "Mega Silk Way"}
+    assert any("нет venue" in f for f in run_eval.check_event_venue(ev, venues))
+    raw = ev.model_dump(mode="json")
+    raw["cards"][2]["venue"] = "Mega Silk Way"
+    assert run_eval.check_event_venue(Answer.model_validate(raw), venues) == []
+    assert run_eval.check_event_venue(ev, None) == []  # no events file: not checked
+    path = tmp_path / "events.json"
+    path.write_text(json.dumps([{"id": "event:a", "venue": "Опера"}, {"id": "event:b"}]),
+                    encoding="utf-8")
+    assert run_eval.event_venues(path) == {"event:a": "Опера"}
+    assert run_eval.event_venues(tmp_path / "none.json") is None

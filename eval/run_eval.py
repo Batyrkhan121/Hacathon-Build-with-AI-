@@ -160,6 +160,9 @@ def check_invariants(ans: Answer) -> list[str]:
     fails += check_route_facts(ans)
     fails += check_crossing_kinds(ans, crossing_node_flags())
     fails += check_event_cards(ans)
+    fails += check_straight_share(ans)
+    fails += check_event_stops(ans)
+    fails += check_event_venue(ans, event_venues())
     return fails
 
 
@@ -281,6 +284,75 @@ def check_event_cards(ans: Answer) -> list[str]:
         if not on_now and any(m in text for m in LIVE_MARKERS):
             fails.append(f"{c.poi_id}: «идёт сейчас», хотя starts_at–ends_at этого не дают")
     return fails
+
+
+# 1.3.1: «без ступенек» in data_used.filters (ru / kk / en, app/pipeline.py f_profile_accessible);
+# «запрошен маршрут без ступенек» (asked, not achieved) is not a claim
+STEP_FREE_CLAIMS = ("маршрут: без ступенек", "маршрут: баспалдақсыз", "route: step-free")
+EVENT_STOP_MAX_WAIT_MIN = 30  # an event starting later than this is not a route stop (1.3.1)
+EVENTS_PATH = ROOT / "data" / "events.json"
+_event_venues_cache: dict[Path, dict[str, str] | None] = {}
+
+
+def check_straight_share(ans: Answer) -> list[str]:
+    """1.3.1: straight_share is 1 on a straight route; «без ступенек» only on a graph route with
+    no steps and no straight segments (the text of note is not used for this)."""
+    route = ans.route
+    fails: list[str] = []
+    if route is not None and route.straight_share is not None \
+            and route.path_source == "straight" and route.straight_share < 0.999:
+        fails.append(f"прямой маршрут, а straight_share {route.straight_share}, ожидали 1")
+    claims = [f for f in ans.data_used.filters if any(m in f.lower() for m in STEP_FREE_CLAIMS)]
+    if claims:
+        ok = (route is not None and route.path_source == "graph" and route.steps_count == 0
+              and route.straight_share == 0)
+        if not ok:
+            got = "нет маршрута" if route is None else (
+                f"{route.path_source}, ступеней {route.steps_count}, "
+                f"straight_share {route.straight_share}")
+            fails.append(f"«без ступенек» в filters, а маршрут: {got}")
+    return fails
+
+
+def check_event_stops(ans: Answer) -> list[str]:
+    """1.3.1: an event in the route is the last stop, and only if it starts within 30 min."""
+    route = ans.route
+    if route is None:
+        return []
+    now = ans.context.local_time
+    fails: list[str] = []
+    for c in ans.cards:
+        if c.kind != "event" or c.starts_at is None or c.poi_id not in route.stop_ids:
+            continue
+        if route.stop_ids[-1] != c.poi_id:
+            fails.append(f"{c.poi_id}: событие — не последняя остановка ({route.stop_ids})")
+        wait_min = (c.starts_at - now).total_seconds() / 60
+        if wait_min > EVENT_STOP_MAX_WAIT_MIN:
+            fails.append(f"{c.poi_id}: до начала {wait_min:.0f} мин > "
+                         f"{EVENT_STOP_MAX_WAIT_MIN}, а событие — остановка маршрута")
+    return fails
+
+
+def event_venues(path: Path = EVENTS_PATH) -> dict[str, str] | None:
+    """{event id: venue} from the local data/events.json; None: no file or unreadable."""
+    if path not in _event_venues_cache:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            _event_venues_cache[path] = {
+                str(e["id"]): str(e["venue"]) for e in raw
+                if isinstance(e, dict) and e.get("id") and e.get("venue")}
+        except (OSError, ValueError, TypeError):
+            _event_venues_cache[path] = None
+    return _event_venues_cache[path]
+
+
+def check_event_venue(ans: Answer, venues: dict[str, str] | None) -> list[str]:
+    """1.3.1: an event card carries Card.venue when the venue is known in data/events.json."""
+    if venues is None:
+        return []
+    return [f"{c.poi_id}: у события нет venue, а площадка известна («{venues[c.poi_id]}»)"
+            for c in ans.cards
+            if c.kind == "event" and not c.venue and c.poi_id in venues]
 
 
 def _prefs_score(ans: Answer, spec: dict[str, Any]) -> int:
@@ -895,6 +967,22 @@ PRIVACY_PROBES: list[tuple[str, str, dict[str, Any], tuple[str, ...]]] = [
     ("prefs_extra", "лишнее поле в prefs (история)",
      {"query": "кофе рядом", "location": _PROBE_LOC,
       "prefs": {"likes": ["quiet"], "history": ["coffee"]}}, ("history",)),
+    # 1.3.1: separate likes / avoids vocabularies, contradicting pairs
+    ("prefs_both", "одна метка в обоих списках",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["coffee"], "avoids": ["coffee"]}}, ("coffee",)),
+    ("prefs_conflict_kids", "противоречие: с ребёнком + не хочу детские места",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["kids"], "avoids": ["kids_places"]}}, ("kids_places",)),
+    ("prefs_conflict_coffee", "противоречие: кофе + не хочу кафе",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["coffee"], "avoids": ["cafes"]}}, ("cafes",)),
+    ("prefs_no_bars", "прежняя метка no_bars в likes",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"likes": ["no_bars"]}}, ("no_bars",)),
+    ("prefs_foreign", "метка из чужого списка (музеи в «не хочу»)",
+     {"query": "кофе рядом", "location": _PROBE_LOC,
+      "prefs": {"avoids": ["museums"]}}, ("museums",)),
 ]
 # sends one body; returns the HTTP status (-1 = no answer) or (status, response text)
 PostFn = Callable[[dict[str, Any]], "int | tuple[int, str]"]
