@@ -565,3 +565,97 @@ def test_accessible_route_with_straight_segments_says_steps_are_not_checked(
     whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g, lang=lang,
                        graph_note=note, profile="accessible")
     assert whole is not None and whole.note == note  # every leg on the graph
+
+
+# ------------------------------------------- wave 8.1 (T131): straight_share, last_stop_id
+
+
+def test_straight_share_of_routes(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    whole = plan_route(at(0, -5), [cand_at("east", at(200, -5))], None, {}, graph=g)
+    assert whole is not None and whole.path_source == "graph"
+    assert whole.straight_share == 0  # the 5 m links to the points belong to the graph legs
+    near, north = cand_at("near", at(2, -3)), cand_at("north", at(0, 35))
+    partly = plan_route(at(0, -5), [near, north], None, {}, graph=g)
+    assert partly is not None and partly.path_source == "graph"
+    straight_m = haversine_m(at(0, -5), at(2, -3))
+    total_m = straight_m + sum(leg.distance_m for leg in partly.legs[1:])
+    assert partly.straight_share == pytest.approx(straight_m / total_m, abs=0.002)
+    assert 0 < partly.straight_share < 1
+    plain = plan_route(ORIGIN, [NEAR, FAR], None, VISITS)
+    assert plain is not None and plain.path_source == "straight" and plain.straight_share == 1
+
+
+def test_a_tiny_straight_part_never_rounds_to_zero(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """«Без ступенек» is claimed only at straight_share == 0: 1 m in 3 km must stay > 0."""
+    from .test_walkgraph import FOOTWAY
+
+    nodes = {"A": (0, 0, 0), "B": (3000, 0, 0)}
+    g = load_graph(write_graph(tmp_path, nodes, [("A", "B", FOOTWAY)]))
+    stops = [cand_at("b", at(3000, 0)), cand_at("b2", at(3000, 1))]  # the 2nd leg: 1 m straight
+    r = plan_route(at(0, 0), stops, None, {}, graph=g)
+    assert r is not None and r.path_source == "graph" and len(r.legs) == 2
+    assert r.straight_share == 0.001
+
+
+def three_stops() -> list[Candidate]:
+    # card order: far, near, mid; the best order from the origin is near, mid, far
+    return [FAR, NEAR, MID]
+
+
+def test_last_stop_goes_last_and_the_rest_keep_the_best_order() -> None:
+    plain = plan_route(ORIGIN, three_stops(), None, VISITS)
+    assert plain is not None
+    assert plain.stop_ids == ["test:poi/near", "test:poi/mid", "test:poi/far"]
+    event = plan_route(ORIGIN, three_stops(), None, VISITS, last_stop_id="test:poi/mid")
+    assert event is not None  # near, far, mid: 0.015 deg < far, near, mid: 0.021 deg
+    assert event.stop_ids == ["test:poi/near", "test:poi/far", "test:poi/mid"]
+    assert [leg.to_id for leg in event.legs] == event.stop_ids
+    loop = plan_route(ORIGIN, three_stops(), None, VISITS, loop=True,
+                      last_stop_id="test:poi/near")
+    assert loop is not None and loop.stop_ids[-1] == "test:poi/near"
+    assert loop.legs[-1].to_id == "origin"  # the walk back still closes the loop
+    unknown = plan_route(ORIGIN, three_stops(), None, VISITS, last_stop_id="test:poi/nowhere")
+    assert unknown == plain
+
+
+def test_last_stop_on_the_graph(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    east, north = cand_at("east", at(200, -5)), cand_at("north", at(0, 35))
+    plain = plan_route(at(0, -5), [east, north], None, {}, graph=g)
+    assert plain is not None and plain.stop_ids == ["test:poi/north", "test:poi/east"]
+    event = plan_route(at(0, -5), [east, north], None, {}, graph=g, last_stop_id="test:poi/north")
+    assert event is not None and event.path_source == "graph"
+    assert event.stop_ids == ["test:poi/east", "test:poi/north"]
+
+
+def test_a_0_m_step_to_a_stop_where_you_stand_is_not_a_straight_part(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """E13 on the real graph: the first stop is Khan Shatyr itself, 0.3 m from the landmark.
+    Shown as «0 м», that step is no walk: neither in straight_share nor in the note."""
+    g = load_graph(write_graph(tmp_path, STREET, STREET_EDGES))
+    here, north = cand_at("here", at(0.3, -5)), cand_at("north", at(0, 35))
+    for profile in ("fastest", "accessible"):
+        r = plan_route(at(0, -5), [here, north], None, {}, graph=g, graph_note="graph note",
+                       profile=profile)  # type: ignore[arg-type]
+        assert r is not None and r.path_source == "graph"
+        assert r.legs[0].to_id == "test:poi/here" and r.legs[0].distance_m == 0
+        assert r.straight_share == 0 and r.note == "graph note"
+
+
+@pytest.mark.parametrize(("link_m", "share"), [(50, 0.0), (51, 0.093)])
+def test_a_link_over_50_m_counts_as_straight(tmp_path, link_m, share) -> None:  # type: ignore[no-untyped-def]
+    """Integrator: links to the walk graph up to 50 m (whole metres) are part of the graph leg;
+    a longer one (up to 150 m, S3: 131 m) has unchecked steps: it counts whole as straight.
+    51 m of 551 m = 0.0926 -> 0.093 (rounded up)."""
+    from .test_walkgraph import FOOTWAY
+
+    g = load_graph(write_graph(tmp_path, {"A": (0, 0, 0), "B": (500, 0, 0)}, [("A", "B", FOOTWAY)]))
+    assert g is not None
+    a, b = g.point(0), g.point(1)  # the stored (float32) node points
+    m_per_deg = haversine_m(a, GeoPoint(lat=a.lat + 1e-3, lon=a.lon)) / 1e-3
+    origin = GeoPoint(lat=a.lat - link_m / m_per_deg, lon=a.lon)  # link_m south of node A
+    assert haversine_m(origin, a) == pytest.approx(link_m, abs=0.01)
+    r = plan_route(origin, [cand_at("b", b)], None, {}, graph=g, graph_note="graph note")
+    assert r is not None and r.path_source == "graph" and r.total_walk_m == 500 + link_m
+    assert r.straight_share == share
+    assert r.note == "graph note"  # the minutes are not x1.3: no «part straight» sentence

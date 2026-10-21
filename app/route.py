@@ -158,12 +158,14 @@ def _path_metres(origin: GeoPoint, ordered: list[Candidate], loop: bool) -> floa
     return total + (haversine_m(here, origin) if loop and ordered else 0.0)
 
 
-def _best_order(origin: GeoPoint, stops: list[Candidate], loop: bool) -> list[Candidate]:
-    """Shortest visiting order of <= 3 stops; ties keep the card order (rank)."""
-    best = min(
-        permutations(range(len(stops))),
-        key=lambda p: (round(_path_metres(origin, [stops[i] for i in p], loop)), p),
-    )
+def _best_order(origin: GeoPoint, stops: list[Candidate], loop: bool,
+                last: str | None = None) -> list[Candidate]:
+    """Shortest visiting order of <= 3 stops; ties keep the card order (rank). The stop with
+    poi_id `last` (an event) goes last, if it is among the stops."""
+    orders = list(permutations(range(len(stops))))
+    if any(c.poi.id == last for c in stops):
+        orders = [p for p in orders if stops[p[-1]].poi.id == last]
+    best = min(orders, key=lambda p: (round(_path_metres(origin, [stops[i] for i in p], loop)), p))
     return [stops[i] for i in best]
 
 
@@ -173,6 +175,7 @@ def _total_min(legs: list[RouteLeg], ordered: list[Candidate], visit_min: dict[s
 
 
 MAX_CROSSINGS = 50  # MiniRoute.crossings max_length
+LINK_GRAPH_MAX_M = 50  # a longer link to the walk graph counts as straight (integrator, 8.1)
 
 
 def _graph_legs(
@@ -238,7 +241,7 @@ def _graph_route(
     kerbs = Counter(c.kerb for c in on_path.values())
     lit, unlit, unknown = _lit_shares(legs)
     notes = [note]
-    if any(leg.straight for leg in legs):
+    if _straight_legs(legs):
         notes.append(texts["partly_straight"])
         if profile == "accessible":  # steps_count sees the graph legs only
             notes.append(texts["steps_unchecked"])
@@ -262,7 +265,30 @@ def _graph_route(
         kerb_lowered=kerbs["lowered"],
         kerb_unknown=kerbs["unknown"],
         max_outdoor_leg_min=max(leg.walk_min for leg in route_legs),
+        straight_share=_straight_share(legs),
     )
+
+
+def _straight_legs(legs: list[walkgraph.GraphPath]) -> list[walkgraph.GraphPath]:
+    """Legs on straight segments that the person walks: a step shown as «0 м» (a stop where
+    you already stand, E13: Khan Shatyr from its landmark) is no walk."""
+    return [leg for leg in legs if leg.straight and round(leg.length_m) > 0]
+
+
+def _straight_share(legs: list[walkgraph.GraphPath]) -> float:
+    """Share of the shown length (whole metres, as in legs) not checked on the walk graph,
+    3 decimals, rounded UP: any such part shows (> 0), so «без ступенек» is never claimed over
+    it. It is the straight legs, plus each link from a place to its walkway node longer than
+    LINK_GRAPH_MAX_M (links up to 150 m, S3: 131 m; shorter ones belong to the graph leg,
+    or «без ступенек» could never be said: every graph leg has two)."""
+    total = sum(round(leg.length_m) for leg in legs)
+    straight = sum(round(leg.length_m) for leg in _straight_legs(legs)) + sum(
+        round(link) for leg in legs if not leg.straight for link in leg.links_m
+        if round(link) > LINK_GRAPH_MAX_M
+    )
+    if straight <= 0 or total <= 0:
+        return 0.0
+    return min(1.0, max(0.001, math.ceil(straight / total * 1000 - 1e-9) / 1000))
 
 
 def _lit_shares(legs: list[walkgraph.GraphPath]) -> tuple[float, float, float]:
@@ -291,11 +317,14 @@ def plan_route(
     graph_note: str | None = None,
     lang: Lang = "ru",
     profile: RouteProfile = "fastest",
+    last_stop_id: str | None = None,
 ) -> MiniRoute | None:
     """Order stops, compute legs and totals; drop trailing stops that break the budget.
 
     visit_min maps poi_id -> planned minutes on site (use Card.visit_min_low).
     Return None when fewer than 1 stop remains. `loop` adds the walk back to the start.
+    `last_stop_id` (wave 8.1, an event): that stop goes last (before the way back of a loop),
+    the others keep the best order; the budget still drops the lowest-ranked stop first.
     With `graph`: legs, path and minutes along the walk graph (path_source="graph") with the
     edge costs of `profile` (it replaces mode.profile); legs that fell back to straight
     segments, or to stairs on "accessible", add a sentence in `lang` to the note; any failure
@@ -308,7 +337,7 @@ def plan_route(
                                 graph=graph, mode=replace(mode, profile=profile),
                                 origin_landmark=origin_landmark,
                                 note=graph_note or route_note(lang, loop=loop, graph=True),
-                                texts=texts, profile=profile)
+                                texts=texts, profile=profile, last_stop_id=last_stop_id)
         if routed is not None:
             return routed
     unique: list[Candidate] = []
@@ -320,7 +349,7 @@ def plan_route(
         return None
 
     while True:
-        ordered = _best_order(origin, kept, loop)
+        ordered = _best_order(origin, kept, loop, last_stop_id)
         legs = _legs(origin, ordered, loop)
         total = _total_min(legs, ordered, visit_min)
         if budget_min is None or total <= budget_min or len(kept) == 1:
@@ -344,6 +373,7 @@ def plan_route(
         unlit_share=0.0,
         unknown_lit_share=1.0,
         max_outdoor_leg_min=max(leg.walk_min for leg in legs),
+        straight_share=1.0,
     )
 
 
@@ -361,12 +391,14 @@ def _plan_on_graph(
     note: str,
     texts: dict[str, str],
     profile: RouteProfile,
+    last_stop_id: str | None,
 ) -> MiniRoute | None:
     """plan_route on the graph; None (-> straight route) on any failure, a bug included."""
     try:
         return _plan_on_graph_unsafe(origin, stops, budget_min, visit_min, max_stops, loop=loop,
                                      graph=graph, mode=mode, origin_landmark=origin_landmark,
-                                     note=note, texts=texts, profile=profile)
+                                     note=note, texts=texts, profile=profile,
+                                     last_stop_id=last_stop_id)
     except Exception as exc:  # noqa: BLE001 - the straight route is always there
         log.error("walk graph route failed (%s): straight segments", type(exc).__name__)
         return None
@@ -386,6 +418,7 @@ def _plan_on_graph_unsafe(
     note: str,
     texts: dict[str, str],
     profile: RouteProfile,
+    last_stop_id: str | None,
 ) -> MiniRoute | None:
     unique: list[Candidate] = []
     for cand in stops:
@@ -396,7 +429,7 @@ def _plan_on_graph_unsafe(
         return None
     deadline = time.perf_counter() + walkgraph.ROUTE_LIMIT_S
     while True:
-        ordered = _best_order(origin, kept, loop)
+        ordered = _best_order(origin, kept, loop, last_stop_id)
         legs = _graph_legs(graph, origin, ordered, loop, mode, origin_landmark, deadline)
         if legs is None or all(leg.straight for leg in legs):
             return None  # no leg follows the graph: the plain straight route, with its note
