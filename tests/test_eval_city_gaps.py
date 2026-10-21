@@ -107,8 +107,14 @@ def test_local_totals_follow_the_architecture_rules(tmp_path: Path) -> None:
     assert got.report == {"crossings_kind_unknown": 3}
 
 
-def _server(answer: str, echo: bool = False, vary: bool = False, status: int = 200):
-    def get(params: dict[str, str]) -> tuple[int, str, dict[str, str]]:
+def _server(answer: str, echo: bool = False, vary: bool = False, status: int = 200,
+            health: dict | None = None):
+    """A fake API: /api/city-gaps answers `answer` with `status`; /api/health follows it."""
+    def get(params: dict[str, str], path: str = cg.CITY_GAPS_PATH):
+        if path == cg.HEALTH_PATH:
+            body = health if health is not None else {
+                "status": "ok", "city_gaps": "ready" if status == 200 else "missing"}
+            return 200, json.dumps(body), {}
         text = answer
         if echo and params:
             text = answer[:-1] + f', "seen": "{params["query"]}"}}'
@@ -116,6 +122,9 @@ def _server(answer: str, echo: bool = False, vary: bool = False, status: int = 2
             text = json.dumps({"other": True})
         return status, text, {"cache-control": "public, max-age=3600"}
     return get
+
+
+UNAVAILABLE = json.dumps({"detail": "city gaps unavailable"})
 
 
 def test_privacy_params_ignored(raw: dict) -> None:
@@ -146,11 +155,57 @@ def test_run_checks_endpoint_states(raw: dict) -> None:
     text = json.dumps(raw, ensure_ascii=False)
     [missing] = cg.run_checks(_server("", status=404), None, reconcile=False)[0]
     assert not missing.passed and "T142" in missing.detail
-    [down] = cg.run_checks(_server("", status=503), None, reconcile=False)[0]
-    assert not down.passed and "503" in down.detail
+    [silent] = cg.run_checks(_server("сеть: ConnectError", status=-1), None, reconcile=False)[0]
+    assert not silent.passed and "сервер не ответил" in silent.detail
+    down = {c.id: c for c in cg.run_checks(_server(UNAVAILABLE, status=503), None,
+                                           reconcile=False)[0]}
+    assert down["health_field"].passed and down["unavailable_body"].passed
+    assert not down["endpoint"].passed and "503" in down["endpoint"].detail
     checks, notes = cg.run_checks(_server(text), None, reconcile=False)
     assert all(c.passed for c in checks), checks
+    assert "health_field" in {c.id for c in checks}
     assert any("--local-data-check" in n for n in notes)  # --url: not reconciled
+
+
+def test_health_and_503_body(raw: dict) -> None:
+    text = json.dumps(raw, ensure_ascii=False)
+    wrong = cg.check_health(_server(text, health={"status": "ok", "city_gaps": "missing"}))
+    assert not wrong[0].passed  # the map answers 200, health says missing
+    no_field = cg.check_health(_server(text, health={"status": "ok"}))
+    assert not no_field[0].passed
+    chatty = {c.id: c for c in cg.check_health(
+        _server('{"detail": "city gaps unavailable: FileNotFoundError data/x.json"}', status=503))}
+    assert not chatty["unavailable_body"].passed  # the 503 tells no details
+
+
+def test_missing_file_keeps_the_rest_of_the_api(raw: dict) -> None:
+    text = json.dumps(raw, ensure_ascii=False)
+    with_file = _server(text)
+    ok = cg.check_missing_file(with_file, _server(UNAVAILABLE, status=503))
+    assert all(c.passed for c in ok), ok
+    degraded = _server(UNAVAILABLE, status=503,
+                       health={"status": "degraded", "city_gaps": "missing"})
+    changed = {c.id: c for c in cg.check_missing_file(with_file, degraded)}
+    assert not changed["missing_health"].passed  # the overall status must not change
+    still_200 = {c.id: c for c in cg.check_missing_file(with_file, _server(text))}
+    assert not still_200["missing_503"].passed
+
+
+def test_privacy_log_finds_encoded_values(raw: dict) -> None:
+    from urllib.parse import quote, quote_plus
+
+    text = json.dumps(raw, ensure_ascii=False)
+    query = cg.PROBE_PARAMS["query"]
+    forms = cg.probe_forms()
+    assert quote(query, safe="") in forms and quote_plus(query) in forms
+    for line in (f"GET /api/city-gaps?query={quote_plus(query)} -> 200",
+                 f"raw {quote(query, safe='')}"):
+        checks = {c.id: c for c in cg.check_privacy(_server(text), lambda line=line: [line])}
+        assert not checks["privacy_log"].passed, line
+    echoed = text[:-1] + f', "q": "{quote_plus(query)}"}}'
+    checks = {c.id: c for c in cg.check_privacy(lambda params, path=cg.CITY_GAPS_PATH: (
+        200, echoed if params else text, {}))}
+    assert not checks["privacy_params"].passed
 
 
 def test_cli_file_only_writes_report(tmp_path: Path) -> None:
@@ -162,3 +217,17 @@ def test_cli_file_only_writes_report(tmp_path: Path) -> None:
     assert "privacy_params" not in by_id
     md = (tmp_path / "report.city_gaps.md").read_text(encoding="utf-8")
     assert "Карта пробелов" in md
+
+
+def test_inprocess_app_does_not_warm_up_the_weather(monkeypatch, tmp_path: Path) -> None:
+    """In-process eval must not reach Open-Meteo: the lifespan warm-up is switched off."""
+    import app.weather
+
+    called: list[int] = []
+    monkeypatch.setattr(app.weather, "warm_up", lambda points: called.append(1) or 0)
+    get, logs, close = cg.inprocess_get(tmp_path / "no_city_gaps.json")
+    try:
+        status, _, _ = get({}, path=cg.HEALTH_PATH)
+    finally:
+        close()
+    assert status in (200, 503) and called == []

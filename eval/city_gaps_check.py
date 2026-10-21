@@ -23,11 +23,14 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from unittest import mock
+from urllib.parse import quote, quote_plus
 
 from pydantic import ValidationError
 
@@ -48,7 +51,11 @@ SHARE_TOL_PP = 0.1
 PROBE_PARAMS = {"h3_cell": "8a2153806d1ffff", "lat": "51.0894", "lon": "71.4161",
                 "query": "кофе рядом с домом", "prefs": "quiet"}
 
-GetFn = Callable[[dict[str, str]], tuple[int, str, dict[str, str]]]  # params -> status, text, hdrs
+# (params, path) -> status, text, lowercased headers; path defaults to /api/city-gaps
+GetFn = Callable[..., tuple[int, str, dict[str, str]]]
+CITY_GAPS_PATH = "/api/city-gaps"
+HEALTH_PATH = "/api/health"
+UNAVAILABLE = {"detail": "city gaps unavailable"}  # the whole 503 body, ARCHITECTURE §5
 
 
 @dataclass
@@ -202,13 +209,15 @@ def check_privacy(get: GetFn, log_lines: Callable[[], list[str]] | None = None) 
     status1, text1, _ = get(dict(PROBE_PARAMS))
     lines = log_lines() if log_lines is not None else []
     title = "параметры с ячейкой, координатами и текстом игнорируются"
+    if status0 < 0 or status1 < 0:
+        return [Check("privacy_params", title, False, "сервер не ответил")]
     if status0 == 503 or status1 == 503:
         return [Check("privacy_params", title, False, "503: файла карты нет, проверить нечем")]
     if status0 != 200 or status1 != 200:
         return [Check("privacy_params", title, False, f"HTTP {status0} / {status1}")]
     same = _json(text0) == _json(text1)
-    values = list(PROBE_PARAMS.values())
-    in_answer = [v for v in values if v in text1]
+    values = probe_forms()
+    in_answer = sorted({v for v in values if v in text1})
     checks = [
         Check("privacy_params", title, same and not in_answer,
               "ответ тот же, значений параметров в нём нет" if same and not in_answer else
@@ -219,10 +228,54 @@ def check_privacy(get: GetFn, log_lines: Callable[[], list[str]] | None = None) 
     ]
     if with_log:
         # count only: a log line may hold what was sent, it is never copied into the report
-        leaked = sum(any(v in line for v in values) for line in lines)
+        leaked = sum(any(v in line for v in values) for line in lines)  # encoded forms too
         checks.append(Check("privacy_log", "значений параметров нет в логе", leaked == 0,
                             f"записей лога {len(lines)}, с параметрами {leaked}"))
     return checks
+
+
+def probe_forms() -> list[str]:
+    """Each probe value as sent and as a URL carries it (percent-encoded, «+» for spaces)."""
+    forms: list[str] = []
+    for value in PROBE_PARAMS.values():
+        for form in (value, quote(value, safe=""), quote_plus(value)):
+            if form not in forms:
+                forms.append(form)
+    return forms
+
+
+def check_health(get: GetFn) -> list[Check]:
+    """/api/health names the map state: ready when the map answers 200, missing on 503;
+    a 503 body is exactly {"detail": "city gaps unavailable"}."""
+    status, text, _ = get({})
+    h_status, h_text, _ = get({}, path=HEALTH_PATH)
+    health = _json(h_text) if h_status in (200, 503) else None
+    want = {200: "ready", 503: "missing"}.get(status)
+    got = health.get("city_gaps") if isinstance(health, dict) else None
+    checks = [Check("health_field", "/api/health: city_gaps ready | missing по ответу карты",
+                    want is not None and got == want,
+                    f"карта HTTP {status}, health.city_gaps={got!r}")]
+    if status == 503:
+        checks.append(Check("unavailable_body", "503: тело ровно {\"detail\": \"city gaps "
+                            "unavailable\"}", _json(text) == UNAVAILABLE, text[:80]))
+    return checks
+
+
+def check_missing_file(get_with: GetFn, get_without: GetFn) -> list[Check]:
+    """The same app without the map file: 503 with the fixed body, health «missing», and the
+    overall health status the same as with the file (the rest of the API keeps working)."""
+    status, text, _ = get_without({})
+    h_with = _json(get_with({}, path=HEALTH_PATH)[1]) or {}
+    h_without = _json(get_without({}, path=HEALTH_PATH)[1]) or {}
+    return [
+        Check("missing_503", "без файла: 503 {\"detail\": \"city gaps unavailable\"}",
+              status == 503 and _json(text) == UNAVAILABLE, f"HTTP {status}: {text[:60]}"),
+        Check("missing_health", "без файла: health.city_gaps = missing, status тот же",
+              h_without.get("city_gaps") == "missing"
+              and h_without.get("status") == h_with.get("status"),
+              f"city_gaps={h_without.get('city_gaps')!r}, status {h_with.get('status')!r} → "
+              f"{h_without.get('status')!r}"),
+    ]
 
 
 def _json(text: str) -> Any:
@@ -255,20 +308,26 @@ def city_gaps_file(path: Path | None) -> Iterator[None]:
             get_settings.cache_clear()
 
 
-def inprocess_get() -> tuple[GetFn, Callable[[], list[str]], Callable[[], None]]:
-    """GET /api/city-gaps on the app itself (a test client, no network); logs are captured."""
+def inprocess_get(
+    map_path: Path | None = None,
+) -> tuple[GetFn, Callable[[], list[str]], Callable[[], None]]:
+    """GET on the app itself (a test client); logs are captured. The weather warm-up of the
+    lifespan is switched off, so nothing goes to Open-Meteo. map_path: serve this map file
+    (QADAM_CITY_GAPS_PATH) instead of the configured one."""
     from fastapi.testclient import TestClient
 
     from app.api import create_app
     from eval.run_eval import capture_logs
 
-    client = TestClient(create_app())
-    client.__enter__()  # lifespan: the app loads its data like a server would
     captured: list[str] = []
+    with city_gaps_file(map_path), \
+            mock.patch("app.api.start_weather_warm_up", lambda deps: None):
+        client = TestClient(create_app())
+        client.__enter__()  # lifespan: the app loads its data like a server would
 
-    def get(params: dict[str, str]) -> tuple[int, str, dict[str, str]]:
+    def get(params: dict[str, str], path: str = CITY_GAPS_PATH) -> tuple[int, str, dict[str, str]]:
         with capture_logs() as records:
-            resp = client.get("/api/city-gaps", params=params)
+            resp = client.get(path, params=params)
         captured.extend(msg for _, msg in records)
         return resp.status_code, resp.text, {k.lower(): v for k, v in resp.headers.items()}
 
@@ -284,11 +343,11 @@ def inprocess_get() -> tuple[GetFn, Callable[[], list[str]], Callable[[], None]]
 def url_get(base_url: str, timeout_s: float = 30.0) -> GetFn:
     import httpx
 
-    endpoint = base_url.rstrip("/") + "/api/city-gaps"
+    base = base_url.rstrip("/")
 
-    def get(params: dict[str, str]) -> tuple[int, str, dict[str, str]]:
+    def get(params: dict[str, str], path: str = CITY_GAPS_PATH) -> tuple[int, str, dict[str, str]]:
         try:
-            resp = httpx.get(endpoint, params=params, timeout=timeout_s)
+            resp = httpx.get(base + path, params=params, timeout=timeout_s)
         except httpx.HTTPError as exc:
             return -1, f"сеть: {type(exc).__name__}", {}
         return resp.status_code, resp.text, {k.lower(): v for k, v in resp.headers.items()}
@@ -299,11 +358,11 @@ def url_get(base_url: str, timeout_s: float = 30.0) -> GetFn:
 def file_get(path: Path) -> GetFn:
     """No server at all: the file itself (for the shape and reconciliation checks only)."""
 
-    def get(params: dict[str, str]) -> tuple[int, str, dict[str, str]]:
+    def get(params: dict[str, str], path_: str = CITY_GAPS_PATH) -> tuple[int, str, dict[str, str]]:
         try:
             return 200, path.read_text(encoding="utf-8"), {}
         except OSError:
-            return 503, '{"detail": "city gaps unavailable"}', {}
+            return 503, json.dumps(UNAVAILABLE), {}
 
     return get
 
@@ -312,16 +371,28 @@ def file_get(path: Path) -> GetFn:
 
 
 def run_checks(get: GetFn, log_lines: Callable[[], list[str]] | None, reconcile: bool,
-               privacy: bool = True, processed: Path = PROCESSED) -> tuple[list[Check], list[str]]:
+               privacy: bool = True, processed: Path = PROCESSED, health: bool = True,
+               get_without_file: GetFn | None = None) -> tuple[list[Check], list[str]]:
+    """health: also /api/health (not for --file-only); get_without_file: the same app with no
+    map file (in-process) for the 503 / «missing» / unchanged status checks."""
     notes: list[str] = []
     status, text, _ = get({})
+    if status < 0:
+        return [Check("endpoint", "GET /api/city-gaps отвечает", False,
+                      f"сервер не ответил ({text})")], notes
     if status == 404:
         return [Check("endpoint", "GET /api/city-gaps есть", False,
                       "404: эндпоинта нет (FEATURES T142 не влит)")], notes
+    checks: list[Check] = []
+    if health:
+        checks += check_health(get)
+    if get_without_file is not None:
+        checks += check_missing_file(get, get_without_file)
     if status != 200:
-        return [Check("endpoint", "GET /api/city-gaps отвечает 200", False,
-                      f"HTTP {status}: файла карты нет или он не прошёл схему")], notes
-    gaps, checks = check_shape(_json(text))
+        return checks + [Check("endpoint", "GET /api/city-gaps отвечает 200", False,
+                               f"HTTP {status}: файла карты нет или он не прошёл схему")], notes
+    gaps, shape = check_shape(_json(text))
+    checks += shape
     if gaps is not None and reconcile:
         try:
             checks += check_reconcile(gaps, local_totals(processed))
@@ -334,6 +405,18 @@ def run_checks(get: GetFn, log_lines: Callable[[], list[str]] | None, reconcile:
     if privacy:
         checks += check_privacy(get, log_lines)
     return checks, notes
+
+
+def run_inprocess(map_path: Path | None = None) -> tuple[list[Check], list[str]]:
+    """The app with its map file, and once more with no map file (a path that does not exist)."""
+    get, logs, close = inprocess_get(map_path)
+    with tempfile.TemporaryDirectory() as tmp:
+        get_without, _, close_without = inprocess_get(Path(tmp) / "no_city_gaps.json")
+        try:
+            return run_checks(get, logs, reconcile=True, get_without_file=get_without)
+        finally:
+            close_without()
+            close()
 
 
 def summary(checks: list[Check]) -> str:
@@ -371,15 +454,11 @@ def main(argv: list[str] | None = None) -> int:
         notes.append("лог сервера eval не видит: проверка лога — только в процессе")
     elif args.file_only and args.file:
         mode = f"file {args.file}"
-        checks, notes = run_checks(file_get(args.file), None, reconcile=True, privacy=False)
+        checks, notes = run_checks(file_get(args.file), None, reconcile=True, privacy=False,
+                                   health=False)
     else:
         mode = "in-process" + (f" --file {args.file}" if args.file else "")
-        with city_gaps_file(args.file):
-            get, logs, close = inprocess_get()
-            try:
-                checks, notes = run_checks(get, logs, reconcile=True)
-            finally:
-                close()
+        checks, notes = run_inprocess(args.file)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "report.city_gaps.md").write_text(render(mode, checks, notes), encoding="utf-8")
     (args.out / "report.city_gaps.json").write_text(json.dumps(

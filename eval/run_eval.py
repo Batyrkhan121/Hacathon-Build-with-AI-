@@ -1379,11 +1379,7 @@ def run_city_gaps(url: str | None, local_data_check: bool,
         if url:
             checks, gnotes = cg.run_checks(cg.url_get(url), None, reconcile=local_data_check)
         else:
-            get, logs, close = cg.inprocess_get()
-            try:
-                checks, gnotes = cg.run_checks(get, logs, reconcile=True)
-            finally:
-                close()
+            checks, gnotes = cg.run_inprocess()
     except Exception as exc:  # noqa: BLE001 — the map must not break the scenario report
         return {"summary": "не выполнена", "failed": [type(exc).__name__], "notes": [],
                 "checks": []}
@@ -1480,7 +1476,10 @@ def main(argv: list[str] | None = None) -> int:
     privacy = run_privacy_probes(url_post(args.url) if args.url else None)
     compat = run_compat_probe(runner, no_llm=args.no_llm)
     gaps = run_city_gaps(args.url, args.local_data_check, mock=args.mock or runner is None)
-    if gaps is not None:
+    if gaps is None:
+        notes.append("Карта пробелов: не выполнена (" + (
+            "--mock" if args.mock else "API недоступен") + ")")
+    else:
         notes += [f"Карта пробелов: {gaps['summary']}" + (
             f" (не прошло: {', '.join(gaps['failed'])})" if gaps["failed"] else "")]
         notes += [f"Карта пробелов: {n}" for n in gaps["notes"]]
