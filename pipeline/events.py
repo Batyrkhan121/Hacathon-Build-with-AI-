@@ -56,9 +56,11 @@ ID_GEO_MAX_M = 300.0  # venue_poi_id and geo both given: they must agree
 MAX_DURATION = timedelta(days=366)  # a longer event is a typo in a date
 # Never an event source, even if listed in event_sources.json. Map services: their terms
 # forbid storing their data (CLAUDE.md). Ticket aggregators: not taken for now, only the
-# official sites of venues and organisers and city portals (Megah, 21.10). A name without a
-# dot matches a label of the host ("afisha.yandex.kz" ~ "yandex"), a domain matches itself
-# and its subdomains ("www.ticketon.kz" ~ "ticketon.kz"). Keep docs/DATA.md in step.
+# official sites of venues and organisers and city portals (Megah, 21.10). A brand (a name
+# without a dot) matches a label of the host in any zone and on any subdomain ("ticketon.com",
+# "afisha.yandex.kz"); a generic word ("kino", "afisha") would hit honest sites, so those
+# brands are listed as domains, which match themselves and their subdomains. Keep
+# docs/DATA.md in step.
 MAPS = "2GIS и Яндекс нельзя: их условия запрещают хранить данные"
 TICKETS = ("агрегаторы билетов пока не берём: только сайты площадок, организаторов и "
            "городские порталы")
@@ -66,17 +68,17 @@ FORBIDDEN_SOURCES: dict[str, str] = {
     "2gis": MAPS,
     "yandex": MAPS,
     "ya.ru": MAPS,
-    "ticketon.kz": TICKETS,
-    "sxodim.com": TICKETS,
+    "ticketon": TICKETS,
+    "sxodim": TICKETS,
+    "kassir": TICKETS,
+    "ticketland": TICKETS,
+    "radario": TICKETS,
+    "timepad": TICKETS,
+    "intickets": TICKETS,
+    "ticketmaster": TICKETS,
+    "eventbrite": TICKETS,
     "kino.kz": TICKETS,
-    "kassir.ru": TICKETS,
-    "ticketland.ru": TICKETS,
     "afisha.ru": TICKETS,
-    "radario.ru": TICKETS,
-    "timepad.ru": TICKETS,
-    "intickets.ru": TICKETS,
-    "ticketmaster.com": TICKETS,
-    "eventbrite.com": TICKETS,
 }
 SourceKind = Literal["venue", "organizer", "city_portal"]
 NOT_VENUES = frozenset({"playground"})  # an unnamed «Детская площадка» is not a venue
@@ -181,12 +183,22 @@ class EventsFile(BaseModel):
 class Source(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    domain: str = Field(pattern=r"^[a-z0-9.-]+\.[a-z]{2,}$")
+    domain: str = Field(pattern=r"^[a-z0-9.-]+\.[a-z]{2,}$",
+                        description="astanaopera.kz: без www. и протокола")
     name: str = Field(min_length=2, max_length=120)
     kind: SourceKind = Field(description="venue | organizer | city_portal")
     terms_url: str = Field(pattern=r"^https://\S+$")
     checked_at: date
     note: str | None = None
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def _normal(cls, value: object) -> object:
+        """"WWW.AstanaOpera.kz." -> "astanaopera.kz": one site, one entry."""
+        if not isinstance(value, str):
+            return value
+        value = value.strip().lower().rstrip(".")
+        return value.removeprefix("www.")
 
     @field_validator("domain")
     @classmethod
@@ -477,7 +489,8 @@ def json_schemas() -> dict[str, dict]:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="check only, write nothing")
-    parser.add_argument("--schema", action="store_true", help="rewrite events.schema.json")
+    parser.add_argument("--schema", action="store_true",
+                        help="rewrite events.schema.json and event_sources.schema.json")
     args = parser.parse_args(argv)
     if args.schema:
         for name, schema in json_schemas().items():

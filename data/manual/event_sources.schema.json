@@ -4,6 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "domain": {
+          "description": "astanaopera.kz: без www. и протокола",
           "pattern": "^[a-z0-9.-]+\\.[a-z]{2,}$",
           "title": "Domain",
           "type": "string"

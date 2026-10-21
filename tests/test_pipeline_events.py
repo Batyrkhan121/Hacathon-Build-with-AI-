@@ -171,7 +171,11 @@ def test_committed_files_check_clean_and_the_schema_is_current() -> None:
 @pytest.mark.parametrize(("host", "reason"), [
     ("2gis.kz", MAPS), ("2gis.ru", MAPS), ("afisha.yandex.kz", MAPS), ("ya.ru", MAPS),
     ("ticketon.kz", TICKETS), ("www.ticketon.kz", TICKETS), ("sxodim.com", TICKETS),
-    ("astanaopera.kz", None), ("notyandex.kz", None), ("ticketon.kz.example.com", None),
+    ("ticketon.com", TICKETS), ("kassir.kz", TICKETS), ("kino.kz", TICKETS),
+    ("www.kino.kz", TICKETS), ("afisha.ru", TICKETS),
+    ("astanaopera.kz", None), ("notyandex.kz", None), ("kinopark.kz", None),
+    ("afisha.astana.gov.kz", None),
+    ("ticketon.kz.example.com", TICKETS),  # a brand label anywhere in the host: refused
 ])
 def test_forbidden_sources_one_list(host: str, reason: str | None) -> None:
     assert forbidden_source(host) == reason
@@ -189,6 +193,8 @@ def source(**over) -> dict:
     ([source(domain="ticketon.kz", name="Ticketon", kind="organizer")], "агрегаторы билетов"),
     ([source(domain="afisha.yandex.kz", name="Афиша")], "2GIS и Яндекс"),
     ([source(), source(name="Опера ещё раз")], "источник #2: домен astanaopera.kz уже в списке"),
+    ([source(), source(domain="WWW.AstanaOpera.KZ")], "источник #2: домен astanaopera.kz уже"),
+    ([source(domain="kassir.kz", name="Kassir", kind="organizer")], "агрегаторы билетов"),
 ])
 def test_bad_sources_are_errors(sources: list[dict], fragment: str) -> None:
     res = run(event(), sources={"format_version": 1, "sources": sources})
@@ -203,3 +209,9 @@ def test_every_source_kind_is_accepted(kind: str) -> None:
               sources={"format_version": 1, "sources": [portal]})
     assert res.errors == [] and res.events[0]["source_kind"] == kind
     assert res.events[0]["source_name"] == "Акимат Астаны"
+
+
+def test_a_source_domain_is_normalised() -> None:
+    upper = source(domain=" WWW.AstanaOpera.KZ. ")
+    res = run(event(), sources={"format_version": 1, "sources": [upper]})
+    assert res.errors == [] and res.events[0]["source_name"] == "Astana Opera"
