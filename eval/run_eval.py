@@ -21,6 +21,7 @@ import csv
 import json
 import logging
 import math
+import os
 import re
 import statistics
 import sys
@@ -291,7 +292,13 @@ def check_event_cards(ans: Answer) -> list[str]:
 # «запрошен маршрут без ступенек» (asked, not achieved) is not a claim
 STEP_FREE_CLAIMS = ("маршрут: без ступенек", "маршрут: баспалдақсыз", "route: step-free")
 EVENT_STOP_MAX_WAIT_MIN = 30  # an event starting later than this is not a route stop (1.3.1)
-EVENTS_PATH = ROOT / "data" / "events.json"
+# E16 runs on test events from eval's own fixture (user's decision, 21.10): data/events.json
+# stays as DATA builds it. In-process main() points QADAM_EVENTS_PATH here; a server for --url
+# must be started with the same variable.
+EVENTS_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "events_e16.json"
+EVENTS_PATH = EVENTS_FIXTURE
+EVENTS_ENV_NOTE = ("E16 требует сервер с QADAM_EVENTS_PATH=eval/fixtures/events_e16.json "
+                   "(тестовые события eval); без неё у сервера событий нет и E16 не пройдёт")
 # like CROSSING_GRAPH: off for --url unless --local-data-check (the server may have other events)
 EVENTS_FILE: Path | None = EVENTS_PATH
 _event_venues_cache: dict[Path, dict[str, str] | None] = {}
@@ -602,6 +609,16 @@ def check_expect(ans: Answer, exp: dict[str, Any], graph_on: bool = True) -> lis
             fails.append(f"мест в помещении {indoor} < {exp['indoor_cards_min']}")
     if exp.get("event_required") and not any(c.kind == "event" for c in ans.cards):
         fails.append("нет карточки события")
+    if exp.get("event_stop_required"):
+        # 1.3.1: an event starting within 30 min is a route stop, the last one
+        now = ans.context.local_time
+        soon = [c.poi_id for c in ans.cards if c.kind == "event" and c.starts_at is not None
+                and (c.starts_at - now).total_seconds() / 60 <= EVENT_STOP_MAX_WAIT_MIN]
+        last = ans.route.stop_ids[-1] if ans.route is not None else None
+        if not soon:
+            fails.append("нет события, которое начнётся в ближайшие 30 мин")
+        elif ans.route is not None and last not in soon:  # no route (one stop): nothing to order
+            fails.append(f"событие {soon[0]} — не последняя остановка (последняя: {last})")
     # ranking probes (eval/probes.yaml, T70): what comes first matters, not just what is there
     top = ans.cards[0] if ans.cards else None
     if "top1_categories_any" in exp and top is not None:
@@ -1348,6 +1365,14 @@ def write_smoke_report(
 # ------------------------------------------------------------------------- main
 
 
+def use_eval_events() -> None:
+    """In-process runs read eval's test events (E16): QADAM_EVENTS_PATH, settings re-read."""
+    os.environ["QADAM_EVENTS_PATH"] = str(EVENTS_FIXTURE)
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Qadam scenario eval")
     group = ap.add_mutually_exclusive_group()
@@ -1377,7 +1402,12 @@ def main(argv: list[str] | None = None) -> int:
         runner, notes = url_runner(args.url, no_llm=args.no_llm)
     else:
         mode = "in-process" + (" --no-llm" if args.no_llm else "")
+        use_eval_events()
         runner, notes = inprocess_runner(args.no_llm)
+        notes.append("события: тестовая фикстура eval/fixtures/events_e16.json "
+                     "(QADAM_EVENTS_PATH), data/events.json не используется")
+    if args.url:
+        notes.append(EVENTS_ENV_NOTE)
     notes = notes + args.note
     global CROSSING_GRAPH, EVENTS_FILE
     local = not args.url or args.local_data_check

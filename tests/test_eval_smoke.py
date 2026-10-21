@@ -900,3 +900,53 @@ def test_report_has_compat_line(tmp_path: Path) -> None:
     assert report["compat"]["id"] == "compat_no_bars"
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "Совместимость: likes no_bars" in md
+
+
+
+def test_e16_fixture_is_valid_for_the_app() -> None:
+    from datetime import datetime
+
+    from app import events
+    from app.hours import ASTANA_TZ
+
+    loaded = events.load_events(run_eval.EVENTS_FIXTURE)
+    assert len(loaded) == 2 and all("(тест)" in e.title["ru"] for e in loaded)
+    now = datetime(2026, 10, 24, 17, 0, tzinfo=ASTANA_TZ)  # E16 «at»
+    waits = [(e.starts_at - now).total_seconds() / 60 for e in events.current(loaded, now)]
+    assert waits == [20, 150]  # one stop (≤ 30 min), one «later this evening»
+    assert run_eval.event_venues(run_eval.EVENTS_FIXTURE) == {
+        e.id: "Астана Опера" for e in loaded}
+
+
+def test_use_eval_events_sets_the_settings(monkeypatch) -> None:
+    from app.config import get_settings
+
+    monkeypatch.delenv("QADAM_EVENTS_PATH", raising=False)
+    try:
+        run_eval.use_eval_events()
+        assert get_settings().events_path == run_eval.EVENTS_FIXTURE
+    finally:
+        monkeypatch.delenv("QADAM_EVENTS_PATH", raising=False)
+        get_settings.cache_clear()
+
+
+def test_event_stop_required(mock_answer: Answer) -> None:
+    exp = {"event_stop_required": True}
+    last_soon = _event_in_route(mock_answer, 2, "2026-10-20T15:50:00+05:00")
+    assert check_expect(last_soon, exp) == []
+    first = _event_in_route(mock_answer, 0, "2026-10-20T15:50:00+05:00")
+    assert any("не последняя остановка" in f for f in check_expect(first, exp))
+    late = _event_in_route(mock_answer, 2, "2026-10-20T19:00:00+05:00")
+    assert check_expect(late, exp) == ["нет события, которое начнётся в ближайшие 30 мин"]
+    no_route = last_soon.model_copy(update={"route": None})
+    assert check_expect(no_route, exp) == []  # one stop only: no route to order
+
+
+def test_url_report_says_e16_needs_the_fixture(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_eval, "url_runner", lambda url, no_llm=False: (None, ["нет API"]))
+    monkeypatch.setattr(run_eval, "url_post", lambda url: lambda body: (-1, ""))
+    run_eval.main(["--url", "http://x", "--out", str(tmp_path), "--only", "E16"])
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "QADAM_EVENTS_PATH=eval/fixtures/events_e16.json" in md
+    assert "на тестовом событии из фикстуры eval" in md
+    run_eval.main(["--mock", "--out", str(tmp_path), "--only", "E18"])  # restore defaults
