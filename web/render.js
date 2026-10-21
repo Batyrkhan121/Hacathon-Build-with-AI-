@@ -320,7 +320,7 @@ function renderWarmOffer(answer, ctx) {
 }
 
 // 1.3.0, событие: «сегодня в 19:00–21:00», площадка (address), кнопка «Источник» (source_url, только https).
-// «Идёт сейчас» — только при starts_at ≤ сейчас < ends_at; «сейчас» — момент запроса (context.local_time).
+// «Идёт до 21:00» — только при starts_at ≤ сейчас < ends_at (см. eventOngoing); «сейчас» — context.local_time.
 // Часы работы у события не показываем: вместо них — время события.
 const ASTANA_OFFSET_MS = 5 * 3600 * 1000; // Астана = UTC+5
 
@@ -369,10 +369,17 @@ function eventDomain(card) {
   return new URL(src).hostname.replace(/^www\./, '');
 }
 
-function eventIsNow(card, nowIso) {
-  if (!nowIso || !card.ends_at) return false;
+// 8.2: уже начавшееся событие (starts_at ≤ local_time < ends_at) — «идёт до 21:00»; без ends_at — «идёт сейчас»
+// (только если началось сегодня по UTC+5: вчерашнее начало без конца ничего не говорит о «сейчас»).
+// Возвращает подпись строчными или null, если событие ещё не началось или уже кончилось.
+function eventOngoing(card, nowIso) {
+  if (card.kind !== 'event' || !card.starts_at || !nowIso) return null;
   const now = Date.parse(nowIso);
-  return Date.parse(card.starts_at) <= now && now < Date.parse(card.ends_at);
+  if (Date.parse(card.starts_at) > now) return null;
+  if (card.ends_at) {
+    return now < Date.parse(card.ends_at) ? t('event.until', { time: localParts(card.ends_at).time }) : null;
+  }
+  return localParts(card.starts_at).date === localParts(nowIso).date ? t('event.onNow') : null;
 }
 
 function httpsOnly(url) {
@@ -394,7 +401,7 @@ function renderEventBlock(card, ctx) {
       { class: 'event-when' },
       h('span', { class: 'event-badge', text: t('event.badge') }),
       h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
-      eventIsNow(card, ctx.nowIso) ? h('span', { class: 'event-now', text: t('event.now') }) : null,
+      eventOngoing(card, ctx.nowIso) ? h('span', { class: 'event-now', text: cap(eventOngoing(card, ctx.nowIso)) }) : null,
     ),
     card.venue || card.address
       ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.venue || card.address }) })
@@ -599,7 +606,7 @@ function renderRoute(route, byId, ctx, originName) {
               class: 'tl-visit',
               text:
                 card.kind === 'event' && card.starts_at
-                  ? ` · ${t('event.by', { time: localParts(card.starts_at).time })}`
+                  ? ` · ${eventOngoing(card, ctx.nowIso) || t('event.by', { time: localParts(card.starts_at).time })}`
                   : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
             }),
           ),
