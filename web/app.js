@@ -898,6 +898,7 @@ function syncLangButtons() {
     b.setAttribute('aria-pressed', String(b.dataset.lang === getLang()));
   });
   mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
+  mapView.setAttributionLabel(t('map.attrOsm'));
 }
 
 // «Мои предпочтения»: только localStorage этого браузера (решение пользователя), без истории.
@@ -1003,6 +1004,7 @@ async function init() {
   if (isMock) ['gaps-link', 'header-gaps'].forEach((id) => document.getElementById(id)?.setAttribute('href', 'gaps.html?mock=1'));
   if (!mapView.initMap(document.getElementById('map'))) els.mapFallback.hidden = false;
   mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
+  mapView.setAttributionLabel(t('map.attrOsm'));
   if (!window.h3) {
     els.geoBtn.disabled = true;
     els.pickBtn.disabled = true;
