@@ -322,14 +322,14 @@
 
 - id: E14
   wave: 8
-  title: "Ночь: по освещённым улицам (профиль lit)"
+  title: "Ночью — по крупным улицам (профиль lit)"
   request:
-    query: "Поздно вечером хочу пройтись к паре мест по освещённым улицам"
+    query: "Поздно вечером хочу пройтись к паре мест по крупным улицам"
     location: {landmark_id: baiterek}
     at: "2026-10-20T22:30:00+05:00"
     lang: ru
     route_profile: lit
-  expected_type: "маршрут profile=lit с долями lit/unlit/нет данных; «освещено» — данные OSM, не «безопасно»; ночью только подтверждённо открытые места"
+  expected_type: "маршрут profile=lit («Ночью — по крупным улицам») с долями lit/unlit/нет данных; «освещено» и «крупная улица» — данные OSM, не «безопасно»; ночью только подтверждённо открытые места"
   expect:
     max_cards: 3
     route: required
@@ -396,12 +396,13 @@
     prefs: {likes: [museums], avoids: [bars, cafes]}
   # eval шлёт тот же запрос без prefs и сравнивает: музеев/галерей больше, кафе меньше.
   # У EXPO в данных один музей и ни одной галереи: сдвигать там не к чему (поэтому baiterek).
-  # 1.3.1: «без баров» — avoids "bars" (было no_bars в likes); «не хочу кафе» — avoids "cafes".
+  # 1.3.1: «без баров» — avoids "bars" (было no_bars в likes); «не хочу кафе» — avoids "cafes",
+  # с волны 8.2 это фильтр (чип «Без кафе»): кафе в ответе быть не должно.
   expected_type: "с prefs подбор сдвигается к музеям, без баров и без кафе; prefs не в логе вместе с местом и запросом"
   expect:
     min_cards: 1
     max_cards: 3
-    categories_forbid: [bar, nightlife]
+    categories_forbid: [bar, nightlife, cafe]
     prefs_shift: {likes_categories: [museum, gallery], avoid_categories: [cafe]}
     forbid_open_claim_without_high: true
     lang: ru
