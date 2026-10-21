@@ -4,6 +4,7 @@ import { fetchLandmarks, fetchMeta, recommend, isMock } from './api.js';
 import * as mapView from './map.js';
 import * as view from './render.js';
 import { astanaClock, atIso, shortDay } from './time.js';
+import { AVOID_TAGS, LIKE_TAGS, PREF_CONFLICT, mergePatch, mergePrefs } from './refine.js';
 
 const PRESETS = [
   { id: 'S1', landmark: 'mega_silk_way', time: '15:00' },
@@ -17,11 +18,6 @@ const BUDGETS = [30, 60, 120];
 // Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
-// 1.3.1: раздельные словари (LikeTag / AvoidTag в app/schemas.py) и противоречивые пары (PREF_CONFLICTS):
-// выбор одной метки пары снимает другую — вместе их сервер не примет (422)
-const LIKE_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'warm', 'night'];
-const AVOID_TAGS = ['bars', 'noisy', 'long_outdoor', 'kids_places', 'cafes'];
-const PREF_CONFLICT = { kids: 'kids_places', kids_places: 'kids', coffee: 'cafes', cafes: 'coffee' };
 const PREFS_KEY = 'qadam.prefs.v1';
 const MAX_EXCLUDE = 9; // контракт: exclude_poi_ids до 9 (3 ответа × 3 карточки)
 const MAX_WALK_MIN = 120; // контракт: overrides.max_walk_min ≤ 120
@@ -185,25 +181,6 @@ function whereLabel() {
 
 // ------------------------------------------------------------------ request
 
-// Разовая поправка запроса (чипы уточнения, «В тепле»): меняет только этот запрос, ничего не сохраняет.
-// patch = { overrides: {...}, likes: [...], avoids: [...], exclude: [...] };
-// метка из likes уходит из avoids и наоборот; exclude → exclude_poi_ids (до 9, «Ещё»).
-function mergePrefs(base, patch = {}) {
-  let likes = [...(base?.likes || [])];
-  let avoids = [...(base?.avoids || [])];
-  for (const tag of patch.likes || []) {
-    if (!LIKE_TAGS.includes(tag)) continue;
-    avoids = avoids.filter((x) => x !== PREF_CONFLICT[tag]);
-    if (!likes.includes(tag)) likes.push(tag);
-  }
-  for (const tag of patch.avoids || []) {
-    if (!AVOID_TAGS.includes(tag)) continue;
-    likes = likes.filter((x) => x !== PREF_CONFLICT[tag]); // «без кафе» снимает «кофе» в этом запросе
-    if (!avoids.includes(tag)) avoids.push(tag);
-  }
-  return { likes, avoids };
-}
-
 function buildRequest(query, useLlm = true, patch = {}) {
   const location =
     state.location.type === 'cell' ? { h3_cell: state.location.cell } : { landmark_id: state.location.id };
@@ -237,13 +214,7 @@ function buildRequest(query, useLlm = true, patch = {}) {
 
 // Добавить к накопленной поправке серии и повторить последний запрос
 function refine(add) {
-  const p = state.series.patch;
-  state.series.patch = {
-    overrides: { ...(p.overrides || {}), ...(add.overrides || {}) },
-    likes: [...new Set([...(p.likes || []), ...(add.likes || [])])],
-    avoids: [...new Set([...(p.avoids || []), ...(add.avoids || [])])],
-    exclude: add.exclude || p.exclude || [],
-  };
+  state.series.patch = mergePatch(state.series.patch, add);
   submit({ patch: state.series.patch });
 }
 
@@ -392,6 +363,8 @@ function renderAnswer({ redrawMap = true } = {}) {
     // Чипы уточнения под ответом: разовый повтор запроса, поправки серии складываются, ничего не сохраняется
     onCloser: (maxWalk) => refine({ overrides: { max_walk_min: Math.min(MAX_WALK_MIN, maxWalk) } }),
     onNoCafe: () => refine({ avoids: ['cafes'] }),
+    // пустой ответ при «без кафе»: разово повторить без метки cafes (сохранённые предпочтения не меняются)
+    onDropNoCafe: () => refine({ drop: ['cafes'] }),
     // «Ещё»: те же условия, без мест, уже показанных в этой серии
     onMore: state.series.shown.length < MAX_EXCLUDE ? () => refine({ exclude: [...state.series.shown] }) : null,
   });
