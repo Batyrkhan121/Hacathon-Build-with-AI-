@@ -126,6 +126,13 @@ PREF_AVOID_MAX = -0.35
 EVENT_BONUS = 0.08
 EVENT_WORDS = ("событие мероприятие афиша сегодня вечером концерт спектакль выставка шоу "
                "event events today tonight concert show exhibition іс-шара бүгін кеш көрме")
+# Words that ask for events («концерт или шоу?»): then the categories and tags the parser read
+# in the text («что интересного» -> sights, «концерт» -> live_music) describe places, not the
+# event, so an event is not filtered or penalised by them (retrieve(events_asked=True))
+EVENT_ASK_WORDS = ("концерт концерты спектакль спектакли выставка выставки шоу фестиваль афиша "
+                   "мероприятие мероприятия событие события премьера опера балет "
+                   "concert concerts show shows exhibition festival event events gig "
+                   "іс-шара көрме фестиваль қойылым")
 
 KIDS_CATEGORIES = frozenset({"playground", "park", "museum", "attraction", "mall"})
 ADULT_CATEGORIES = frozenset({"bar", "nightlife"})
@@ -398,6 +405,12 @@ def _stem_hit(stem: str, doc_stems: set[str] | frozenset[str]) -> bool:
 def is_event(poi: POI) -> bool:
     """A dated event from data/events.json (app.events), not a place."""
     return poi.id.startswith(EVENT_PREFIX)
+
+
+def asks_for_events(intent: QueryIntent) -> bool:
+    """The query asks for a concert, a show, an exhibition… (EVENT_ASK_WORDS)."""
+    asked = frozenset(t[:_STEM] for t in _tokens(EVENT_ASK_WORDS))
+    return bool(_query_stems(intent) & asked)
 
 
 def poi_text(poi: POI) -> str:
@@ -850,6 +863,7 @@ def retrieve(
     prefs: UserPrefs | None = None,
     events: Sequence[tuple[POI, HoursVerdict]] = (),
     exclude_ids: AbstractSet[str] = frozenset(),
+    events_asked: bool = False,
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -867,6 +881,8 @@ def retrieve(
     events that are not over); EVENT_BONUS in score_parts["event"].
     `exclude_ids` (request.exclude_poi_ids, the «Ещё» chip): places and events already shown,
     dropped before any scoring.
+    `events_asked` (the query asks for events, no categories set in the UI): events are
+    filtered and scored without the parsed categories / must_tags — those describe places.
     """
     if k <= 0 or not store.pois:
         return []
@@ -885,10 +901,12 @@ def retrieve(
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
         if _passes_hours(poi, verdict, intent):
             passed.append((i, poi, distance, verdict))
+    event_intent = (intent.model_copy(update={"categories": [], "must_tags": []})
+                    if events_asked else intent)
     for poi, verdict in events:
         distance = haversine_m(ctx.origin, poi.geo)
         if (poi.id not in exclude_ids and distance <= ctx.radius_m
-                and _passes_profile(poi, intent)
+                and _passes_profile(poi, event_intent)
                 and _passes_prefs(poi, prefs)):
             passed.append((None, poi, distance, verdict))
 
@@ -909,7 +927,8 @@ def retrieve(
         elif semantic is not None and median is not None:
             sem = median
             info["no_vector"] = 1.0
-        score, parts = _score(poi, intent, ctx, distance, verdict, sem, query_stems, prefs)
+        score, parts = _score(poi, event_intent if i is None else intent, ctx, distance,
+                              verdict, sem, query_stems, prefs)
         parts.update(info)
         pool.append(
             Candidate(

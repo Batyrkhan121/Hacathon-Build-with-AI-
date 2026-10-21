@@ -996,3 +996,24 @@ def test_long_outdoor_names_no_place_and_gives_no_penalty() -> None:
     out = retrieve(make_store([park]), intent(), make_ctx(), None,
                    prefs=_prefs(avoids=["long_outdoor"]))
     assert ids(out) == [park.id] and "prefs" not in out[0].score_parts
+
+
+@pytest.mark.parametrize(("query", "asked"), [
+    ("Что интересного рядом — концерт или шоу?", True), ("куда на выставку", True),
+    ("any concerts tonight?", True), ("бүгін көрме бар ма", True),
+    ("кофе рядом", False), ("погулять в парке", False)])
+def test_asks_for_events(query: str, asked: bool) -> None:
+    from app.retrieval import asks_for_events
+
+    assert asks_for_events(intent(query)) is asked
+
+
+def test_events_asked_skips_the_parsed_place_filters() -> None:
+    museum = make_poi("museum", "museum", dlat=0.002)
+    pair = _event_pair(category="entertainment", tags=["outdoor"])
+    q = intent("концерт", categories=["museum"], must_tags=["live_music"])
+    store = make_store([museum])
+    assert "event:night-show" not in ids(retrieve(store, q, make_ctx(), None, events=[pair]))
+    out = retrieve(store, q, make_ctx(), None, events=[pair], events_asked=True)
+    assert ids(out)[0] == "event:night-show" and "no_tags" not in out[0].score_parts
+    assert ids(out)[1:] == [museum.id]  # places keep the filters (and the tag penalty)

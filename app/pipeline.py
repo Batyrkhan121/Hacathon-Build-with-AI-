@@ -204,6 +204,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_lit": "запрошен маршрут «ночью — по крупным улицам»",
         "f_warm_between": "в тепле: между местами до {v} мин пешком",
         "f_short": "без долгих отрезков на улице: до {v} мин подряд",
+        "f_events_open": "события: по словам запроса, без фильтра категорий",
         "f_short_between": "без долгих отрезков на улице: между местами до {v} мин",
         "short_long_leg": "Самый длинный отрезок по улице — {n} мин: ближе мест в "
                           "данных нет.",
@@ -295,6 +296,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_lit": "«түнде — үлкен көшелермен» маршруты сұралды",
         "f_warm_between": "жылыда: орындар арасы {v} минутқа дейін жаяу",
         "f_short": "далада ұзақ жүрмей: қатарынан {v} минутқа дейін",
+        "f_events_open": "іс-шаралар: сұрау сөздері бойынша, санат сүзгісінсіз",
         "f_short_between": "далада ұзақ жүрмей: орындар арасы {v} минутқа дейін",
         "short_long_leg": "Көшедегі ең ұзақ кесінді — {n} мин: деректерде жақынырақ "
                           "орын жоқ.",
@@ -384,6 +386,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_lit": "route «at night — along major streets» requested",
         "f_warm_between": "warm: up to {v} min on foot between places",
         "f_short": "no long walks outside: up to {v} min at a time",
+        "f_events_open": "events: by the words of the query, no category filter",
         "f_short_between": "no long walks outside: up to {v} min between places",
         "short_long_leg": "The longest walk outside is {n} min: there is no closer "
                           "place in the data.",
@@ -689,8 +692,12 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # «Ещё»: the places and events already shown in this series are never candidates again
     # (ids only, per request, never logged)
     exclude = frozenset(req.exclude_poi_ids)
+    # «концерт или шоу?»: the parsed place categories / tags do not hide events (UI
+    # categories, an explicit choice, still do)
+    events_asked = (bool(event_pool) and retrieval.asks_for_events(intent)
+                    and not (req.overrides is not None and req.overrides.categories))
     search_kw: dict[str, object] = {"prefs": search_prefs, "event_pool": event_pool,
-                                    "exclude": exclude}
+                                    "exclude": exclude, "events_asked": events_asked}
 
     # 5. retrieve: as asked -> radius x1.5 once -> without the category filter (sparse areas,
     #    e.g. 3 cafes and no sights around the airport). `search_intent` is what was applied.
@@ -933,6 +940,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              profile=profile, profile_auto=profile_auto,
                              profile_applied=_profile_applied(mini_route, profile),
                              prefs=req.prefs, warm=warm, short_out=short_out,
+                             events_open=events_asked and any(c.kind == "event"
+                                                              for c in cards),
                              excluded=len(exclude),
                              temp_c=wx.temp_c if wx is not None else None),
             sources=_sources(cards, wx is not None),
@@ -1283,6 +1292,7 @@ def _retrieve(
     k: int = TOP_K, *, prefs: UserPrefs | None = None,
     event_pool: list[tuple[POI, HoursVerdict]] | None = None,
     exclude: frozenset[str] = frozenset(),
+    events_asked: bool = False,
 ) -> tuple[list[Candidate], bool]:
     """(candidates, failed). Wave 8 keywords go to retrieve only when set (1.2.0 calls stay)."""
     extra: dict[str, object] = {}
@@ -1293,6 +1303,8 @@ def _retrieve(
         event_pool = [pair for pair in event_pool or [] if pair[0].id not in exclude]
     if event_pool:
         extra["events"] = event_pool
+        if events_asked:
+            extra["events_asked"] = True
     try:
         return retrieval.retrieve(store, intent, ctx, query_vec, k=k, **extra), False
     except Exception as exc:  # noqa: BLE001 - an empty answer beats a 500
@@ -1303,6 +1315,7 @@ def _retrieve(
             return [], True
     # events are an extra (hand-made data): the places must still answer without them
     extra.pop("events")
+    extra.pop("events_asked", None)
     try:
         return retrieval.retrieve(store, intent, ctx, query_vec, k=k, **extra), False
     except Exception as exc:  # noqa: BLE001
@@ -1604,7 +1617,7 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              profile: RouteProfile = "fastest", profile_auto: bool = False,
              profile_applied: bool = True,
              prefs: UserPrefs | None = None, warm: str | None = None,
-             short_out: bool = False,
+             short_out: bool = False, events_open: bool = False,
              temp_c: float | None = None, excluded: int = 0) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran.
@@ -1649,6 +1662,8 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
                    + (t["f_warm_frost"].format(t=_temp(temp_c)) if frost else ""))
     elif short_out:
         out.append(t["f_short" if capped else "f_short_between"].format(v=WARM_MAX_LEG_MIN))
+    if events_open:  # an event card outside the parsed categories: say why
+        out.append(t["f_events_open"])
     if excluded:  # «Ещё»: a count only, the ids stay out of the answer text
         out.append(t["f_excluded"].format(n=excluded))
     if semantic:

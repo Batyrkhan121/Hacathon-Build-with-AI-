@@ -2430,3 +2430,75 @@ def test_a_short_budget_drops_a_place_not_the_event(deps: Deps) -> None:
                                     events={show.id: two_hours})
     got, _ = pipeline_mod._route(ctx, cards, [*places, ev_cand], intent, True, "rid")
     assert got is None or show.id not in got.stop_ids  # a card, not a stop
+
+
+# ------------- the integrator's case: «концерт или шоу?» with a concert near EXPO in 15 min
+
+SOON = {"id": "event:test-soon", "title": {"ru": "Тестовый концерт"}, "category": "entertainment",
+        "tags": ["outdoor"], "geo": {"lat": 51.0892, "lon": 71.4162},
+        "starts_at": "2026-10-22T15:15:00+05:00", "ends_at": "2026-10-22T16:30:00+05:00",
+        "source_url": "https://example.org/a", "venue": "Тестовая площадка",
+        "address": "пр. Мангилик Ел, 55/23", "fetched_at": "2026-10-21"}
+SOON_Q = "Что интересного рядом — концерт или шоу?"
+
+
+def test_a_soon_concert_is_a_card_and_the_last_stop(deps: Deps, tmp_path: Path) -> None:
+    """The parser reads «что интересного» as sights and «концерт» as live_music: those are
+    place filters. They hid the event (category entertainment); now the query that asks for
+    events gets it — a card, and the last stop of the route (real plan_route of CORE)."""
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert [c.poi_id for c in ev_cards] == ["event:test-soon"]
+    c = ev_cards[0]
+    assert c.title == "Тестовый концерт" and c.venue == "Тестовая площадка"
+    assert c.address == "пр. Мангилик Ел, 55/23" and c.facts_sources == ["manual"]
+    assert a.route is not None and a.route.stop_ids[-1] == "event:test-soon"
+    assert "события: по словам запроса, без фильтра категорий" in a.data_used.filters
+    early = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T14:00:00+05:00"), d)
+    assert any(c.kind == "event" for c in early.cards)  # 75 min ahead: a card…
+    assert early.route is None or "event:test-soon" not in early.route.stop_ids  # …not a stop
+    over = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T17:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in over.cards)  # over at 16:30
+
+
+def test_ui_categories_still_hide_events(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00",
+                      overrides={"categories": ["museum"]}), d)
+    assert not any(c.kind == "event" for c in a.cards)  # an explicit choice in the UI
+    assert not any(f.startswith("события:") for f in a.data_used.filters)
+
+
+def test_a_query_without_event_words_keeps_the_place_filters(deps: Deps, tmp_path: Path
+                                                             ) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req("музей рядом", use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in a.cards)  # an entertainment event, not a museum
+
+
+def test_data_lane_records_load_as_they_are_written() -> None:
+    """pipeline.events writes "event:<slug>" with its own slug rule: the reader accepts it."""
+    import inspect
+    from datetime import date
+
+    from app import events as ev
+    from pipeline import events as data_events
+
+    item = data_events.EventIn.model_validate({
+        "id": "opera-tosca-2026-11-01", "title": "Опера «Тоска»", "category": "theatre",
+        "starts_at": "2026-11-01T19:00:00+05:00", "geo": {"lat": 51.1236, "lon": 71.4296},
+        "source_url": "https://astanaopera.kz/afisha/tosca", "fetched_at": "2026-10-21"})
+    venue = data_events.Venue(None, None, None)
+    params = inspect.signature(data_events.to_record).parameters
+    if "source" in params:  # DATA T132 passes the whole source (with its kind)
+        fields = data_events.Source.model_fields
+        src = {"domain": "astanaopera.kz", "name": "Астана Опера",
+               "terms_url": "https://astanaopera.kz/terms", "checked_at": date(2026, 10, 21)}
+        if "kind" in fields:
+            src["kind"] = "venue"
+        record = data_events.to_record(item, venue, data_events.Source.model_validate(src))
+    else:
+        record = data_events.to_record(item, venue, "Астана Опера")
+    got = ev.Event.model_validate(record)
+    assert got.id == "event:opera-tosca-2026-11-01" and got.title_in("ru") == "Опера «Тоска»"
