@@ -148,15 +148,15 @@ plan_route (≥2 карточки) ─► DataUsed + warnings + disclaimer ─�
 
     | Слой | Всего | «Нет данных» | Правило |
     |---|---|---|---|
-    | Часы работы | `poi` | `poi_no_hours` | `opening_hours` пусто или нет |
+    | Часы работы | `poi` | `poi_no_hours` | `opening_hours` нет, пусто или одни пробелы |
     | Доступность для коляски | `poi` | `poi_wheelchair_unknown` | `wheelchair` = `unknown` |
-    | Название на казахском | `poi` | `poi_no_name_kk` | нет `name_i18n["kk"]` (пустая строка — тоже нет) |
+    | Название на казахском | `poi` | `poi_no_name_kk` | нет `name_i18n["kk"]`, пусто или одни пробелы |
     | Освещённость | `walk_m` | `walk_lit_unknown_m` | длина рёбер без бита 2 (lit=yes) и без бита 32 (lit=no) |
     | Тип перехода | `crossings` | `crossings_kind_unknown` | узел с битом 1 без битов 2, 8 и 32 — тот же `unknown`, что у читателя графа |
     | Бордюр на переходе | `crossings` | `crossings_kerb_unknown` | узел с битом 1 без битов 4 и 16 |
 
     Место относится к ячейке своей `geo`, узел — своих координат, ребро — середины отрезка между концами. Метры ячейки — округлённая сумма длин её рёбер. Берутся все места и весь граф, в том числе за пределами bbox.
-  - Сверка с отчётом DATA: итоги `city` совпадают с `walk_coverage.json` и `REPORT.md` — `crossings` = `crossings_total`, `crossings_kind_unknown` = `crossings.unknown.nodes`, `crossings_kerb_unknown` = `kerbs.unknown.nodes`, `poi` = число строк `poi.jsonl`, `poi_wheelchair_unknown` = число `wheelchair` = `unknown` (всё точно); длины — до 0,5 км (`walk_m` / 1000 против `length_km`), доли — до 0,1 п. п. DATA добавляет в `REPORT.md` раздел «Карта пробелов» с итогами `city`.
+  - Сверка с отчётом DATA: итоги `city` совпадают с `walk_coverage.json` и `REPORT.md` — `crossings` = `crossings_total`, `crossings_kind_unknown` = `crossings.unknown.nodes`, `crossings_kerb_unknown` = `kerbs.unknown.nodes`, `poi` = число строк `poi.jsonl`, `poi_wheelchair_unknown`, `poi_no_hours` и `poi_no_name_kk` — по `poi.jsonl` по тем же правилам (всё точно); длины — до 0,5 км (`walk_m` / 1000 против `length_km`), доли — до 0,1 п. п. DATA добавляет в `REPORT.md` раздел «Карта пробелов» с итогами `city`.
   - Доли и пороги считает читатель (UX, EVAL): доля = «нет данных» / «всего». Долю показываем, только если «всего» не меньше `GAP_MIN_POI` (5 мест), `GAP_MIN_WALK_M` (300 м) или `GAP_MIN_CROSSINGS` (3 перехода) для своего слоя; ниже — «мало данных», серым, без цвета доли. Доля означает «в OSM нет сведений», а не «плохо» или «опасно»: это пробел в данных, а не оценка района.
   - `GET /api/city-gaps` (FEATURES): без параметров, весь город; отдаёт файл как есть (`response_model=CityGaps`) с `Cache-Control: public, max-age=3600`. Лишние параметры запроса игнорируются: не 422, в ответ и в лог не попадают (в логе только путь, код и время). Файл читается и проверяется схемой один раз при старте; если файла нет или он не проходит схему — 503 `{"detail": "city gaps unavailable"}` без подробностей, остальной API работает, `/api/health` пишет `city_gaps`: `ready` | `missing` (общий `status` от этого не меняется).
   - Мок для интерфейса — `web/mock/city_gaps.json`: 19 ячеек у Байтерека, числа выдуманы; проверяется тестом контракта и попадает в образ.
