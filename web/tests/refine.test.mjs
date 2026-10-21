@@ -27,8 +27,9 @@ test('«без кафе» уже действует (предпочтения и
   assert.equal(noCafeChipState(ans(['park']), req(['bars', 'cafes'])), 'hidden');
 });
 
-test('явные overrides.categories сильнее разбора текста', () => {
+test('выбранная категория «кафе» (overrides.categories) — неактивен, даже среди других', () => {
   assert.equal(noCafeChipState(ans(['museum']), req([], { categories: ['cafe'] })), 'disabled');
+  assert.equal(noCafeChipState(ans([]), req([], { categories: ['cafe', 'restaurant'] })), 'disabled');
   assert.equal(noCafeChipState(ans(['cafe']), req([], { categories: ['museum'] })), 'active');
 });
 
@@ -42,12 +43,13 @@ test('строка «почему нет кафе» — только при «б
 test('подсказки есть на ru/kk/en и называют чип так же, как он подписан', () => {
   for (const lang of ['ru', 'kk', 'en']) {
     setLang(lang);
-    const chip = t('refineChip.noCafe');
-    const hint = t('noCafe.queryIsCafe');
+    const want = {
+      ru: 'Вы ищете кафе — этот фильтр здесь не подходит.',
+      kk: 'Сіз кафе іздеп жатырсыз — бұл сүзгі мұнда сай келмейді.',
+      en: 'You’re looking for cafés — this filter doesn’t fit here.',
+    };
+    assert.equal(t('noCafe.queryIsCafe'), want[lang]);
     const note = t('noCafe.avoidedForQuery');
-    assert.notEqual(hint, 'noCafe.queryIsCafe');
-    assert.notEqual(note, 'noCafe.avoidedForQuery');
-    assert.ok(hint.includes(chip), `${lang}: «${hint}» без «${chip}»`);
     assert.ok(note.includes(t('avoid.cafes')) && note.includes(t('prefs.avoids')), `${lang}: ${note}`);
   }
 });

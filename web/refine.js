@@ -4,13 +4,12 @@
 // кафе не ищет, даже если запрос про кафе. Конфликт — только когда запрос про одни кафе («хочу кофе»):
 // у «где поесть» (кафе, ресторан, фастфуд) «Без кафе» — нормальное уточнение.
 
-export function queryCategories(answer, request) {
-  const explicit = request?.overrides?.categories;
-  return explicit?.length ? explicit : answer?.intent?.categories || [];
-}
-
+// Решение Megah 21.10: «Без кафе» не подходит, когда ищут именно кафе — явно выбранная категория «кафе»
+// (overrides.categories) или разбор текста только про кафе. Смешанный запрос о еде — не конфликт.
 export function cafeOnlyQuery(answer, request) {
-  const cats = queryCategories(answer, request);
+  const explicit = request?.overrides?.categories;
+  if (explicit?.length) return explicit.includes('cafe');
+  const cats = answer?.intent?.categories || [];
   return cats.length > 0 && cats.every((c) => c === 'cafe');
 }
 
