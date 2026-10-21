@@ -2388,3 +2388,45 @@ def test_without_a_status_the_old_label_stays(deps: Deps) -> None:
     body = {"query": "кофе", "location": {"landmark_id": "expo"}, "use_llm": False}
     a = recommend(RecommendRequest.model_validate(body), deps)
     assert a.data_used.weather == TEXTS["ru"]["weather_unknown"]
+
+
+# ------------------------- CORE T131 merged: the real last_stop_id, and a short time budget
+
+
+def test_with_core_last_stop_id_the_event_really_ends_the_route(deps: Deps, tmp_path: Path
+                                                                ) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"), d)
+    assert a.route is not None and a.route.stop_ids[-1] == "event:jazz"
+    later = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:00:00+05:00"), d)
+    assert any(c.kind == "event" for c in later.cards)
+    assert later.route is None or "event:jazz" not in later.route.stop_ids
+
+
+def test_a_short_budget_drops_a_place_not_the_event(deps: Deps) -> None:
+    """CORE drops the lowest-ranked stop when the time is short. The event is card 3 here, yet
+    it goes first in the stops (kept longest): a place can wait, the event will not."""
+    from app import events as ev
+
+    now = datetime(2026, 10, 19, 18, 45, tzinfo=ASTANA_TZ)
+    show = ev.Event.model_validate(_event_record(ends="2026-10-19T19:20:00+05:00"))
+    by_id = deps.store.by_id
+    ev_cand = Candidate(poi=ev.as_poi(show, "ru"), distance_m=150, walk_min=3, score=0.3,
+                        hours=ev.verdict(show, now, "ru"))
+    places = [Candidate(poi=by_id[i], distance_m=300, walk_min=5, score=0.6,
+                        hours=HoursVerdict(status="unknown", confidence="low", note="-"))
+              for i in ("test:poi/7", "test:poi/1")]
+    intent = QueryIntent(raw_query="x", time_budget_min=40)
+    ctx = SearchContext(origin=GeoPoint(lat=51.0894, lon=71.4161), h3_cell="8a2153806d1ffff",
+                        h3_res=10, area_label="у EXPO", local_time=now, radius_m=1200)
+    cards = validate.template_cards([*places, ev_cand], intent, ctx, events={show.id: show})
+    assert [c.poi_id for c in cards][-1] == show.id  # the event is the lowest-ranked card
+    got, failed = pipeline_mod._route(ctx, cards, [*places, ev_cand], intent, True, "rid")
+    assert not failed and got is not None
+    assert got.stop_ids[-1] == show.id  # kept, and last
+    assert len(got.stop_ids) < 3  # a place was dropped for the time instead
+    two_hours = ev.Event.model_validate(_event_record())  # 120 min > the 40-min budget
+    cards = validate.template_cards([*places, ev_cand], intent, ctx,
+                                    events={show.id: two_hours})
+    got, _ = pipeline_mod._route(ctx, cards, [*places, ev_cand], intent, True, "rid")
+    assert got is None or show.id not in got.stop_ids  # a card, not a stop

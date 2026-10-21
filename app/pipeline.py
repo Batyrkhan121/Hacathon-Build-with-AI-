@@ -1456,20 +1456,27 @@ def _route(
     asked profile was not applied (route.plan_route).
     T133: an event card is a stop only if it starts within EVENT_STOP_MAX_WAIT_MIN (or is on),
     and then the last one (`last_stop_id`; the earliest such event, the others stay cards).
-    A plan_route without `last_stop_id` (older CORE) gets no event stop at all."""
+    It goes first in `stops`: plan_route drops the lowest-ranked stop when the budget is
+    short, and a place can wait while the event will not. An event longer than the whole
+    budget is no stop (its card stays). A plan_route without `last_stop_id` (older CORE) gets
+    no event stop at all."""
     if not want_route or len(cards) < 2:
         return None, False
     by_id = {c.poi.id: c for c in candidates}
+    visits = {c.poi_id: c.visit_min_low for c in cards}
     last = _event_stop(cards, ctx.local_time)
     if last is not None and not _takes_last_stop():
         last = None
+    budget = intent.time_budget_min
+    if last is not None and budget and visits.get(last, 0) >= budget:
+        last = None  # the event alone fills the time: a card, not a stop
     stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id
              and (c.kind == "place" or c.poi_id == last)]
+    stops.sort(key=lambda c: c.poi.id != last)  # the event first (kept longest), else rank
     if len(stops) < 2:
         return None, False
     extra: dict[str, object] = {"last_stop_id": last} if last is not None else {}
     try:
-        visits = {c.poi_id: c.visit_min_low for c in cards}
         if graph is None:
             return route.plan_route(ctx.origin, stops, intent.time_budget_min, visits,
                                     loop=loop, note=note, lang=intent.lang,
