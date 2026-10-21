@@ -3,6 +3,7 @@ import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
 import { dayDiff, eventStatus, eventStopLabel, eventWhen, localParts } from './events.js';
 import { visitLabel } from './visit.js';
+import { cafeAvoidedNote, noCafeChipState } from './refine.js';
 
 // подпись из чистых модулей (events.js, visit.js): ключ i18n + параметры
 const eventLabel = (st) => t(st.key, st.vars);
@@ -444,8 +445,28 @@ function renderRefineChips(answer, ctx) {
       h('button', { type: 'button', class: 'chip', onclick: () => ctx.onCloser(closer) }, t('refineChip.closer')),
     );
   }
-  if (!req.prefs?.avoids?.includes('cafes')) {
+  // «Без кафе»: скрыт, если уже действует; неактивен, если запрос про одни кафе (refine.js) — причина строкой ниже
+  const noCafeState = noCafeChipState(answer, req);
+  let hint = null;
+  if (noCafeState === 'active') {
     chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
+  } else if (noCafeState === 'disabled') {
+    const note = t('noCafe.queryIsCafe');
+    chips.push(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'chip',
+          disabled: true,
+          'aria-disabled': 'true',
+          title: note,
+          'aria-describedby': 'refine-chips-hint',
+        },
+        t('refineChip.noCafe'),
+      ),
+    );
+    hint = h('p', { class: 'prefs-hint refine-chips-hint', id: 'refine-chips-hint', text: note });
   }
   // «Ещё» (exclude_poi_ids): скрыт, когда в серии показано уже 9 мест
   if (ctx.onMore) {
@@ -457,12 +478,17 @@ function renderRefineChips(answer, ctx) {
     { class: 'refine-chips', role: 'group', 'aria-label': t('refineChip.aria') },
     h('span', { class: 'refine-chips-label', text: t('refineChip.label') }),
     chips,
+    hint,
   );
 }
 
 // «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть (кофе в тексте запроса
 // или сервер не учёл метку) — говорим об этом прямо, без догадок о причине.
 function renderNoCafeConflict(answer, ctx) {
+  // запрос про одни кафе, а «без кафе» включено: сервер кафе не ищет — короткая строка, почему их нет
+  if (cafeAvoidedNote(answer, ctx.request)) {
+    return h('p', { class: 'warning no-cafe-note', role: 'note', text: t('noCafe.avoidedForQuery') });
+  }
   const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('cafes');
   if (!avoidsCoffee || !answer.cards.some((c) => c.category === 'cafe')) return null;
   return h('p', { class: 'warning no-cafe-conflict', role: 'note', text: t('noCafe.conflict') });
