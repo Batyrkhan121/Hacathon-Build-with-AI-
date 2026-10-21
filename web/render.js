@@ -2,7 +2,9 @@
 import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
 import { dayDiff, eventStatus, eventStopLabel, localParts } from './events.js';
+import { visitLabel } from './visit.js';
 
+// подпись из чистых модулей (events.js, visit.js): ключ i18n + параметры
 const eventLabel = (st) => t(st.key, st.vars);
 
 export function h(tag, attrs = {}, ...children) {
@@ -625,7 +627,7 @@ function renderRoute(route, byId, ctx, originName) {
               text:
                 card.kind === 'event' && card.starts_at
                   ? ` · ${eventLabel(eventStopLabel(card, ctx.nowIso))}`
-                  : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
+                  : ` · ${eventLabel(visitLabel(card.visit_min_low, card.visit_min_high))}`,
             }),
           ),
         ),
@@ -705,7 +707,7 @@ function renderCard(card, when, ctx) {
       'p',
       { class: 'card-facts' },
       h('span', { class: 'fact-walk', text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
-      h('span', { class: 'fact-visit', text: t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high }) }),
+      h('span', { class: 'fact-visit', text: eventLabel(visitLabel(card.visit_min_low, card.visit_min_high)) }),
       // v2.1: статус часов — в строке фактов (тот же текст и та же логика, что у бейджа; бейдж скрыт в v2)
       isEvent ? null : h('span', { class: `fact-hours v2-only is-${badge.cls}`, text: badge.text }),
     ),

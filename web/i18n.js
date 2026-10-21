@@ -145,6 +145,7 @@ const DICT = {
 
     'card.walk': '≈{dist} · {min} мин пешком',
     'card.visit': 'на месте {lo}–{hi} мин',
+    'card.visitOne': 'на месте {min} мин',
     'card.why': 'Почему',
     'card.what': 'Что делать',
     'card.unnamed': 'без названия в OSM',
@@ -488,6 +489,7 @@ const DICT = {
 
     'card.walk': '≈{dist} · жаяу {min} мин',
     'card.visit': 'орнында {lo}–{hi} мин',
+    'card.visitOne': 'орнында {min} мин',
     'card.why': 'Неге',
     'card.what': 'Не істеуге болады',
     'card.unnamed': 'OSM-де атауы жоқ',
@@ -830,6 +832,7 @@ const DICT = {
 
     'card.walk': '≈{dist} · {min} min walk',
     'card.visit': '{lo}–{hi} min there',
+    'card.visitOne': '{min} min there',
     'card.why': 'Why',
     'card.what': 'What to do',
     'card.unnamed': 'no name in OSM',
@@ -1037,7 +1040,8 @@ const listeners = new Set();
 let current = detectInitial();
 
 function detectInitial() {
-  const fromUrl = new URLSearchParams(location.search).get('lang');
+  // globalThis.location / navigator — чтобы модуль импортировался и в node (web/tests)
+  const fromUrl = new URLSearchParams(globalThis.location?.search || '').get('lang');
   if (LANGS.includes(fromUrl)) return fromUrl;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -1045,7 +1049,7 @@ function detectInitial() {
   } catch {
     // localStorage недоступен (приватный режим) — это не ошибка
   }
-  const nav = (navigator.language || 'ru').slice(0, 2).toLowerCase();
+  const nav = (globalThis.navigator?.language || 'ru').slice(0, 2).toLowerCase();
   return LANGS.includes(nav) ? nav : 'ru';
 }
 
@@ -1093,7 +1097,7 @@ export function setLang(lang) {
   } catch {
     // язык просто не запомнится
   }
-  applyI18n();
+  if (typeof document !== 'undefined') applyI18n(); // в node (web/tests) DOM нет
   listeners.forEach((fn) => fn(lang));
 }
 
