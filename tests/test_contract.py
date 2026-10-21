@@ -356,3 +356,19 @@ def test_the_1_3_0_like_no_bars_is_read_as_the_avoid_bars() -> None:
                 {"likes": ["no_bars", "kids"], "avoids": ["kids_places"]}):
         with pytest.raises(ValidationError):
             UserPrefs.model_validate(bad)
+
+
+def test_events_path_defaults_to_data_and_can_point_elsewhere(monkeypatch: pytest.MonkeyPatch,
+                                                              tmp_path: Path) -> None:
+    """QADAM_EVENTS_PATH lets eval feed its own test events without touching data/events.json."""
+    from app.config import get_settings
+
+    monkeypatch.delenv("QADAM_EVENTS_PATH", raising=False)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.events_path == s.data_dir / "events.json"
+    fixture = tmp_path / "events_eval.json"
+    monkeypatch.setenv("QADAM_EVENTS_PATH", str(fixture))
+    get_settings.cache_clear()
+    assert get_settings().events_path == fixture
+    get_settings.cache_clear()
