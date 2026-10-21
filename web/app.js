@@ -395,9 +395,12 @@ function renderAnswer({ redrawMap = true } = {}) {
   });
   if (!redrawMap) return;
   const route = answer.route;
+  const nums = view.stopNumbers(answer); // номер только у остановок маршрута; событие вне маршрута — без номера
+  const no = (card) => nums.get(card.rank) ?? null;
   mapView.showAnswer(answer, {
     originLabel: t('map.origin', { name: answer.context?.area_label || whereLabel() }),
-    popupFor: view.popupFor,
+    popupFor: (card) => view.popupFor(card, no(card)),
+    stopNo: no,
     onSelect: (rank) => {
       mapView.highlightStop(rank);
       view.highlightCard(rank);
@@ -406,7 +409,13 @@ function renderAnswer({ redrawMap = true } = {}) {
       ? t('route.total', { min: route.total_min, dist: view.formatDistance(route.total_walk_m) })
       : '',
     markerLabel: (card) =>
-      `${card.rank}. ${card.title} — ${card.idea_source === 'poi_data' ? t('badge.poi') : t('badge.ai')}`,
+      `${no(card) == null ? '' : `${no(card)}. `}${card.title} — ${
+        card.kind === 'event'
+          ? t('event.badge')
+          : card.idea_source === 'poi_data'
+            ? t('badge.poi')
+            : t('badge.ai')
+      }`,
     legend: legendLabels(),
   });
 }

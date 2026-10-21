@@ -228,13 +228,16 @@ export function renderAnswer(root, answer, ctx) {
   // 1.3.1: событие, до которого больше 30 мин (от context.local_time), — не остановка «сейчас», а отдельный
   // блок «Вечером рядом»; остальные события — последними среди карточек (как и в маршруте — последней остановкой).
   const nowIso = answer.context?.local_time;
-  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso };
+  const nums = stopNumbers(answer);
+  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso, stopNo: (c) => nums.get(c.rank) ?? null };
   const later = answer.cards.filter((c) => isLaterEvent(c, nowIso));
   const nowCards = answer.cards.filter((c) => !later.includes(c));
-  nowCards.sort((a, b) => (a.kind === 'event') - (b.kind === 'event'));
+  // карточки с номером — в порядке остановок, без номера (событие вне маршрута) — после них
+  const order = (c) => cardCtx.stopNo(c) ?? Infinity;
+  nowCards.sort((a, b) => order(a) - order(b) || (a.kind === 'event') - (b.kind === 'event') || a.rank - b.rank);
   const body = answer.cards.length
     ? [
-        answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
+        answer.route ? renderRoute(answer.route, byId, cardCtx, ctx.originName) : null,
         nowCards.length ? h('ol', { class: 'cards' }, nowCards.map((c) => renderCard(c, when, cardCtx))) : null,
         later.length
           ? h(
@@ -261,6 +264,34 @@ export function renderAnswer(root, answer, ctx) {
       answer.disclaimer ? h('p', { class: 'disclaimer', text: answer.disclaimer }) : null,
     ),
   );
+}
+
+// 8.2: номер — только у остановок маршрута, по их порядку и без пропусков (без маршрута — у мест по порядку).
+// Событие вне маршрута — значок календаря, другое место вне маршрута — без номера. card.rank остаётся
+// внутренним ключом (id карточки, метка на карте, подсветка).
+export function stopNumbers(answer) {
+  const nums = new Map();
+  const stops = answer.route?.stop_ids || [];
+  let n = 0;
+  for (const c of [...answer.cards].sort((a, b) => a.rank - b.rank)) {
+    if (stops.length) {
+      const i = stops.indexOf(c.poi_id);
+      nums.set(c.rank, i >= 0 ? i + 1 : null);
+    } else {
+      nums.set(c.rank, c.kind === 'event' ? null : ++n);
+    }
+  }
+  return nums;
+}
+
+// Знак номера (карточка, таймлайн): цифра остановки или значок календаря у события вне маршрута
+function rankMark(card, no, cls) {
+  const off = no == null ? (card.kind === 'event' ? ' is-event' : ' is-off') : '';
+  return h('span', {
+    class: `${cls} rank-${card.idea_source}${off}`,
+    'aria-hidden': 'true',
+    text: no == null ? '' : String(no),
+  });
 }
 
 // 1.3.0, «в тепле»: при морозе — плашка-предложение повторить запрос с меткой warm (разово, без сохранения).
@@ -552,15 +583,16 @@ function renderRoute(route, byId, ctx, originName) {
     );
     const card = leg.to_id === 'origin' ? null : byId.get(leg.to_id);
     if (card) {
+      const no = ctx.stopNo(card);
       items.push(
         h(
           'li',
           { class: 'tl-point' },
-          h('span', { class: `tl-rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+          rankMark(card, no, 'tl-rank'),
           h(
             'span',
             { class: 'tl-name' },
-            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
+            h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${no}: ` }),
             h('strong', { text: cardTitle(card) }),
             isWarmStop(card) ? warmMark() : null,
             h('span', {
@@ -614,6 +646,7 @@ function renderCard(card, when, ctx) {
   const site = card.website ? safeUrl(card.website) : null;
   const unnamed = isUnnamed(card);
   const isEvent = card.kind === 'event';
+  const no = ctx.stopNo ? ctx.stopNo(card) : card.rank;
 
   const li = h(
     'li',
@@ -621,14 +654,14 @@ function renderCard(card, when, ctx) {
     h(
       'div',
       { class: 'card-head' },
-      h('span', { class: `rank rank-${card.idea_source}`, 'aria-hidden': 'true', text: card.rank }),
+      rankMark(card, no, 'rank'),
       h(
         'div',
         { class: 'card-title-wrap' },
         h(
           'h3',
           { class: 'card-title' },
-          h('span', { class: 'visually-hidden', text: `${card.rank}. ` }),
+          no == null ? null : h('span', { class: 'visually-hidden', text: `${no}. ` }),
           cardTitle(card),
           isWarmStop(card) ? warmMark() : null,
         ),
@@ -784,11 +817,11 @@ function renderDirections(card, origin, preciseStart, poi = false) {
   );
 }
 
-export function popupFor(card) {
+export function popupFor(card, no = card.rank) {
   return h(
     'div',
     { class: 'popup' },
-    h('strong', { text: `${card.rank}. ${cardTitle(card)}` }),
+    h('strong', { text: `${no == null ? '' : `${no}. `}${cardTitle(card)}` }),
     h('span', { text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
   );
 }
