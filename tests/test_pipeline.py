@@ -1903,7 +1903,8 @@ def _events_deps(deps: Deps, tmp_path: Path, items: object) -> Deps:
     (data_dir / "events.json").write_text(json.dumps(items, ensure_ascii=False),
                                           encoding="utf-8")
     return Deps(store=deps.store, llm=deps.llm,
-                settings=dataclasses.replace(deps.settings, data_dir=data_dir))
+                settings=dataclasses.replace(deps.settings, data_dir=data_dir,
+                                             events_path=data_dir / "events.json"))
 
 
 EVENT_Q = "концерт или спектакль сегодня вечером"
@@ -2005,7 +2006,8 @@ def test_past_far_and_missing_events_give_no_event_card(deps: Deps, tmp_path: Pa
         a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, items))
         assert a.cards and not any(c.kind == "event" for c in a.cards)
     missing = Deps(store=deps.store, llm=deps.llm,
-                   settings=dataclasses.replace(deps.settings, data_dir=tmp_path / "none"))
+                   settings=dataclasses.replace(deps.settings,
+                                                events_path=tmp_path / "none" / "events.json"))
     a = recommend(req(EVENT_Q, use_llm=False), missing)
     assert a.cards and not any(c.kind == "event" for c in a.cards)
 
@@ -2584,3 +2586,36 @@ def test_a_two_hour_concert_is_still_visited_whole(deps: Deps, tmp_path: Path) -
                       _events_deps(deps, tmp_path, [rec]))
         c = next(c for c in a.cards if c.kind == "event")
         assert (c.visit_min_low, c.visit_min_high) == (120, 120), category
+
+
+# ---------------------- QADAM_EVENTS_PATH (settings.events_path): eval's own events file (E16)
+
+
+def test_events_come_from_qadam_events_path(deps: Deps, tmp_path: Path,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "eval_events.json"
+    path.write_text(json.dumps([SOON], ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("QADAM_EVENTS_PATH", str(path))
+    get_settings.cache_clear()
+    settings = dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
+                                   index_dir=tmp_path / "index", h3_res=9)
+    assert settings.events_path == path
+    d = Deps(store=deps.store, llm=deps.llm, settings=settings)
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert "event:test-soon" in [c.poi_id for c in a.cards]
+
+    monkeypatch.delenv("QADAM_EVENTS_PATH")
+    get_settings.cache_clear()
+    default = get_settings()
+    assert default.events_path == default.data_dir / "events.json"
+    b = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"),
+                  Deps(store=deps.store, llm=deps.llm, settings=dataclasses.replace(
+                      default, cache_dir=tmp_path / "cache", index_dir=tmp_path / "index")))
+    assert "event:test-soon" not in [c.poi_id for c in b.cards]  # data/events.json has none
+
+
+def test_no_events_path_means_no_events(deps: Deps) -> None:
+    d = Deps(store=deps.store, llm=deps.llm,
+             settings=dataclasses.replace(deps.settings, events_path=None))
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
