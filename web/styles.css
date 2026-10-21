@@ -335,6 +335,18 @@ textarea {
     grid-template-columns: auto minmax(0, 1fr) auto;
     row-gap: 4px;
   }
+  /* T143: с входом на «Карту пробелов» в шапке — четвёртая колонка, кнопка и языки в первой строке */
+  .brand:has(> .mock-pill:not([hidden])):has(> .header-gaps) {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+  .brand:has(> .mock-pill:not([hidden])) > .header-gaps {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .brand:has(> .mock-pill:not([hidden])):has(> .header-gaps) > .lang {
+    grid-column: 4;
+    grid-row: 1;
+  }
   .brand:has(> .mock-pill:not([hidden])) > .mock-pill {
     grid-column: 2;
     grid-row: 2;
@@ -3062,4 +3074,269 @@ body:not(.v2) .submit-row .btn-primary {
 .refine-chips-hint {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* ------------------------------------------------------------------ T143: карта пробелов данных (gaps.html) */
+/* Контракт 1.4.0. Одна последовательная шкала доли «нет данных»: светлее — меньше пробелов, темнее — больше.
+   «Мало данных» (ниже порогов GAP_MIN_*) — серым со штриховкой, без цвета доли; «нечего считать» — пунктир.
+   Ячейки рисует canvas (gaps.js читает эти токены); цвет дублируется числами (ячейка по нажатию и итоги). */
+.gaps-body {
+  --gap-0: #e3ecf0;
+  --gap-1: #a9c3cf;
+  --gap-2: #6e95a8;
+  --gap-3: #3c6880;
+  --gap-4: #1b3d52;
+  --gap-low: #d5d8db;
+  --gap-low-line: #8a9298;
+}
+
+.gaps-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.gaps-page .brand {
+  margin-bottom: 8px;
+}
+
+.brand-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.brand-name {
+  font-size: var(--v2-fs-l);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gaps-page .lang {
+  margin-left: auto;
+}
+
+.gaps-title {
+  margin: 8px 0;
+  font-size: var(--v2-fs-xl);
+  line-height: 1.25;
+}
+
+.gaps-lead {
+  margin: 0 0 8px;
+  font-size: var(--v2-fs-m);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* одна строка смысла: пробел в данных, а не оценка района */
+.gaps-meaning {
+  margin: 0 0 12px;
+  font-size: var(--v2-fs-m);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.gaps-layers {
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.gaps-about {
+  margin: 8px 0 12px;
+  font-size: var(--v2-fs-s);
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.gaps-map {
+  height: 340px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+@media (min-width: 900px) {
+  .gaps-map {
+    height: 460px;
+  }
+}
+
+.gaps-legend {
+  margin: 12px 0 0;
+}
+
+.gaps-legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--v2-fs-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-legend-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gap-swatch {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 14px;
+  border: 1px solid rgba(21, 34, 44, 0.3);
+  border-radius: 3px;
+  vertical-align: -2px;
+}
+
+.gap-swatch[data-gap="0"] { background: var(--gap-0); }
+.gap-swatch[data-gap="1"] { background: var(--gap-1); }
+.gap-swatch[data-gap="2"] { background: var(--gap-2); }
+.gap-swatch[data-gap="3"] { background: var(--gap-3); }
+.gap-swatch[data-gap="4"] { background: var(--gap-4); }
+
+.gap-swatch[data-gap="low"] {
+  background: repeating-linear-gradient(-45deg, var(--gap-low-line) 0 1.5px, var(--gap-low) 1.5px 5px);
+}
+
+.gap-swatch[data-gap="none"] {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+}
+
+.gaps-cell {
+  min-height: 44px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--v2-fs-m);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-h2 {
+  margin: 24px 0 8px;
+  font-size: var(--v2-fs-l);
+}
+
+.gaps-h3 {
+  margin: 14px 0 4px;
+  font-size: var(--v2-fs-m);
+}
+
+.gaps-table-wrap {
+  overflow-x: auto;
+}
+
+.gaps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--v2-fs-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-table th,
+.gaps-table td {
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-weight: 400;
+}
+
+.gaps-table thead th {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.gaps-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* слой, который сейчас на карте */
+.gaps-table .is-current th,
+.gaps-table .is-current td {
+  font-weight: 700;
+}
+
+.gaps-help {
+  margin: 24px 0 0;
+  padding: 2px 16px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.gaps-help-item p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.gaps-foot {
+  margin: 24px 0 8px;
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+.gaps-foot p {
+  margin: 4px 0;
+}
+
+.gaps-foot a,
+.gaps-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-strong);
+}
+
+.gaps-link {
+  margin: 16px 0 0;
+  font-size: var(--v2-fs-s);
+}
+
+/* T143: вход на «Карту пробелов данных» из шапки — круглая кнопка 44 px рядом с языками */
+.header-gaps {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.header-gaps:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* «Как помочь»: ссылки по клику (StreetComplete, OpenStreetMap), по одной в строке, 44 px */
+.gaps-help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  margin: 6px 0 0;
+}
+
+.gaps-help-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-strong);
 }

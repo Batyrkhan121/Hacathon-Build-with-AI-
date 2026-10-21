@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карта пробелов данных — Qadam</title>
+  <meta name="description" content="Где в OpenStreetMap не хватает сведений о часах работы, доступности, казахских названиях, освещении и переходах — и как помочь.">
+  <meta name="theme-color" content="#0a6e87">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cpath d='M6 24L14 8M14 24L22 8' stroke='%230a6e87' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='25' cy='8' r='3' fill='%23f2b705'/%3E%3C/svg%3E">
+  <!-- Leaflet и h3-js — локально (web/vendor), как на главной -->
+  <link rel="stylesheet" href="vendor/leaflet-1.9.4/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/leaflet-1.9.4/leaflet.js" defer></script>
+  <script src="vendor/h3-js-4.1.0/h3-js.umd.js" defer></script>
+  <script type="module" src="gaps.js"></script>
+</head>
+<!-- T143, контракт 1.4.0: карта пробелов открытых данных (CityGaps). Данные — GET api/city-gaps, мок — ?mock=1. -->
+<body class="v2 gaps-body">
+  <div class="gaps-page">
+    <header class="brand">
+      <a class="brand-home" href="./" data-i18n-aria="gaps.home" aria-label="На главную Qadam">
+        <svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M6 24L14 8M14 24L22 8" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/>
+          <circle cx="25.2" cy="7.8" r="2.6" fill="#f2b705"/>
+        </svg>
+        <span class="brand-name">Qadam</span>
+      </a>
+      <span class="mock-pill" id="mock-pill" hidden data-i18n="app.mock">Мок-данные</span>
+      <div class="lang" role="group" data-i18n-aria="lang.aria" aria-label="Язык интерфейса">
+        <button type="button" data-lang="ru" aria-pressed="true">RU</button>
+        <button type="button" data-lang="kk" aria-pressed="false">KK</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+    </header>
+
+    <main class="gaps-main">
+      <h1 class="gaps-title" data-i18n="gaps.title">Карта пробелов данных</h1>
+      <p class="gaps-lead" data-i18n="gaps.lead">Почему Qadam иногда пишет «нет данных»? Мы берём сведения из OpenStreetMap, а там они заполнены не у всех мест и улиц. Карта показывает, где их не хватает.</p>
+      <p class="gaps-meaning" data-i18n="gaps.meaning">Это пробелы в открытых данных, а не оценка района.</p>
+      <p class="warning gaps-mock-note" id="gaps-mock-note" role="note" hidden data-i18n="gaps.mockNote">Мок: числа выдуманы, чтобы проверить вид страницы.</p>
+
+      <div class="empty gaps-empty" id="gaps-empty" hidden>
+        <p class="empty-title" id="gaps-empty-title"></p>
+        <p class="empty-hint" id="gaps-empty-hint"></p>
+        <div class="empty-actions">
+          <button type="button" class="btn btn-ghost" id="gaps-retry" hidden data-i18n="gaps.retry">Повторить</button>
+        </div>
+      </div>
+
+      <section class="gaps-view" id="gaps-view" hidden aria-labelledby="gaps-layer-legend">
+        <fieldset class="gaps-layers">
+          <legend class="label" id="gaps-layer-legend" data-i18n="gaps.layerLegend">Слой</legend>
+          <div class="chips" id="gaps-layer-chips" role="group" aria-labelledby="gaps-layer-legend"></div>
+        </fieldset>
+        <p class="gaps-about" id="gaps-about"></p>
+
+        <div class="gaps-map" id="gaps-map" role="region" data-i18n-aria="gaps.mapAria" aria-label="Карта пробелов данных"></div>
+        <p class="map-fallback" id="gaps-map-fallback" hidden data-i18n="gaps.mapFallback">Карта не загрузилась — итоги по городу ниже.</p>
+
+        <div class="gaps-legend">
+          <p class="label" data-i18n="gaps.legendTitle">Доля «нет данных» в ячейке</p>
+          <ul class="gaps-legend-list" id="gaps-legend-list"></ul>
+        </div>
+
+        <p class="gaps-cell" id="gaps-cell" aria-live="polite" data-i18n="gaps.cellPrompt">Нажмите на ячейку — покажем числа.</p>
+
+        <section class="gaps-totals" aria-labelledby="gaps-totals-title">
+          <h2 class="gaps-h2" id="gaps-totals-title" data-i18n="gaps.totalsTitle">Итоги по городу</h2>
+          <div class="gaps-table-wrap">
+            <table class="gaps-table" id="gaps-table"></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="gaps-help" aria-labelledby="gaps-help-title">
+        <h2 class="gaps-h2" id="gaps-help-title" data-i18n="gaps.helpTitle">Как помочь</h2>
+        <div class="gaps-help-item">
+          <h3 class="gaps-h3" data-i18n="gaps.helpPeopleTitle">Жителям</h3>
+          <p data-i18n="gaps.helpPeople">Поставьте приложение StreetComplete (Android).</p>
+          <!-- ссылки по клику, как атрибуция: ни картинок, ни скриптов оттуда (решение интегратора, 22.10) -->
+          <p class="gaps-help-links">
+            <a href="https://streetcomplete.app/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkStreetComplete">StreetComplete</a>
+            <a href="https://www.openstreetmap.org/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkOsmEdit">Дополнить в OpenStreetMap</a>
+          </p>
+        </div>
+        <div class="gaps-help-item">
+          <h3 class="gaps-h3" data-i18n="gaps.helpCityTitle">Городу</h3>
+          <p data-i18n="gaps.helpCity">Открыть данные об уличном освещении и доступной среде.</p>
+        </div>
+      </section>
+
+      <footer class="gaps-foot">
+        <p id="gaps-dates" hidden></p>
+        <!-- атрибуция OSM и ODbL — ссылки по клику (адреса из контракта 1.4.0) -->
+        <p>
+          <a href="https://www.openstreetmap.org/copyright" id="gaps-attr-osm" target="_blank" rel="noopener noreferrer" data-i18n="gaps.attrOsm">© участники OpenStreetMap</a>
+          <span aria-hidden="true"> · </span>
+          <a href="https://opendatacommons.org/licenses/odbl/1-0/" id="gaps-attr-license" target="_blank" rel="noopener noreferrer" data-i18n="gaps.attrLicense">лицензия ODbL</a>
+        </p>
+        <p><a href="./" id="gaps-back" data-i18n="gaps.back">← К прогулкам</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
