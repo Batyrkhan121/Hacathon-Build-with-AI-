@@ -20,7 +20,8 @@ docs/ARCHITECTURE.md §5 (built by DATA, pipeline/walk_graph.py). Only numpy and
   (lowered kerbs win);
   if there is no step-free way or it is over ACCESSIBLE_MAX_X x the usual one, the leg is the
   usual (fastest) one with stairs_fallback=True (the note says so; with wheelchair=True there
-  is no fallback onto stairs); lit — lit=no x3, no lighting data x1.2, lit x1.
+  is no fallback onto stairs); lit («at night, by major streets», wave 8.1) — along major
+  roads (edge bit 8, no x1.3 here) and lit=yes x1, other ways x1.25, lit=no x3.
 - Facts of the path, never guessed: metres lit / lit=no / without data (a link to a point
   and a contradictory edge count as «no data»), and the kerb of each crossing ("lowered" only
   when the crossing node says so or the kerb nodes at both ends of its crossing segments do).
@@ -72,8 +73,9 @@ ACCESSIBLE_CROSSING_S: dict[str, float] = {
 }
 ACCESSIBLE_KERB_S: dict[str, float] = {"lowered": 0.0, "unknown": 15.0, "raised": 120.0}
 ACCESSIBLE_MAX_X = 1.3  # a step-free way longer than 1.3 x the usual one -> the usual one
-LIT_NO_X = 3.0  # profile "lit": a way tagged lit=no
-LIT_UNKNOWN_X = 1.2  # profile "lit": no lighting data (most ways) is only a little worse
+# profile "lit" (wave 8.1: «at night, by major streets»; all >= 1, so A* stays exact):
+LIT_NO_X = 3.0  # a way tagged lit=no, a major road too
+LIT_SIDE_X = 1.25  # off the major roads with no lighting data; major roads and lit=yes x1
 DETOUR_MAX_X = 3.0  # graph longer than 3 x straight + 200 m -> the straight segment
 DETOUR_MAX_ADD_M = 200.0
 
@@ -316,12 +318,14 @@ class WalkGraph:
         e_flags = np.asarray(self._e_flags, dtype=np.int64)
         cost = np.asarray(self._e_len, dtype=np.float64) / SPEED_M_S
         cost = np.where(e_flags & EDGE_STEPS, cost * STAIRS_X, cost)
-        cost = np.where(e_flags & EDGE_MAJOR, cost * MAJOR_ROAD_X, cost)
-        if mode.profile == "lit":
+        if mode.profile == "lit":  # wave 8.1: «at night, by major streets»
             lit = np.asarray(self._lit, dtype=np.int64)
-            cost = cost * np.where(lit > 0, 1.0, np.where(lit < 0, LIT_NO_X, LIT_UNKNOWN_X))
-        elif mode.night:
-            cost = np.where(e_flags & EDGE_LIT, cost, cost * UNLIT_NIGHT_X)
+            major = (e_flags & EDGE_MAJOR) > 0
+            cost = cost * np.where(lit < 0, LIT_NO_X, np.where(major | (lit > 0), 1.0, LIT_SIDE_X))
+        else:
+            cost = np.where(e_flags & EDGE_MAJOR, cost * MAJOR_ROAD_X, cost)
+            if mode.night:
+                cost = np.where(e_flags & EDGE_LIT, cost, cost * UNLIT_NIGHT_X)
         seg = np.asarray(self._seg_crossing, dtype=bool)
         cost = np.where(seg, cost + _crossing_penalty("unknown", mode), cost)
         if _no_stairs(mode):

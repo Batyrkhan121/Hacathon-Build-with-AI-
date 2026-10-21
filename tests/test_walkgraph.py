@@ -391,6 +391,33 @@ def test_lit_profile_avoids_ways_known_to_be_dark(tmp_path: Path) -> None:
     assert lit.length_m == pytest.approx(130, abs=1)
 
 
+def side_or_major(tmp_path: Path, major_m: float, major_flags: int = 0) -> WalkGraph:
+    """A -> B: a 100 m side way (no tags), or a way of `major_m` along a major road (bit 8)."""
+    half = major_m / 2
+    nodes = {"A": (0, 0, 0), "B": (100, 0, 0), "M": (50, math.sqrt(half * half - 50 * 50), 0)}
+    edges = [("A", "B", FOOTWAY),
+             ("A", "M", MAJOR | major_flags), ("M", "B", MAJOR | major_flags)]
+    return graph(tmp_path, nodes, edges)
+
+
+@pytest.mark.parametrize(("major_m", "major_flags", "expected_m"), [
+    (120, 0, 120),  # wave 8.1: «at night, by major streets»: side ways x1.25, major x1
+    (130, 0, 100),  # 130 m > 100 m x 1.25: not worth it
+    (120, UNLIT, 100),  # a major road known to be dark is still dearer (x3)
+])
+def test_lit_profile_keeps_to_major_streets(
+    tmp_path: Path, major_m: float, major_flags: int, expected_m: float
+) -> None:
+    g = side_or_major(tmp_path, major_m, major_flags)
+    fastest = g.route(at(0, 0), at(100, 0))
+    night = g.route(at(0, 0), at(100, 0), Mode(night=True))
+    lit = g.route(at(0, 0), at(100, 0), Mode(profile="lit"))
+    assert fastest is not None and night is not None and lit is not None
+    assert fastest.length_m == pytest.approx(100, abs=1)  # big roads x1.3 in fastest
+    assert night.length_m == pytest.approx(100, abs=1)  # fastest at night: as before
+    assert lit.length_m == pytest.approx(expected_m, abs=1)
+
+
 @pytest.mark.parametrize(("lit_way_m", "expected_m"), [(115, 115), (130, 100)])
 def test_lit_profile_pays_a_little_for_ways_without_data(
     tmp_path: Path, lit_way_m: float, expected_m: float
