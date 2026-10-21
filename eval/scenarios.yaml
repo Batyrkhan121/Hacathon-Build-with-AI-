@@ -366,18 +366,21 @@
 
 - id: E16
   wave: 8
-  title: "Событие сегодня рядом"
+  title: "Событие сегодня рядом (на тестовом событии из фикстуры eval)"
   request:
     query: "Что сегодня вечером интересного рядом — концерт, спектакль, выставка?"
     location: {landmark_id: astana_opera}
     at: "2026-10-24T17:00:00+05:00"
     lang: ru
-  # Дата и ориентир подбираются под data/events.json (T122): событие в тот же день рядом.
-  expected_type: "карточка kind=event: starts_at с поясом, source_url, facts_sources manual; «идёт сейчас» только при starts_at ≤ сейчас < ends_at; прошедших нет"
+  # Решение пользователя (21.10): события — тестовые, из eval/fixtures/events_e16.json
+  # (QADAM_EVENTS_PATH), data/events.json не трогаем. В фикстуре «Астана Опера»: показ
+  # 17:20–19:00 (через 20 мин — остановка, последняя) и концерт 19:30 (позже 30 мин — не остановка).
+  expected_type: "карточка kind=event с venue и source_url; если есть маршрут, событие через 20 мин — последняя остановка, событие в 19:30 — не остановка; «идёт сейчас» только при starts_at ≤ сейчас < ends_at"
   expect:
     min_cards: 1
     max_cards: 3
     event_required: true
+    event_stop_required: true
     labels_required: true
     forbid_open_claim_without_high: true
     lang: ru
