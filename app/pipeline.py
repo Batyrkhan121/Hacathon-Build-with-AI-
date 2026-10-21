@@ -197,10 +197,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "index_stale": "индекс устарел",
         "f_hours_dropped": "по часам работы отсеяно {n}: {parts}",
         "f_profile_accessible": "маршрут: без ступенек",
-        "f_profile_lit": "маршрут: по освещённым улицам (данные OSM)",
+        "f_profile_lit": "маршрут: ночью — по крупным улицам",
         "f_profile_auto": " (коляска)",
         "f_profile_req_accessible": "запрошен маршрут без ступенек",
-        "f_profile_req_lit": "запрошен маршрут по освещённым улицам",
+        "f_profile_req_lit": "запрошен маршрут «ночью — по крупным улицам»",
         "f_warm_between": "в тепле: между местами до {v} мин пешком",
         "f_short": "без долгих отрезков на улице: до {v} мин подряд",
         "f_short_between": "без долгих отрезков на улице: между местами до {v} мин",
@@ -287,10 +287,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "index_stale": "индекс ескірген",
         "f_hours_dropped": "жұмыс уақыты бойынша алынып тасталды {n}: {parts}",
         "f_profile_accessible": "маршрут: баспалдақсыз",
-        "f_profile_lit": "маршрут: жарықтандырылған көшелермен (OSM деректері)",
+        "f_profile_lit": "маршрут: түнде — үлкен көшелермен",
         "f_profile_auto": " (арба)",
         "f_profile_req_accessible": "баспалдақсыз маршрут сұралды",
-        "f_profile_req_lit": "жарықтандырылған көшелермен маршрут сұралды",
+        "f_profile_req_lit": "«түнде — үлкен көшелермен» маршруты сұралды",
         "f_warm_between": "жылыда: орындар арасы {v} минутқа дейін жаяу",
         "f_short": "далада ұзақ жүрмей: қатарынан {v} минутқа дейін",
         "f_short_between": "далада ұзақ жүрмей: орындар арасы {v} минутқа дейін",
@@ -375,10 +375,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "index_stale": "index outdated",
         "f_hours_dropped": "removed by opening hours {n}: {parts}",
         "f_profile_accessible": "route: step-free",
-        "f_profile_lit": "route: along lit streets (OSM data)",
+        "f_profile_lit": "route: at night — along major streets",
         "f_profile_auto": " (wheelchair)",
         "f_profile_req_accessible": "step-free route requested",
-        "f_profile_req_lit": "route along lit streets requested",
+        "f_profile_req_lit": "route «at night — along major streets» requested",
         "f_warm_between": "warm: up to {v} min on foot between places",
         "f_short": "no long walks outside: up to {v} min at a time",
         "f_short_between": "no long walks outside: up to {v} min between places",
@@ -1350,11 +1350,14 @@ def _temp(value: float | None) -> str:
 
 
 def _profile_applied(mini_route: MiniRoute | None, profile: RouteProfile) -> bool:
-    """The route really follows the profile: on the graph, planned with it, and «без
-    ступенек» without stairs. Otherwise the panel says the profile was only asked for."""
+    """The route really follows the profile: on the graph and planned with it; «без ступенек»
+    (contract 1.3.1) only with no stairs and straight_share == 0 (no straight segment: their
+    steps are not known; None = not counted = not claimed). Otherwise «запрошен …»."""
     if mini_route is None or mini_route.path_source != "graph" or mini_route.profile != profile:
         return False
-    return not (profile == "accessible" and mini_route.steps_count > 0)
+    if profile == "accessible":
+        return mini_route.steps_count == 0 and mini_route.straight_share == 0
+    return True
 
 
 def route_profile(asked: RouteProfile, intent: QueryIntent) -> tuple[RouteProfile, bool]:

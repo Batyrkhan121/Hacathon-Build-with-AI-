@@ -1530,12 +1530,12 @@ def _recording_plan_route(calls: list[dict[str, Any]]):  # type: ignore[no-untyp
 @pytest.mark.parametrize(("profile", "overrides", "want", "line"), [
     # no graph here: the route is straight, so the panel says the profile was only asked for
     ("fastest", None, "fastest", None),
-    ("lit", None, "lit", "запрошен маршрут по освещённым улицам"),
+    ("lit", None, "lit", "запрошен маршрут «ночью — по крупным улицам»"),
     ("accessible", None, "accessible", "запрошен маршрут без ступенек"),
     # the wheelchair switch turns the default into a step-free way, and the panel says why
     ("fastest", {"wheelchair": True}, "accessible", "запрошен маршрут без ступенек (коляска)"),
     # an explicit choice stays (Mode.wheelchair forbids stairs on "lit" too)
-    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут по освещённым улицам"),
+    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут «ночью — по крупным улицам»"),
 ])
 def test_route_profile_is_passed_without_the_graph(
     deps: Deps, monkeypatch: pytest.MonkeyPatch, profile: str,
@@ -1588,9 +1588,35 @@ def test_graph_route_and_card_minutes_use_the_profile(
     assert a.route is not None and a.route.path_source == "graph"
     assert a.route.profile == profile  # the profile the route was really planned with
     assert modes and set(modes) == {profile}  # card minutes: the same Mode(profile=...)
-    line = {"accessible": "маршрут: без ступенек",
-            "lit": "маршрут: по освещённым улицам (данные OSM)"}[profile]
-    assert line in a.data_used.filters  # on the graph, without stairs: really applied
+    if profile == "lit":
+        assert "маршрут: ночью — по крупным улицам" in a.data_used.filters
+    else:  # «без ступенек» needs straight_share == 0 (contract 1.3.1, CORE T131)
+        line = ("маршрут: без ступенек" if a.route.straight_share == 0
+                else "запрошен маршрут без ступенек")
+        assert line in a.data_used.filters
+
+
+@pytest.mark.parametrize(("share", "steps", "line"), [
+    (0.0, 0, "маршрут: без ступенек"),
+    (0.2, 0, "запрошен маршрут без ступенек"),  # part straight: its steps are not known
+    (None, 0, "запрошен маршрут без ступенек"),  # not counted (older CORE): not claimed
+    (0.0, 2, "запрошен маршрут без ступенек"),
+])
+def test_step_free_is_claimed_only_at_straight_share_zero(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, share: float | None,
+    steps: int, line: str,
+) -> None:
+    real = route.plan_route
+
+    def shaped(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"straight_share": share, "steps_count": steps})
+
+    monkeypatch.setattr(route, "plan_route", shaped)
+    a = recommend(req("кофе", use_llm=False, overrides={"wheelchair": True}),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert line + " (коляска)" in a.data_used.filters
 
 
 def test_accessible_with_stairs_is_only_asked_for(deps: Deps, tmp_path: Path,
