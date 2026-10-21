@@ -999,6 +999,7 @@ async function init() {
   applyI18n();
   syncLangButtons();
   els.mockPill.hidden = !isMock;
+  if (isMock) document.getElementById('gaps-link')?.setAttribute('href', 'gaps.html?mock=1'); // мок и там
   if (!mapView.initMap(document.getElementById('map'))) els.mapFallback.hidden = false;
   mapView.setZoomTitles(t('map.zoomIn'), t('map.zoomOut'));
   if (!window.h3) {
