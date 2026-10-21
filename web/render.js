@@ -230,8 +230,12 @@ export function renderAnswer(root, answer, ctx) {
   const nowIso = answer.context?.local_time;
   const nums = stopNumbers(answer);
   const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso, stopNo: (c) => nums.get(c.rank) ?? null };
-  const later = answer.cards.filter((c) => isLaterEvent(c, nowIso));
-  const nowCards = answer.cards.filter((c) => !later.includes(c));
+  // 8.2: событие другого дня (дата starts_at по UTC+5 ≠ дате local_time) — не «Вечером рядом», а свой блок
+  // «Завтра рядом» с подписью «завтра в 19:00». Порядок событий — по времени (Date), не по строке ISO.
+  const byStart = (a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at);
+  const otherDay = answer.cards.filter((c) => isOtherDayEvent(c, nowIso)).sort(byStart);
+  const later = answer.cards.filter((c) => !otherDay.includes(c) && isLaterEvent(c, nowIso)).sort(byStart);
+  const nowCards = answer.cards.filter((c) => !later.includes(c) && !otherDay.includes(c));
   // карточки с номером — в порядке остановок, без номера (событие вне маршрута) — после них
   const order = (c) => cardCtx.stopNo(c) ?? Infinity;
   nowCards.sort((a, b) => order(a) - order(b) || (a.kind === 'event') - (b.kind === 'event') || a.rank - b.rank);
@@ -239,14 +243,10 @@ export function renderAnswer(root, answer, ctx) {
     ? [
         answer.route ? renderRoute(answer.route, byId, cardCtx, ctx.originName) : null,
         nowCards.length ? h('ol', { class: 'cards' }, nowCards.map((c) => renderCard(c, when, cardCtx))) : null,
-        later.length
-          ? h(
-              'section',
-              { class: 'later-events', 'aria-labelledby': 'later-events-title' },
-              h('h3', { class: 'later-events-title', id: 'later-events-title', text: laterTitle(later, nowIso) }),
-              h('ol', { class: 'cards' }, later.map((c) => renderCard(c, when, cardCtx))),
-            )
-          : null,
+        eventSection('later-events', laterTitle(later), later, (c) => renderCard(c, when, cardCtx)),
+        eventSection('other-day-events', otherDayTitle(otherDay, nowIso), otherDay, (c) =>
+          renderCard(c, when, cardCtx),
+        ),
       ]
     : [renderEmpty(ctx)];
 
@@ -356,11 +356,35 @@ function isLaterEvent(card, nowIso) {
   return Date.parse(card.starts_at) - Date.parse(nowIso) > LATER_MIN * 60000;
 }
 
-// «Вечером рядом», если первое из событий начинается с 17:00 по Астане; иначе «Позже рядом»
-function laterTitle(cards, nowIso) {
-  const first = cards.map((c) => c.starts_at).sort()[0];
-  const hour = Number(localParts(first).time.slice(0, 2));
+function isOtherDayEvent(card, nowIso) {
+  if (card.kind !== 'event' || !card.starts_at || !nowIso) return false;
+  return Date.parse(card.starts_at) > Date.parse(nowIso) && localParts(card.starts_at).date !== localParts(nowIso).date;
+}
+
+// «Вечером рядом», если первое (по времени) из событий начинается с 17:00 по Астане; иначе «Позже рядом».
+// cards уже отсортированы по Date.
+function laterTitle(cards) {
+  if (!cards.length) return '';
+  const hour = Number(localParts(cards[0].starts_at).time.slice(0, 2));
   return t(hour >= 17 ? 'event.laterEvening' : 'event.later');
+}
+
+// «Завтра рядом», если все события — завтра; иначе «В другие дни»
+function otherDayTitle(cards, nowIso) {
+  if (!cards.length) return '';
+  const today = localParts(nowIso).date;
+  const tomorrow = cards.every((c) => dayDiff(localParts(c.starts_at).date, today) === 1);
+  return t(tomorrow ? 'event.tomorrowNearby' : 'event.otherDays');
+}
+
+function eventSection(cls, title, cards, render) {
+  if (!cards.length) return null;
+  return h(
+    'section',
+    { class: `later-events ${cls}`, 'aria-labelledby': `${cls}-title` },
+    h('h3', { class: 'later-events-title', id: `${cls}-title`, text: title }),
+    h('ol', { class: 'cards' }, cards.map(render)),
+  );
 }
 
 function eventDomain(card) {
