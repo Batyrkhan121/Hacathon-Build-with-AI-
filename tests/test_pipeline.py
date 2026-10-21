@@ -1903,7 +1903,8 @@ def _events_deps(deps: Deps, tmp_path: Path, items: object) -> Deps:
     (data_dir / "events.json").write_text(json.dumps(items, ensure_ascii=False),
                                           encoding="utf-8")
     return Deps(store=deps.store, llm=deps.llm,
-                settings=dataclasses.replace(deps.settings, data_dir=data_dir))
+                settings=dataclasses.replace(deps.settings, data_dir=data_dir,
+                                             events_path=data_dir / "events.json"))
 
 
 EVENT_Q = "концерт или спектакль сегодня вечером"
@@ -2005,7 +2006,8 @@ def test_past_far_and_missing_events_give_no_event_card(deps: Deps, tmp_path: Pa
         a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, items))
         assert a.cards and not any(c.kind == "event" for c in a.cards)
     missing = Deps(store=deps.store, llm=deps.llm,
-                   settings=dataclasses.replace(deps.settings, data_dir=tmp_path / "none"))
+                   settings=dataclasses.replace(deps.settings,
+                                                events_path=tmp_path / "none" / "events.json"))
     a = recommend(req(EVENT_Q, use_llm=False), missing)
     assert a.cards and not any(c.kind == "event" for c in a.cards)
 
@@ -2552,3 +2554,82 @@ def test_no_bars_in_likes_reads_as_avoid_bars(deps: Deps) -> None:
                   deps)
     assert "избегать: бары" in a.data_used.filters
     assert not any(c.category in ("bar", "nightlife") for c in a.cards)
+
+
+# ------------- wave 8.2: a long event (a fair 14:00–21:00) is not a 6-hour visit in the route
+
+FAIR = {**SOON, "id": "event:test-fair", "title": {"ru": "Выставка-ярмарка"},
+        "category": "gallery", "tags": ["indoor"],
+        "starts_at": "2026-10-22T14:00:00+05:00", "ends_at": "2026-10-22T21:00:00+05:00"}
+
+
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_a_long_event_gets_the_category_visit_and_the_route_fits(deps: Deps, tmp_path: Path,
+                                                                 use_llm: bool) -> None:
+    d = _events_deps(deps, tmp_path, [FAIR])
+    at = "2026-10-22T15:00:00+05:00"  # on now: 6 h left of 7
+    plain = recommend(req("Куда сходить рядом?", use_llm=use_llm, at=at), d)
+    fair = next(c for c in plain.cards if c.poi_id == "event:test-fair")
+    assert (fair.visit_min_low, fair.visit_min_high) == (30, 60)  # the gallery estimate
+    assert plain.route is not None and plain.route.stop_ids[-1] == "event:test-fair"
+    assert plain.route.total_min < 180  # not «≈362 мин с посещением»
+    budget = recommend(req("Куда сходить рядом на 2 часа?", use_llm=use_llm, at=at), d)
+    assert budget.intent.time_budget_min == 120
+    assert budget.route is not None and budget.route.total_min <= 120
+    assert "event:test-fair" in budget.route.stop_ids
+
+
+def test_a_two_hour_concert_is_still_visited_whole(deps: Deps, tmp_path: Path) -> None:
+    for category in ("theatre", "other"):  # whatever the category: up to 2 h stays whole
+        rec = _event_record(category=category)
+        a = recommend(req(EVENT_Q if category == "theatre" else MORE_Q, use_llm=False),
+                      _events_deps(deps, tmp_path, [rec]))
+        c = next(c for c in a.cards if c.kind == "event")
+        assert (c.visit_min_low, c.visit_min_high) == (120, 120), category
+
+
+# ---------------------- QADAM_EVENTS_PATH (settings.events_path): eval's own events file (E16)
+
+
+def test_events_come_from_qadam_events_path(deps: Deps, tmp_path: Path,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "eval_events.json"
+    path.write_text(json.dumps([SOON], ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("QADAM_EVENTS_PATH", str(path))
+    get_settings.cache_clear()
+    settings = dataclasses.replace(get_settings(), cache_dir=tmp_path / "cache",
+                                   index_dir=tmp_path / "index", h3_res=9)
+    assert settings.events_path == path
+    d = Deps(store=deps.store, llm=deps.llm, settings=settings)
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert "event:test-soon" in [c.poi_id for c in a.cards]
+
+    monkeypatch.delenv("QADAM_EVENTS_PATH")
+    data_dir = tmp_path / "data"  # not the repo's data/: the test must not depend on it
+    monkeypatch.setenv("QADAM_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    default = get_settings()
+    assert default.events_path == data_dir / "events.json"  # the default: data_dir/events.json
+    b = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"),
+                  Deps(store=deps.store, llm=deps.llm, settings=dataclasses.replace(
+                      default, cache_dir=tmp_path / "cache", index_dir=tmp_path / "index")))
+    assert not any(c.kind == "event" for c in b.cards)  # no file there: no events
+
+
+def test_no_events_path_means_no_events(deps: Deps) -> None:
+    d = Deps(store=deps.store, llm=deps.llm,
+             settings=dataclasses.replace(deps.settings, events_path=None))
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00"), d)
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
+
+
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_an_event_without_end_gets_the_category_visit_on_both_paths(
+    deps: Deps, tmp_path: Path, use_llm: bool
+) -> None:
+    """No ends_at: the visit is the category estimate, never the model's guess (FakeLLM 20–30)."""
+    d = _events_deps(deps, tmp_path, [_event_record(ends=None)])  # theatre
+    a = recommend(req(MORE_Q, use_llm=use_llm), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == ("llm" if use_llm else "template")
+    assert (c.visit_min_low, c.visit_min_high) == (90, 180)  # VISIT_MIN["theatre"]

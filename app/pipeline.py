@@ -1196,9 +1196,13 @@ def _night_sure(c: Candidate, by_event: dict[str, events.Event] | None = None,
 
 
 def _load_events(settings: Settings) -> list[events.Event]:
-    """data/events.json under the data dir; any problem -> no events, never a failed answer."""
+    """settings.events_path (QADAM_EVENTS_PATH, default data/events.json; eval points it at
+    its own fixture); None, no file or any problem -> no events, never a failed answer."""
+    path = getattr(settings, "events_path", None)
+    if path is None:
+        return []
     try:
-        return events.load_events(settings.data_dir / "events.json")
+        return events.load_events(path)
     except Exception as exc:  # noqa: BLE001 - events are an extra, the places still answer
         log.error("events failed to load (%s)", type(exc).__name__)
         return []
