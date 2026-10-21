@@ -269,6 +269,11 @@ def test_times_on_another_day_carry_the_date() -> None:
     ("https://www.ticketon.kz/event/1", True),
     ("https://sxodim.com/astana/event/1", True),
     ("https://eventbrite.com/e/1", True),
+    ("https://ticketon.com/e/1", True),  # a brand in any zone (DATA 7490099)
+    ("https://kassir.kz/e/1", True),
+    ("https://WWW.Kino.kz./film/1", True),  # normalised: case, www., trailing dot
+    ("https://kinopark.kz/e/1", False),  # kino.kz is an exact domain
+    ("https://afisha.astana.gov.kz/e/1", False),  # afisha.ru is an exact domain
     ("https://notyandex.kz/afisha/1", False),  # labels, not a substring
     ("https://my2gisfan.kz/e/1", False),
     ("https://notticketon.kz/e/1", False),
@@ -288,7 +293,10 @@ def test_the_reader_covers_the_data_lane_list() -> None:
     theirs = getattr(data_events, "FORBIDDEN_SOURCES", None)
     if theirs is None:
         pytest.skip("pipeline.events.FORBIDDEN_SOURCES not merged here yet")
-    assert set(theirs) <= events.FORBIDDEN_SOURCES
+    assert set(theirs) == events.FORBIDDEN_SOURCES
+    for host in ("afisha.yandex.kz", "ticketon.com", "kassir.kz", "www.kino.kz.", "notyandex.kz",
+                 "kinopark.kz", "afisha.astana.gov.kz", "astanaopera.kz"):
+        assert events.forbidden_source(host) is (data_events.forbidden_source(host) is not None)
 
 
 def test_source_kind_is_read_when_given(tmp_path: Path) -> None:

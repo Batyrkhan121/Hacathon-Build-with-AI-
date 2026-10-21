@@ -46,12 +46,13 @@ DATA_CONFIDENCE = 0.8  # checked by a person against the organiser's page (pipel
 # aggregators (T132). The same list as pipeline.events.FORBIDDEN_SOURCES (DATA, tested to
 # cover it): the build refuses them, and this reader refuses them once more. pipeline/ is not
 # in the server image, so the list is repeated here, not imported. A name with a dot matches
-# that domain and its subdomains, a name without one matches a whole host label: afisha.
-# yandex.kz is refused, notyandex.kz is not.
+# that domain and its subdomains, a name without one (a brand) matches a whole host label in
+# any zone: afisha.yandex.kz, ticketon.com and kassir.kz are refused; notyandex.kz,
+# kinopark.kz and afisha.astana.gov.kz are not.
 FORBIDDEN_SOURCES: frozenset[str] = frozenset({
     "2gis", "yandex", "ya.ru",
-    "ticketon.kz", "sxodim.com", "kino.kz", "kassir.ru", "ticketland.ru", "afisha.ru",
-    "radario.ru", "timepad.ru", "intickets.ru", "ticketmaster.com", "eventbrite.com",
+    "ticketon", "sxodim", "kassir", "ticketland", "radario", "timepad", "intickets",
+    "ticketmaster", "eventbrite", "kino.kz", "afisha.ru",
 })
 SourceKind = Literal["venue", "organizer", "city_portal"]
 
@@ -103,8 +104,9 @@ _CACHE: dict[str, tuple[tuple[int, int], list[Event]]] = {}
 
 
 def forbidden_source(host: str) -> bool:
-    """The host is a map or a ticket aggregator (FORBIDDEN_SOURCES), by host labels."""
-    host = host.lower().rstrip(".")
+    """The host is a map or a ticket aggregator (FORBIDDEN_SOURCES), by host labels; the
+    host is normalised as DATA does: case, a leading «www.», a trailing dot."""
+    host = host.strip().lower().rstrip(".").removeprefix("www.")
     labels = host.split(".")
     return any((host == name or host.endswith("." + name)) if "." in name else name in labels
                for name in FORBIDDEN_SOURCES)
