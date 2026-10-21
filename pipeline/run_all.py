@@ -21,7 +21,16 @@ from collections.abc import Sequence
 
 from app.config import get_settings
 from app.schemas import POI
-from pipeline import build_index, etalon, events, fetch_osm, normalize, overrides, report
+from pipeline import (
+    build_index,
+    city_gaps,
+    etalon,
+    events,
+    fetch_osm,
+    normalize,
+    overrides,
+    report,
+)
 
 log = logging.getLogger("pipeline.run_all")
 
@@ -142,6 +151,17 @@ def run(
         log.info("index: %s (%s)", idx.status, idx.reason)
         if idx.status == "skipped":
             notes.append(f"Индекс пропущен: {idx.reason}.")
+
+    if area == "astana":
+        # «Карта пробелов» from the final poi.jsonl and the walk graph on disk (built by
+        # pipeline.walk_graph); a failure (no graph yet, ...) is logged, the build goes on
+        try:
+            gaps = city_gaps.run()
+        except Exception:  # noqa: BLE001 - the map is extra, the POI build is not
+            log.exception("city gaps: not built")
+            notes.append("Карта пробелов не собрана (см. лог): city_gaps.json прежний.")
+        else:
+            log.info("city gaps: %d cells", len(gaps.cells))
 
     out = report.write_report(area, notes=notes)
     log.info("report -> %s; total %.0f s", out, time.time() - started)
