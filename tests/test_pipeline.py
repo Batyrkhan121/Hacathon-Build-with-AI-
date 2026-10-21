@@ -2220,10 +2220,13 @@ def test_avoids_take_the_parsed_category_out_of_the_search(deps: Deps) -> None:
 
 
 def test_explicit_ui_categories_stay_with_avoids(deps: Deps) -> None:
+    """The UI asked for cafes and the «Без кафе» chip is on: «без кафе» is a filter
+    (ARCHITECTURE §5), so no cafe card; with no cafe left the old «without the category»
+    retry shows what is around, the panel says «избегать: кафе»."""
     a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["cafes"]},
                       overrides={"categories": ["cafe"]}), deps)
-    assert a.cards and all(c.category == "cafe" for c in a.cards)  # the UI asked for cafes
-    assert "категории: кафе" in a.data_used.filters
+    assert not any(c.category == "cafe" for c in a.cards)
+    assert "избегать: кафе" in a.data_used.filters
 
 
 @pytest.mark.parametrize(("query", "label", "category"), [
@@ -2633,3 +2636,52 @@ def test_an_event_without_end_gets_the_category_visit_on_both_paths(
     c = next(c for c in a.cards if c.kind == "event")
     assert a.data_used.generation == ("llm" if use_llm else "template")
     assert (c.visit_min_low, c.visit_min_high) == (90, 180)  # VISIT_MIN["theatre"]
+
+
+# ------------------- «Без кафе» (avoids cafes) is a filter: no cafe card, real data (wave 8.2)
+
+
+@pytest.fixture(scope="module")
+def real_store_deps(real_pois: list[POI], landmarks: dict[str, Landmark],
+                    tmp_path_factory: pytest.TempPathFactory) -> Deps:
+    tmp = tmp_path_factory.mktemp("nocafe")
+    return Deps(store=make_store(real_pois, landmarks), llm=FakeLLM(),
+                settings=dataclasses.replace(make_settings(tmp), events_path=None))
+
+
+@pytest.mark.parametrize(("landmark", "lang", "query"), [
+    ("expo", "ru", "Хочу тихое место с кофе"),
+    ("expo", "en", "I want a quiet place with coffee"),
+    ("baiterek", "ru", "Куда сходить рядом?"),
+    ("baiterek", "kk", "Жақын жерде қайда баруға болады?"),
+    ("baiterek", "en", "Where to go nearby?"),
+])
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_no_cafe_chip_leaves_no_cafe_card(real_store_deps: Deps, landmark: str, lang: str,
+                                          query: str, use_llm: bool) -> None:
+    body = {"query": query, "location": {"landmark_id": landmark}, "lang": lang,
+            "at": "2026-10-20T15:00:00+05:00", "use_llm": use_llm,
+            "prefs": {"avoids": ["cafes"]}}
+    a = recommend(RecommendRequest.model_validate(body), real_store_deps)
+    assert a.cards and not any(c.category == "cafe" for c in a.cards)
+    assert not any(x.startswith(("категории:", "categories:", "санаттар:")) and
+                   pipeline_mod.CATEGORY_NAMES[lang]["cafe"] in x for x in a.data_used.filters)
+
+
+def test_no_cafe_chip_with_only_cafes_is_an_honest_empty_answer(deps: Deps) -> None:
+    cafes = [p for p in deps.store.pois if p.category == "cafe"]
+    only = Deps(store=make_store(cafes, deps.store.landmarks), llm=deps.llm,
+                settings=deps.settings)
+    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["cafes"]}), only)
+    assert a.cards == [] and a.route is None
+    assert a.summary == TEXTS["ru"]["summary_empty"] and TEXTS["ru"]["nothing"] in a.warnings
+
+
+def test_no_cafe_chip_drops_cafe_events_too(deps: Deps, tmp_path: Path) -> None:
+    cafe_event = {**SOON, "id": "event:cafe-night", "title": {"ru": "Вечер в кофейне"},
+                  "category": "cafe"}
+    d = _events_deps(deps, tmp_path, [cafe_event, SOON])
+    a = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T15:00:00+05:00",
+                      prefs={"avoids": ["cafes"]}), d)
+    shown = {c.poi_id for c in a.cards}
+    assert "event:cafe-night" not in shown and "event:test-soon" in shown

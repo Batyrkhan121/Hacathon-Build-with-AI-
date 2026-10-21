@@ -107,7 +107,9 @@ AVOID_TAGS: dict[str, frozenset[str]] = {
     "kids_places": frozenset({"kids"}),
     "cafes": frozenset({"coffee"}),
 }
-AVOID_FILTER = frozenset({"bars"})  # a hard filter, not a penalty
+# a hard filter of their categories (ARCHITECTURE §5: «без категорий bar, nightlife»,
+# «без категории cafe»); their tags (cafes: coffee at a restaurant) stay a penalty
+AVOID_FILTER = frozenset({"bars", "cafes"})
 AVOID_FROM_PARSE = frozenset({"bars", "cafes"})  # the explicit choice beats the text parse
 NO_BARS_CATEGORIES = AVOID_CATEGORIES["bars"]
 # «в тепле»: indoor places anyone may walk into to warm up; the same list as
@@ -481,7 +483,8 @@ def avoid_match(poi: POI, label: str) -> bool:
 def _passes_prefs(poi: POI, prefs: UserPrefs | None) -> bool:
     if prefs is None:
         return True
-    return not any(avoid_match(poi, label) for label in prefs.avoids if label in AVOID_FILTER)
+    return not any(poi.category in AVOID_CATEGORIES.get(label, frozenset())
+                   for label in prefs.avoids if label in AVOID_FILTER)
 
 
 def avoided(prefs: UserPrefs | None) -> tuple[frozenset[str], frozenset[str]]:
@@ -506,11 +509,12 @@ def _avoided_stems(prefs: UserPrefs | None) -> frozenset[str]:
 
 def _prefs_fit(poi: POI, prefs: UserPrefs | None) -> float:
     """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty
-    (bars is a filter, long_outdoor a route rule: no penalty from them)."""
+    (the categories of bars / cafes are filtered before, so only their tags count here —
+    coffee at a restaurant; long_outdoor is a route rule and names no place)."""
     if prefs is None:
         return 0.0
     liked = sum(pref_match(poi, label) for label in prefs.likes)
-    avoided = sum(avoid_match(poi, label) for label in prefs.avoids if label not in AVOID_FILTER)
+    avoided = sum(avoid_match(poi, label) for label in prefs.avoids)
     return (min(PREF_LIKE_MAX, liked * PREF_LIKE_BONUS)
             + max(PREF_AVOID_MAX, avoided * PREF_AVOID_PENALTY))
 

@@ -802,17 +802,21 @@ def test_like_lifts_a_liked_place_past_a_closer_one() -> None:
     assert "prefs" not in liked[1].score_parts
 
 
-def test_avoid_is_a_penalty_not_a_filter() -> None:
+def test_avoid_cafes_filters_the_cafe_category_and_penalises_coffee_elsewhere() -> None:
+    """ARCHITECTURE §5: «без категории cafe» — a filter, like bars; coffee at a restaurant
+    (the tag) stays a penalty, not a filter."""
     from app.retrieval import PREF_AVOID_PENALTY
 
     cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee", "indoor"])
+    bistro = make_poi("bistro", "restaurant", dlat=0.002, tags=["coffee"])
     park = make_poi("park", "park", dlat=0.006, tags=["walk", "outdoor"])
-    store = make_store([cafe, park])
+    store = make_store([cafe, bistro, park])
     out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
-    assert ids(out) == [park.id, cafe.id]  # still there, just lower
+    assert cafe.id not in ids(out)
+    assert ids(out) == [park.id, bistro.id]  # the bistro stays, lower
     assert out[1].score_parts["prefs"] == PREF_AVOID_PENALTY
     only = retrieve(make_store([cafe]), intent(), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
-    assert ids(only) == [cafe.id]
+    assert only == []  # nothing without cafes: an empty pick
 
 
 def test_avoid_bars_drops_bars_and_nightlife() -> None:
@@ -937,15 +941,16 @@ def test_exclude_ids_drop_places_and_events_before_scoring() -> None:
 
 
 def test_query_words_of_an_avoided_label_do_not_pull_places_up() -> None:
-    """«кофе рядом» with avoids cafes: the word «кофе» gives cafes no keyword match."""
-    cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee"])
+    """«кофе рядом» with avoids cafes: the word «кофе» gives no keyword match (coffee at a
+    restaurant is not pulled up by it either; the cafes themselves are filtered)."""
+    bistro = make_poi("bistro", "restaurant", dlat=0.001, tags=["coffee"])
     mall = make_poi("mall", "mall", dlat=0.003)
-    store = make_store([cafe, mall])
+    store = make_store([bistro, mall])
     plain = retrieve(store, intent("кофе"), make_ctx(), None)
-    assert plain[0].poi.id == cafe.id and plain[0].score_parts["relevance"] > 0
+    assert plain[0].poi.id == bistro.id and plain[0].score_parts["relevance"] > 0
     out = retrieve(store, intent("кофе"), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
     by_id = {c.poi.id: c for c in out}
-    assert by_id[cafe.id].score_parts["relevance"] == 0.0
+    assert by_id[bistro.id].score_parts["relevance"] == 0.0
     assert out[0].poi.id == mall.id
     assert not query_unmatched(store, intent("кофе"), make_ctx(), out,
                                prefs=_prefs(avoids=["cafes"]))
