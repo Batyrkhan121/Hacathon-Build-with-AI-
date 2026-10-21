@@ -119,6 +119,8 @@ PREF_AVOID_LABELS_RU: dict[str, str] = {
 }
 PREF_LABELS_RU: dict[str, str] = {**PREF_LIKE_LABELS_RU, **PREF_AVOID_LABELS_RU}
 # a like and an avoid that contradict each other: both in one request -> 422
+# 1.3.0 like -> 1.3.1 avoid, read as a synonym for one version (until 1.4), never a 422
+DEPRECATED_LIKES: dict[str, str] = {"no_bars": "bars"}
 PREF_CONFLICTS: frozenset[tuple[str, str]] = frozenset(
     {("kids", "kids_places"), ("coffee", "cafes")}
 )
@@ -240,6 +242,23 @@ class UserPrefs(BaseModel):
 
     likes: list[LikeTag] = Field(default_factory=list, max_length=MAX_PREFS)
     avoids: list[AvoidTag] = Field(default_factory=list, max_length=MAX_PREFS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _deprecated_likes(cls, data: object) -> object:
+        """«no_bars» in likes (1.3.0) moves to avoids as «bars»; anything malformed is left to
+        the normal validation (a 422)."""
+        if not isinstance(data, dict):
+            return data
+        likes, avoids = data.get("likes"), data.get("avoids", [])
+        if not isinstance(likes, list) or not isinstance(avoids, list):
+            return data
+        moved = [DEPRECATED_LIKES[t] for t in likes if isinstance(t, str) and t in DEPRECATED_LIKES]
+        if not moved:
+            return data
+        kept = [t for t in likes if not (isinstance(t, str) and t in DEPRECATED_LIKES)]
+        added = [t for t in dict.fromkeys(moved) if t not in avoids]
+        return {**data, "likes": kept, "avoids": avoids + added}
 
     @model_validator(mode="after")
     def _consistent(self) -> UserPrefs:
