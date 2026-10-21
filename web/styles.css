@@ -3057,3 +3057,9 @@ body:not(.v2) .submit-row .btn-primary {
 .popup-title .cal-icon {
   flex: none;
 }
+
+/* «Без кафе» неактивен (запрос про одни кафе): причина строкой под чипами */
+.refine-chips-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
