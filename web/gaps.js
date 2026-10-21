@@ -3,6 +3,7 @@
 // ?mock=503 и ?mock=error — состояния «не собрана» и «не загрузилась». Доли, пороги и подписи — gaps-core.js.
 // Всё из данных — только через textContent; цвет дублируется числами (нажатие на ячейку и итоги по городу).
 import { applyI18n, getLang, onLangChange, setLang, t } from './i18n.js';
+import { TILES, applyAttribution } from './map.js';
 import {
   GAP_LAYERS,
   GAP_MIN,
@@ -24,8 +25,6 @@ const MOCK = new URLSearchParams(location.search).get('mock');
 const MOCK_URLS = { large: 'mock/city_gaps_large.json' };
 const DATA_URL = MOCK === null ? 'api/city-gaps' : MOCK_URLS[MOCK] || 'mock/city_gaps.json';
 const ASTANA = [51.128, 71.43];
-const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 const $ = (id) => document.getElementById(id);
 const state = { data: null, error: null, layer: 'hours', selected: null, map: null, cells: new Map(), paint: null };
@@ -115,7 +114,7 @@ function initMap() {
   state.paint = paintStyles();
   const map = L.map($('gaps-map'), { zoomControl: false, scrollWheelZoom: false, preferCanvas: true }).setView(ASTANA, 11);
   L.control.zoom({ position: 'topright' }).addTo(map);
-  L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+  L.tileLayer(TILES, { maxZoom: 19 }).addTo(map); // атрибуция — applyAttribution (язык страницы, rel)
   const renderer = L.canvas({ padding: 0.3, tolerance: 2 });
   const group = L.featureGroup().addTo(map);
   for (const cell of state.data.cells) {
@@ -256,6 +255,7 @@ function renderStatic() {
     $('gaps-empty-hint').textContent = t(state.error === 'notBuilt' ? 'gaps.notBuiltHint' : 'gaps.errorHint');
   }
   if (state.map) {
+    applyAttribution(state.map, t('map.attrOsm'));
     const set = (sel, text) => state.map.getContainer().querySelector(sel)?.setAttribute('title', text);
     set('.leaflet-control-zoom-in', t('map.zoomIn'));
     set('.leaflet-control-zoom-out', t('map.zoomOut'));
@@ -288,7 +288,8 @@ function init() {
     $('gaps-empty').hidden = true;
     load();
   });
-  if (MOCK !== null) $('gaps-back').setAttribute('href', './?mock=1'); // из мока — на главную в моке
+  // из мока — на главную в моке: и «← К прогулкам», и логотип
+  if (MOCK !== null) document.querySelectorAll('#gaps-back, .brand-home').forEach((a) => a.setAttribute('href', './?mock=1'));
   renderStatic();
   load();
 }

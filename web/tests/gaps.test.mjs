@@ -19,8 +19,10 @@ import {
   layerById,
   legendRanges,
   noun,
+  pct,
 } from '../gaps-core.js';
 import { setLang, t } from '../i18n.js';
+import { applyAttribution } from '../map.js';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const mock = JSON.parse(read('../mock/city_gaps.json'));
@@ -162,4 +164,55 @@ test('внешние ссылки страницы — только по кли�
     assert.notEqual(t('gaps.linkOsmEdit'), 'gaps.linkOsmEdit');
     assert.match(t('gaps.dates', { built: '1', poi: '2', walk: '3' }), /1.*2.*3/);
   }
+});
+
+test('ревью: доля округляется один раз — подпись и класс берут одно число', () => {
+  // 79,6 % → «80 %» и класс 80–100, а не 60–80
+  const c = { poi: 1000, poi_no_hours: 796 };
+  assert.equal(pct(796, 1000), 80);
+  assert.equal(gapClass(c, L('hours')), 4);
+  assert.match(say('ru', gapText(c, L('hours'), 'ru')), /\(80 %\)$/);
+  // 19,6 % → «20 %» и класс 20–40; 19,4 % → «19 %» и класс 0–20
+  assert.equal(gapClass({ poi: 1000, poi_no_hours: 196 }, L('hours')), 1);
+  assert.equal(gapClass({ poi: 1000, poi_no_hours: 194 }, L('hours')), 0);
+  // на каждой границе подпись легенды и класс совпадают
+  for (const part of [0, 194, 196, 394, 396, 594, 596, 794, 796, 1000]) {
+    const p = pct(part, 1000);
+    const r = legendRanges()[gapClass({ poi: 1000, poi_no_hours: part }, L('hours'))];
+    assert.ok(p >= r.from && (p < r.to || (r.to === 100 && p === 100)), `${p} % в ${r.from}–${r.to}`);
+  }
+});
+
+test('ревью: подписи слоя «коляска» и казахские формулировки', () => {
+  setLang('ru');
+  assert.equal(t('gaps.layer.wheelchair'), 'Доступность для коляски');
+  setLang('en');
+  assert.equal(t('gaps.layer.wheelchair'), 'Wheelchair access');
+  setLang('kk');
+  assert.equal(t('gaps.linkOsmEdit'), 'OpenStreetMap-ті толықтыру');
+  assert.match(t('gaps.about.crossing_kind'), /белгі салынбаған/);
+  assert.doesNotMatch(t('gaps.about.crossing_kind'), /белгісіз/);
+});
+
+test('ревью: атрибуция Leaflet — на языке страницы, ссылки с noopener noreferrer, подпись экранирована', () => {
+  const added = [];
+  let prefix = null;
+  const m = {
+    attributionControl: {
+      setPrefix: (p) => (prefix = p),
+      addAttribution: (a) => added.push(a),
+      removeAttribution: (a) => added.splice(added.indexOf(a), 1),
+    },
+  };
+  applyAttribution(m, '© участники OpenStreetMap');
+  applyAttribution(m, '© OpenStreetMap қатысушылары <b>');
+  assert.equal(added.length, 1);
+  assert.match(added[0], /^<a href="https:\/\/www\.openstreetmap\.org\/copyright" target="_blank" rel="noopener noreferrer">/);
+  assert.match(added[0], /© OpenStreetMap қатысушылары &lt;b&gt;<\/a>$/);
+  assert.match(prefix, /rel="noopener noreferrer"/);
+  assert.equal(applyAttribution({}, 'x'), undefined);
+});
+
+test('ревью: проверка формы не падает на null-ячейке', () => {
+  assert.equal(isCityGaps({ format_version: 1, h3_res: 8, city: {}, cells: [null] }), false);
 });

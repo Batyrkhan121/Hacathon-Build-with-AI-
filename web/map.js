@@ -3,8 +3,24 @@
 
 const ASTANA = [51.128, 71.43];
 // Стандартные тайлы OSM: CARTO basemaps с 2026 года отдают без ключа заглушку «API KEY REQUIRED».
-const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+export const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+// Атрибуция OSM на языке страницы; ссылки — только по клику, target=_blank, rel="noopener noreferrer".
+// Leaflet принимает здесь HTML, поэтому подпись (наша строка из i18n) всё равно экранируем.
+const OSM_COPYRIGHT = 'https://www.openstreetmap.org/copyright';
+const LEAFLET_PREFIX = '<a href="https://leafletjs.com" target="_blank" rel="noopener noreferrer">Leaflet</a>';
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// m — любая карта Leaflet (главная и «Карта пробелов данных»); прошлую подпись убираем, новую ставим
+export function applyAttribution(m, label) {
+  const ctl = m?.attributionControl;
+  if (!ctl) return;
+  ctl.setPrefix(LEAFLET_PREFIX);
+  if (m.qadamAttribution) ctl.removeAttribution(m.qadamAttribution);
+  m.qadamAttribution = `<a href="${OSM_COPYRIGHT}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+  ctl.addAttribution(m.qadamAttribution);
+}
 
 let map = null;
 let originLayer;
@@ -21,7 +37,7 @@ export function initMap(el) {
   if (!window.L) return false;
   map = L.map(el, { zoomControl: false, attributionControl: true }).setView(ASTANA, 12);
   L.control.zoom({ position: 'topright' }).addTo(map);
-  L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+  L.tileLayer(TILES, { maxZoom: 19 }).addTo(map); // атрибуция — applyAttribution (язык страницы)
   originLayer = L.layerGroup().addTo(map);
   cellLayer = L.layerGroup().addTo(map);
   hereLayer = L.layerGroup().addTo(map);
@@ -83,6 +99,10 @@ function hexStop(no, isEvent = false) {
 
 // Ответ сервера: старт (context.origin), номерные места и мини-маршрут пунктиром (он приблизительный).
 // Подписи кнопок зума Leaflet на языке интерфейса (по умолчанию они английские).
+export function setAttributionLabel(label) {
+  applyAttribution(map, label);
+}
+
 export function setZoomTitles(zoomIn, zoomOut) {
   if (!map) return;
   const set = (sel, text) => {

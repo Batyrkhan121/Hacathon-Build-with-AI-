@@ -29,12 +29,16 @@ export function gapClass(counts, layer) {
   const { total, part } = layerCounts(counts, layer);
   if (!(total > 0)) return 'none';
   if (total < GAP_MIN[layer.unit]) return 'low';
-  const share = Math.min(1, part / total);
-  const i = GAP_BINS.findIndex((edge) => share < edge);
+  // класс — по той же округлённой доле, что в подписи: 79,6 % подписано «80 %» и закрашено как 80–100 %
+  const p = pct(part, total);
+  const i = GAP_BINS.findIndex((edge) => p < Math.round(edge * 100));
   return i === -1 ? GAP_BINS.length : i;
 }
 
-export const pct = (part, total) => Math.round((Math.min(part, total) / total) * 100);
+// Доля в процентах, округлённая один раз: её берут и подпись, и класс шкалы
+export function pct(part, total) {
+  return Math.round((Math.min(part, total) / total) * 100);
+}
 
 // Подписи легенды: «0–20 %» … «80–100 %»
 export function legendRanges() {
@@ -100,7 +104,7 @@ export function isCityGaps(data) {
       data.h3_res === 8 &&
       data.city &&
       Array.isArray(data.cells) &&
-      data.cells.every((c) => typeof c.h3_cell === 'string'),
+      data.cells.every((c) => c && typeof c.h3_cell === 'string'),
   );
 }
 
