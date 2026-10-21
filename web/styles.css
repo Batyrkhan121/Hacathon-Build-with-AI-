@@ -335,6 +335,18 @@ textarea {
     grid-template-columns: auto minmax(0, 1fr) auto;
     row-gap: 4px;
   }
+  /* T143: с входом на «Карту пробелов» в шапке — четвёртая колонка, кнопка и языки в первой строке */
+  .brand:has(> .mock-pill:not([hidden])):has(> .header-gaps) {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+  .brand:has(> .mock-pill:not([hidden])) > .header-gaps {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .brand:has(> .mock-pill:not([hidden])):has(> .header-gaps) > .lang {
+    grid-column: 4;
+    grid-row: 1;
+  }
   .brand:has(> .mock-pill:not([hidden])) > .mock-pill {
     grid-column: 2;
     grid-row: 2;
@@ -3065,14 +3077,17 @@ body:not(.v2) .submit-row .btn-primary {
 }
 
 /* ------------------------------------------------------------------ T143: карта пробелов данных (gaps.html) */
-/* Одна последовательная шкала: светлее — меньше пробелов, темнее — больше. «Мало данных» — штриховкой
-   (#gap-hatch в gaps.html), а не цветом; «нет объектов» — пунктирный контур. Цвет дублируется цифрами. */
+/* Контракт 1.4.0. Одна последовательная шкала доли «нет данных»: светлее — меньше пробелов, темнее — больше.
+   «Мало данных» (ниже порогов GAP_MIN_*) — серым со штриховкой, без цвета доли; «нечего считать» — пунктир.
+   Ячейки рисует canvas (gaps.js читает эти токены); цвет дублируется числами (ячейка по нажатию и итоги). */
 .gaps-body {
   --gap-0: #e3ecf0;
   --gap-1: #a9c3cf;
   --gap-2: #6e95a8;
   --gap-3: #3c6880;
   --gap-4: #1b3d52;
+  --gap-low: #d5d8db;
+  --gap-low-line: #8a9298;
 }
 
 .gaps-page {
@@ -3106,25 +3121,34 @@ body:not(.v2) .submit-row .btn-primary {
 }
 
 .gaps-title {
-  margin: 8px 0 8px;
+  margin: 8px 0;
   font-size: var(--v2-fs-xl);
   line-height: 1.25;
 }
 
 .gaps-lead {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   font-size: var(--v2-fs-m);
   line-height: 1.5;
   color: var(--ink-2);
 }
 
-.gaps-metrics {
+/* одна строка смысла: пробел в данных, а не оценка района */
+.gaps-meaning {
+  margin: 0 0 12px;
+  font-size: var(--v2-fs-m);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.gaps-layers {
   margin: 16px 0 0;
   padding: 0;
   border: 0;
 }
 
-.gaps-counted {
+.gaps-about {
   margin: 8px 0 12px;
   font-size: var(--v2-fs-s);
   line-height: 1.45;
@@ -3142,36 +3166,6 @@ body:not(.v2) .submit-row .btn-primary {
   .gaps-map {
     height: 460px;
   }
-}
-
-/* Шестиугольники: класс шкалы — атрибут data-gap на SVG-пути (gaps.js), CSS сильнее атрибутов Leaflet */
-.gaps-map path.gap-cell {
-  stroke: #ffffff;
-  stroke-width: 1;
-  fill-opacity: 0.8;
-}
-
-.gaps-map path.gap-cell[data-gap="0"] { fill: var(--gap-0); }
-.gaps-map path.gap-cell[data-gap="1"] { fill: var(--gap-1); }
-.gaps-map path.gap-cell[data-gap="2"] { fill: var(--gap-2); }
-.gaps-map path.gap-cell[data-gap="3"] { fill: var(--gap-3); }
-.gaps-map path.gap-cell[data-gap="4"] { fill: var(--gap-4); }
-
-.gaps-map path.gap-cell[data-gap="low"] {
-  fill: url(#gap-hatch);
-  fill-opacity: 1;
-  stroke: var(--ink-2);
-}
-
-.gaps-map path.gap-cell[data-gap="none"] {
-  fill: transparent;
-  stroke: var(--line-strong);
-  stroke-dasharray: 2 3;
-}
-
-.gaps-map path.gap-cell[data-selected] {
-  stroke: var(--gold);
-  stroke-width: 4;
 }
 
 .gaps-legend {
@@ -3212,7 +3206,7 @@ body:not(.v2) .submit-row .btn-primary {
 .gap-swatch[data-gap="4"] { background: var(--gap-4); }
 
 .gap-swatch[data-gap="low"] {
-  background: repeating-linear-gradient(45deg, var(--ink-2) 0 2px, #ffffff 2px 6px);
+  background: repeating-linear-gradient(-45deg, var(--gap-low-line) 0 1.5px, var(--gap-low) 1.5px 5px);
 }
 
 .gap-swatch[data-gap="none"] {
@@ -3272,10 +3266,10 @@ body:not(.v2) .submit-row .btn-primary {
   white-space: nowrap;
 }
 
-.gaps-table .is-total th,
-.gaps-table .is-total td {
+/* слой, который сейчас на карте */
+.gaps-table .is-current th,
+.gaps-table .is-current td {
   font-weight: 700;
-  border-top: 2px solid var(--ink);
 }
 
 .gaps-help {
@@ -3312,4 +3306,22 @@ body:not(.v2) .submit-row .btn-primary {
 .gaps-link {
   margin: 16px 0 0;
   font-size: var(--v2-fs-s);
+}
+
+/* T143: вход на «Карту пробелов данных» из шапки — круглая кнопка 44 px рядом с языками */
+.header-gaps {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.header-gaps:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }

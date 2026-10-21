@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Карта пробелов данных — Qadam</title>
-  <meta name="description" content="Где в OpenStreetMap нет данных об освещении, бордюрах, переходах, доступности и часах работы — и как помочь.">
+  <meta name="description" content="Где в OpenStreetMap не хватает сведений о часах работы, доступности, казахских названиях, освещении и переходах — и как помочь.">
   <meta name="theme-color" content="#0a6e87">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cpath d='M6 24L14 8M14 24L22 8' stroke='%230a6e87' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='25' cy='8' r='3' fill='%23f2b705'/%3E%3C/svg%3E">
   <!-- Leaflet и h3-js — локально (web/vendor), как на главной -->
@@ -14,17 +14,8 @@
   <script src="vendor/h3-js-4.1.0/h3-js.umd.js" defer></script>
   <script type="module" src="gaps.js"></script>
 </head>
+<!-- T143, контракт 1.4.0: карта пробелов открытых данных (CityGaps). Данные — GET api/city-gaps, мок — ?mock=1. -->
 <body class="v2 gaps-body">
-  <!-- штриховка «мало данных»: шестиугольники с fill: url(#gap-hatch) (styles.css) -->
-  <svg class="visually-hidden" width="0" height="0" aria-hidden="true" focusable="false">
-    <defs>
-      <pattern id="gap-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-        <rect width="8" height="8" fill="#ffffff" fill-opacity="0.55"/>
-        <line x1="0" y1="0" x2="0" y2="8" stroke="#48575f" stroke-width="2.4"/>
-      </pattern>
-    </defs>
-  </svg>
-
   <div class="gaps-page">
     <header class="brand">
       <a class="brand-home" href="./" data-i18n-aria="gaps.home" aria-label="На главную Qadam">
@@ -43,34 +34,38 @@
     </header>
 
     <main class="gaps-main">
-      <h1 class="gaps-title" data-i18n="gaps.title">Почему мы чего-то не знаем?</h1>
-      <p class="gaps-lead" data-i18n="gaps.lead">Qadam берёт данные из OpenStreetMap. Где в OSM нет отметки — горят ли фонари, опущен ли бордюр, когда открыто, — мы честно пишем «нет данных». Карта показывает, где таких пробелов больше.</p>
+      <h1 class="gaps-title" data-i18n="gaps.title">Карта пробелов данных</h1>
+      <p class="gaps-lead" data-i18n="gaps.lead">Почему Qadam иногда пишет «нет данных»? Мы берём сведения из OpenStreetMap, а там они заполнены не у всех мест и улиц. Карта показывает, где их не хватает.</p>
+      <p class="gaps-meaning" data-i18n="gaps.meaning">Это пробелы в открытых данных, а не оценка района.</p>
       <p class="warning gaps-mock-note" id="gaps-mock-note" role="note" hidden data-i18n="gaps.mockNote">Мок: числа выдуманы, чтобы проверить вид страницы.</p>
 
       <div class="empty gaps-empty" id="gaps-empty" hidden>
-        <p class="empty-title" data-i18n="gaps.emptyTitle">Карта пробелов ещё не собрана</p>
-        <p class="empty-hint" data-i18n="gaps.emptyHint">Цифры появятся после следующей сборки данных. Помочь можно уже сейчас — ниже.</p>
+        <p class="empty-title" id="gaps-empty-title"></p>
+        <p class="empty-hint" id="gaps-empty-hint"></p>
+        <div class="empty-actions">
+          <button type="button" class="btn btn-ghost" id="gaps-retry" hidden data-i18n="gaps.retry">Повторить</button>
+        </div>
       </div>
 
-      <section class="gaps-view" id="gaps-view" hidden aria-labelledby="gaps-metric-legend">
-        <fieldset class="gaps-metrics">
-          <legend class="label" id="gaps-metric-legend" data-i18n="gaps.metricLegend">Что показать</legend>
-          <div class="chips" id="gaps-metric-chips" role="group" aria-labelledby="gaps-metric-legend"></div>
+      <section class="gaps-view" id="gaps-view" hidden aria-labelledby="gaps-layer-legend">
+        <fieldset class="gaps-layers">
+          <legend class="label" id="gaps-layer-legend" data-i18n="gaps.layerLegend">Слой</legend>
+          <div class="chips" id="gaps-layer-chips" role="group" aria-labelledby="gaps-layer-legend"></div>
         </fieldset>
-        <p class="gaps-counted" id="gaps-counted"></p>
+        <p class="gaps-about" id="gaps-about"></p>
 
         <div class="gaps-map" id="gaps-map" role="region" data-i18n-aria="gaps.mapAria" aria-label="Карта пробелов данных"></div>
-        <p class="map-fallback" id="gaps-map-fallback" hidden data-i18n="gaps.mapFallback">Карта не загрузилась — те же цифры в таблице ниже.</p>
+        <p class="map-fallback" id="gaps-map-fallback" hidden data-i18n="gaps.mapFallback">Карта не загрузилась — итоги по городу ниже.</p>
 
-        <div class="gaps-legend" id="gaps-legend" aria-labelledby="gaps-legend-title">
-          <p class="label" id="gaps-legend-title" data-i18n="gaps.legendTitle">Доля «нет данных» в шестиугольнике</p>
+        <div class="gaps-legend">
+          <p class="label" data-i18n="gaps.legendTitle">Доля «нет данных» в ячейке</p>
           <ul class="gaps-legend-list" id="gaps-legend-list"></ul>
         </div>
 
-        <p class="gaps-cell" id="gaps-cell" aria-live="polite" data-i18n="gaps.cellPrompt">Нажмите на шестиугольник — покажем цифры.</p>
+        <p class="gaps-cell" id="gaps-cell" aria-live="polite" data-i18n="gaps.cellPrompt">Нажмите на ячейку — покажем числа.</p>
 
-        <section class="gaps-districts" aria-labelledby="gaps-table-title">
-          <h2 class="gaps-h2" id="gaps-table-title" data-i18n="gaps.tableTitle">По районам</h2>
+        <section class="gaps-totals" aria-labelledby="gaps-totals-title">
+          <h2 class="gaps-h2" id="gaps-totals-title" data-i18n="gaps.totalsTitle">Итоги по городу</h2>
           <div class="gaps-table-wrap">
             <table class="gaps-table" id="gaps-table"></table>
           </div>
@@ -81,18 +76,23 @@
         <h2 class="gaps-h2" id="gaps-help-title" data-i18n="gaps.helpTitle">Как помочь</h2>
         <div class="gaps-help-item">
           <h3 class="gaps-h3" data-i18n="gaps.helpPeopleTitle">Жителям</h3>
-          <p data-i18n="gaps.helpPeople">Поставьте приложение StreetComplete (Android). Оно задаёт простые вопросы о вашей улице: есть ли фонари, опущен ли бордюр на переходе, когда открыто кафе. Ответы уходят в OpenStreetMap, и Qadam подхватывает их при следующей сборке данных.</p>
+          <p data-i18n="gaps.helpPeople">Поставьте приложение StreetComplete (Android).</p>
         </div>
         <div class="gaps-help-item">
           <h3 class="gaps-h3" data-i18n="gaps.helpCityTitle">Городу</h3>
-          <p data-i18n="gaps.helpCity">Открыть данные об уличном освещении и доступной среде — переходах, бордюрах, пандусах — в машиночитаемом виде. Тогда пробелы закроются для всех городских сервисов, а не только для Qadam.</p>
+          <p data-i18n="gaps.helpCity">Открыть данные об уличном освещении и доступной среде.</p>
         </div>
       </section>
 
       <footer class="gaps-foot">
-        <p id="gaps-built" hidden></p>
-        <p data-i18n="gaps.attribution">Данные: © участники OpenStreetMap, лицензия ODbL.</p>
-        <p><a href="./" data-i18n="gaps.back">← К прогулкам</a></p>
+        <p id="gaps-dates" hidden></p>
+        <!-- атрибуция OSM и ODbL — ссылки по клику (адреса из контракта 1.4.0) -->
+        <p>
+          <a href="https://www.openstreetmap.org/copyright" id="gaps-attr-osm" target="_blank" rel="noopener noreferrer" data-i18n="gaps.attrOsm">© участники OpenStreetMap</a>
+          <span aria-hidden="true"> · </span>
+          <a href="https://opendatacommons.org/licenses/odbl/1-0/" id="gaps-attr-license" target="_blank" rel="noopener noreferrer" data-i18n="gaps.attrLicense">лицензия ODbL</a>
+        </p>
+        <p><a href="./" id="gaps-back" data-i18n="gaps.back">← К прогулкам</a></p>
       </footer>
     </main>
   </div>
