@@ -1,6 +1,9 @@
 // Отрисовка результатов. Все тексты с сервера вставляем через textContent: это данные, не разметка.
 import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
+import { dayDiff, eventStatus, eventStopLabel, localParts } from './events.js';
+
+const eventLabel = (st) => t(st.key, st.vars);
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -320,23 +323,8 @@ function renderWarmOffer(answer, ctx) {
 }
 
 // 1.3.0, событие: «сегодня в 19:00–21:00», площадка (address), кнопка «Источник» (source_url, только https).
-// «Идёт до 21:00» — только при starts_at ≤ сейчас < ends_at (см. eventOngoing); «сейчас» — context.local_time.
-// Часы работы у события не показываем: вместо них — время события.
-const ASTANA_OFFSET_MS = 5 * 3600 * 1000; // Астана = UTC+5
-
-function localParts(iso) {
-  // Переводим момент в UTC+5 (строка может прийти с любым смещением), а не режем ISO-строку
-  const d = new Date(Date.parse(iso) + ASTANA_OFFSET_MS);
-  const pad = (n) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
-    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
-  };
-}
-
-function dayDiff(dateA, dateB) {
-  return Math.round((Date.parse(`${dateA}T00:00:00Z`) - Date.parse(`${dateB}T00:00:00Z`)) / 86400000);
-}
+// «Идёт до 21:00», «проходит до 30.11 18:00», «началось в 19:00» — events.js (правило ARCHITECTURE §5);
+// «сейчас» — context.local_time. Часы работы у события не показываем: вместо них — время события.
 
 function eventWhen(card, nowIso) {
   const start = localParts(card.starts_at);
@@ -404,17 +392,11 @@ function listingsTitle(card) {
   return domain ? t('event.listingsTitle', { domain }) : t('event.listingsTitleBare');
 }
 
-// 8.2: уже начавшееся событие (starts_at ≤ local_time < ends_at) — «идёт до 21:00»; без ends_at — «идёт сейчас»
-// (только если началось сегодня по UTC+5: вчерашнее начало без конца ничего не говорит о «сейчас»).
-// Возвращает подпись строчными или null, если событие ещё не началось или уже кончилось.
-function eventOngoing(card, nowIso) {
-  if (card.kind !== 'event' || !card.starts_at || !nowIso) return null;
-  const now = Date.parse(nowIso);
-  if (Date.parse(card.starts_at) > now) return null;
-  if (card.ends_at) {
-    return now < Date.parse(card.ends_at) ? t('event.until', { time: localParts(card.ends_at).time }) : null;
-  }
-  return localParts(card.starts_at).date === localParts(nowIso).date ? t('event.onNow') : null;
+// Плашка начавшегося события: зелёная — только у идущего сеанса, иначе нейтральная
+function renderEventStatus(card, nowIso) {
+  const st = eventStatus(card, nowIso);
+  if (!st) return null;
+  return h('span', { class: `event-now${st.live ? '' : ' is-neutral'}`, text: cap(t(st.key, st.vars)) });
 }
 
 function httpsOnly(url) {
@@ -436,7 +418,7 @@ function renderEventBlock(card, ctx) {
       { class: 'event-when' },
       h('span', { class: 'event-badge', text: t('event.badge') }),
       h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
-      eventOngoing(card, ctx.nowIso) ? h('span', { class: 'event-now', text: cap(eventOngoing(card, ctx.nowIso)) }) : null,
+      renderEventStatus(card, ctx.nowIso),
     ),
     card.venue || card.address
       ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.venue || card.address }) })
@@ -641,7 +623,7 @@ function renderRoute(route, byId, ctx, originName) {
               class: 'tl-visit',
               text:
                 card.kind === 'event' && card.starts_at
-                  ? ` · ${eventOngoing(card, ctx.nowIso) || t('event.by', { time: localParts(card.starts_at).time })}`
+                  ? ` · ${eventLabel(eventStopLabel(card, ctx.nowIso))}`
                   : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
             }),
           ),

@@ -3036,3 +3036,9 @@ body:not(.v2) .submit-row .btn-primary {
   font-size: 13px;
   color: var(--ink-2);
 }
+
+/* T140: «проходит до 30.11 18:00», «началось в 19:00» — факт, но не «идёт сейчас»: нейтрально, не зелёным */
+.event-now.is-neutral {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
