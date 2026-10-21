@@ -921,10 +921,13 @@ function syncLangButtons() {
 function loadPrefs() {
   try {
     const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
-    // старые метки (no_bars, avoids прежнего словаря) отбрасываем; из противоречивой пары оставляем «нравится»
-    const pick = (list, vocab) => [...new Set(Array.isArray(list) ? list : [])].filter((x) => vocab.includes(x));
-    const likes = pick(raw?.likes, LIKE_TAGS).slice(0, 8);
-    const avoids = pick(raw?.avoids, AVOID_TAGS)
+    // запись 1.3.0 переводим в 1.3.1: likes no_bars → avoids bars; метки не из словарей отбрасываем;
+    // из противоречивой пары оставляем «нравится». Результат сразу сохраняется (init → savePrefs).
+    const list = (x) => (Array.isArray(x) ? x : []);
+    const oldLikes = list(raw?.likes);
+    const pick = (tags, vocab) => [...new Set(tags)].filter((x) => vocab.includes(x));
+    const likes = pick(oldLikes, LIKE_TAGS).slice(0, 8);
+    const avoids = pick([...list(raw?.avoids), ...(oldLikes.includes('no_bars') ? ['bars'] : [])], AVOID_TAGS)
       .filter((x) => !likes.includes(PREF_CONFLICT[x]))
       .slice(0, 8);
     return { likes, avoids };
@@ -1000,6 +1003,7 @@ async function init() {
   }
   bindEvents();
   state.prefs = loadPrefs();
+  savePrefs(); // старая запись (1.3.0) сразу переписывается в новом формате
   els.prefsClear.addEventListener('click', () => {
     state.prefs = { likes: [], avoids: [] };
     savePrefs();
