@@ -275,3 +275,35 @@ def test_parse_prompt_sights_rule_matches_rules_parser() -> None:
     for word in SPECIFIC_SIGHTS:
         assert f"«{word}»" in line, word
         assert "park" not in parse_rules(f"покажи {word}", None, {}).categories, word
+
+
+# ------------------------------------------------------------- T123: prefs in the card prompt
+
+
+def test_prefs_go_into_the_request_block_as_codes(cands: list[Candidate]) -> None:
+    from app.schemas import UserPrefs
+
+    prefs = UserPrefs(likes=["museums", "no_bars"], avoids=["coffee"])
+    prompt = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands, prefs=prefs)
+    request_block = prompt.split("КОНТЕКСТ:")[0]
+    assert '"prefs"' in request_block and '"museums"' in request_block
+    assert '"avoids": [\n   "coffee"\n  ]' in request_block
+    plain = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands)
+    assert '"prefs"' not in plain
+    empty = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands,
+                         prefs=UserPrefs())
+    assert '"prefs"' not in empty
+
+
+def test_draft_cards_passes_prefs_to_the_prompt(cands: list[Candidate]) -> None:
+    from app.schemas import UserPrefs
+
+    fake = FakeLLM(draft_for(cands[0].poi.id))
+    draft_cards(QueryIntent(raw_query="x"), context(), cands, fake,  # type: ignore[arg-type]
+                prefs=UserPrefs(likes=["parks"]))
+    assert '"likes": [\n   "parks"\n  ]' in fake.calls[0]["prompt"]
+
+
+def test_system_prompt_explains_prefs() -> None:
+    system = load_prompt("generate_cards")
+    assert "prefs" in system and "avoids" in system and "no_bars" in system

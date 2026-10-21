@@ -9,6 +9,7 @@ test_api.py imports the helpers below (FakeLLM, make_store, install_core_fakes, 
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import math
 import re
@@ -46,6 +47,11 @@ from app.schemas import (
 from app.store import Store
 
 from .conftest import ASTANA_TZ
+
+# the honest tail of an event note (app.events)
+CHECK_RU = " — по данным источника, проверьте перед визитом."
+CHECK_KK = " — дереккөз бойынша, барар алдында тексеріңіз."
+CHECK_EN = " — per the source, check before you go."
 
 # ------------------------------------------------------------------ CORE fakes
 
@@ -118,7 +124,8 @@ def fake_finalize(draft: DraftResponse, candidates: list[Candidate], intent: Que
 
 def fake_plan_route(origin: GeoPoint, stops: list[Candidate], budget_min: int | None,
                     visit_min: dict[str, int], max_stops: int = 3, *, loop: bool = False,
-                    note: str | None = None) -> MiniRoute | None:
+                    note: str | None = None, lang: str = "ru", profile: str = "fastest"
+                    ) -> MiniRoute | None:
     if not stops:
         return None
     legs, prev, prev_id = [], origin, "origin"
@@ -1506,3 +1513,725 @@ def test_cell_area_label_in_hectares(res: int, lang: str, label: str) -> None:
 def test_hectares_are_formatted_like_the_browser(ha: float, kk: str, en: str) -> None:
     assert pipeline_mod._format_ha(ha, "kk") == kk
     assert pipeline_mod._format_ha(ha, "en") == en
+
+
+# ------------------------------------- T123: route profile -> plan_route / plan_walk / minutes
+
+
+def _recording_plan_route(calls: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
+    def plan(origin, stops, budget_min, visit_min, max_stops=3, **kw):  # type: ignore[no-untyped-def]
+        calls.append(kw)
+        return fake_plan_route(origin, stops, budget_min, visit_min, max_stops,
+                               loop=kw.get("loop", False), note=kw.get("note"))
+    return plan
+
+
+@pytest.mark.usefixtures("core_fakes")
+@pytest.mark.parametrize(("profile", "overrides", "want", "line"), [
+    # no graph here: the route is straight, so the panel says the profile was only asked for
+    ("fastest", None, "fastest", None),
+    ("lit", None, "lit", "запрошен маршрут по освещённым улицам"),
+    ("accessible", None, "accessible", "запрошен маршрут без ступенек"),
+    # the wheelchair switch turns the default into a step-free way, and the panel says why
+    ("fastest", {"wheelchair": True}, "accessible", "запрошен маршрут без ступенек (коляска)"),
+    # an explicit choice stays (Mode.wheelchair forbids stairs on "lit" too)
+    ("lit", {"wheelchair": True}, "lit", "запрошен маршрут по освещённым улицам"),
+])
+def test_route_profile_is_passed_without_the_graph(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch, profile: str,
+    overrides: dict[str, Any] | None, want: str, line: str | None,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _recording_plan_route(calls))
+    a = recommend(req("кофе", use_llm=False, route_profile=profile, overrides=overrides), deps)
+    assert a.route is not None and calls
+    assert calls[-1]["profile"] == want and calls[-1]["lang"] == "ru"
+    profile_lines = [f for f in a.data_used.filters if "маршрут" in f]
+    assert profile_lines == ([line] if line else [])
+
+
+@pytest.mark.parametrize(("lang", "line"), [
+    ("kk", "баспалдақсыз маршрут сұралды (арба)"),
+    ("en", "step-free route requested (wheelchair)")])
+def test_route_profile_line_follows_the_answer_language(deps: Deps, lang: str, line: str) -> None:
+    a = recommend(req("кофе", use_llm=False, lang=lang, overrides={"wheelchair": True}), deps)
+    assert line in a.data_used.filters
+
+
+def test_straight_route_says_the_profile_was_not_applied(deps: Deps) -> None:
+    """No graph (tests run with WALK_GRAPH=false): the route is "fastest", honestly noted."""
+    a = recommend(req("кофе", use_llm=False, route_profile="lit"), deps)
+    assert a.route is not None and a.route.path_source == "straight"
+    assert a.route.profile == "fastest"
+    assert "Профиль маршрута не учтён" in a.route.note
+    assert a.route.unknown_lit_share == 1.0
+    en = recommend(req("coffee", use_llm=False, lang="en", route_profile="lit"), deps)
+    assert en.route is not None and "Route profile not applied" in en.route.note
+
+
+@pytest.mark.parametrize("profile", ["accessible", "lit"])
+def test_graph_route_and_card_minutes_use_the_profile(
+    deps: Deps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str
+) -> None:
+    from app.walkgraph import WalkGraph
+
+    modes: list[str] = []
+    real_lengths = WalkGraph.lengths_from
+
+    def spy(self, origin, targets, mode=None, **kw):  # type: ignore[no-untyped-def]
+        modes.append(mode.profile if mode is not None else "none")
+        return real_lengths(self, origin, targets, mode, **kw)
+
+    monkeypatch.setattr(WalkGraph, "lengths_from", spy)
+    a = recommend(req("кофе", use_llm=False, route_profile=profile),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert a.route.profile == profile  # the profile the route was really planned with
+    assert modes and set(modes) == {profile}  # card minutes: the same Mode(profile=...)
+    line = {"accessible": "маршрут: без ступенек",
+            "lit": "маршрут: по освещённым улицам (данные OSM)"}[profile]
+    assert line in a.data_used.filters  # on the graph, without stairs: really applied
+
+
+def test_accessible_with_stairs_is_only_asked_for(deps: Deps, tmp_path: Path,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    real = route.plan_route
+
+    def with_steps(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"steps_count": 2}) if got else got
+
+    monkeypatch.setattr(route, "plan_route", with_steps)
+    a = recommend(req("кофе", use_llm=False, route_profile="accessible"),
+                  _graph_deps(deps, _grid_graph(tmp_path)))
+    assert a.route is not None and a.route.path_source == "graph"
+    assert "запрошен маршрут без ступенек" in a.data_used.filters
+    assert "маршрут: без ступенек" not in a.data_used.filters
+
+
+def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    got: list[str] = []
+    real = route.plan_walk
+
+    def spy(*args: Any, **kw: Any) -> list[Candidate]:
+        got.append(kw.get("profile", "missing"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(route, "plan_walk", spy)
+    recommend(req("прогулка на 60 минут", use_llm=False, overrides={"wheelchair": True}), deps)
+    assert got == ["accessible"]
+
+
+# ---------------------------------------------- T123: prefs -> search, panel, prompt, never logs
+
+PREFS = {"likes": ["museums", "no_bars"], "avoids": ["coffee"]}
+
+
+def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                             ) -> None:
+    install_core_fakes(monkeypatch)
+    seen: list[Any] = []
+
+    def spy(store, intent, ctx, query_vec, k=8, **kw):  # type: ignore[no-untyped-def]
+        seen.append(kw.get("prefs"))
+        return fake_retrieve(store, intent, ctx, query_vec, k)
+
+    monkeypatch.setattr(retrieval, "retrieve", spy)
+    a = recommend(req("куда сходить", use_llm=False, prefs=PREFS), deps)
+    assert seen and seen[0] is not None and seen[0].likes == ["museums", "no_bars"]
+    assert "предпочтения: музеи, без баров; избегать: кофе" in a.data_used.filters
+    seen.clear()
+    plain = recommend(req("куда сходить", use_llm=False, prefs={}), deps)
+    assert seen == [None]  # nothing to apply: the 1.2.0 call
+    assert not any("предпочтения" in f or "избегать" in f for f in plain.data_used.filters)
+
+
+@pytest.mark.parametrize(("lang", "prefs", "line"), [
+    ("kk", PREFS, "қалауыңыз: мұражайлар, барсыз; аулақ болу: кофе"),
+    ("en", PREFS, "likes: museums, no bars; avoid: coffee"),
+    ("en", {"avoids": ["night"]}, "avoid: night"),
+    ("ru", {"likes": ["warm", "kids"]}, "предпочтения: в тепле, с ребёнком"),
+])
+def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: dict[str, Any],
+                                                line: str) -> None:
+    a = recommend(req("куда сходить", use_llm=False, lang=lang, prefs=prefs), deps)
+    assert line in a.data_used.filters
+
+
+def test_prefs_shift_the_pick_on_the_real_core(deps: Deps) -> None:
+    plain = recommend(req("куда сходить", use_llm=False), deps)
+    liked = recommend(req("куда сходить", use_llm=False,
+                          prefs={"likes": ["parks", "no_bars"], "avoids": ["coffee"]}), deps)
+    before, after = [c.category for c in plain.cards], [c.category for c in liked.cards]
+    assert "park" not in before and "cafe" in before
+    assert after[0] == "park" and "cafe" not in after
+    assert not {"bar", "nightlife"} & set(after)
+    assert "по вашим предпочтениям" in liked.cards[0].why
+
+
+def test_prefs_go_to_the_card_prompt_as_codes(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                              ) -> None:
+    prompts: list[str] = []
+    llm = deps.llm
+    real = llm.generate_structured  # type: ignore[union-attr]
+
+    def spy(**kw: Any) -> Any:
+        prompts.append(kw["prompt"])
+        return real(**kw)
+
+    monkeypatch.setattr(llm, "generate_structured", spy)
+    recommend(req("куда сходить", prefs=PREFS), deps)
+    card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
+    assert '"likes": [\n   "museums",\n   "no_bars"\n  ]' in card_prompt
+    assert '"avoids": [\n   "coffee"\n  ]' in card_prompt
+
+
+# Every PrefTag code and its labels in ru / kk / en: none of them may show up in a log record
+# (the strict form of the rule «never together with the cell, the landmark or the query»).
+PREF_LOG_MARKERS = sorted(
+    {*pipeline_mod.PREF_NAMES["ru"], *(v for names in pipeline_mod.PREF_NAMES.values()
+                                       for v in names.values()), "prefs", "likes", "avoids"},
+    key=len, reverse=True)
+ALL_PREFS = {"likes": ["quiet", "museums", "parks", "no_bars", "warm", "night"],
+             "avoids": ["coffee", "kids"]}
+EXCLUDE = ["test:poi/1", "test:poi/12", "event:jazz"]  # «Ещё»: ids of cards already shown
+
+
+def _pref_leaks(records: list[logging.LogRecord]) -> list[str]:
+    out = []
+    for r in records:
+        text = (r.getMessage() + " " + (r.exc_text or "")).lower()
+        hits = [m for m in PREF_LOG_MARKERS if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+        hits += [x for x in (*EXCLUDE, "exclude") if x in text]
+        if hits:
+            out.append(f"{r.name}: {hits}: {text[:120]}")
+    return out
+
+
+def _boom(*args: Any, **kw: Any) -> Any:
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("location", [
+    {"landmark_id": "expo"}, {"h3_cell": h3.latlng_to_cell(51.0894, 71.4161, 10)}])
+@pytest.mark.parametrize("failure", [None, "retrieve", "route", "finalize", "llm", "template"])
+def test_prefs_never_reach_the_logs(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                    caplog: pytest.LogCaptureFixture,
+                                    location: dict[str, str], failure: str | None) -> None:
+    """T123 main check (EVAL's probe is extra): prefs are labels for one answer; no log record
+    carries them, so none carries them next to the cell, the landmark or the query. The same
+    for exclude_poi_ids («Ещё»): no shown id in any log record."""
+    if failure == "retrieve":
+        monkeypatch.setattr(retrieval, "retrieve", _boom)
+    elif failure == "route":
+        monkeypatch.setattr(route, "plan_route", _boom)
+    elif failure == "finalize":
+        monkeypatch.setattr(validate, "finalize", _boom)
+    elif failure == "template":
+        monkeypatch.setattr(validate, "template_cards", _boom)
+    elif failure == "llm":
+        deps = Deps(store=deps.store, llm=FakeLLM(fail=LLMUnavailable("down")),
+                    settings=deps.settings)
+    query = "тихое место погулять с видом"
+    body = {"query": query, "location": location, "at": DAYTIME, "prefs": ALL_PREFS,
+            "exclude_poi_ids": EXCLUDE}
+    request = RecommendRequest.model_validate(body)
+    with caplog.at_level(logging.DEBUG):
+        a = recommend(request, deps)
+        logging.getLogger("app").info("request %r", request)  # even a careless repr is clean
+    assert caplog.records  # the request line at least
+    assert _pref_leaks(caplog.records) == []
+    where = [query, location.get("landmark_id"), location.get("h3_cell")]
+    for r in caplog.records:  # and the request line has no query / cell / landmark either
+        if r.getMessage().startswith("recommend id="):
+            assert not any(w and w in r.getMessage() for w in where)
+    assert a.data_used.filters  # while the answer itself may say them
+
+
+# ------------------------------------------- T123: «в тепле» — indoor stops, short walks outside
+
+WARM_LINE = "в тепле: на улице до 10 мин подряд"
+
+
+def _frost(temp_c: float):  # type: ignore[no-untyped-def]
+    def get(origin: GeoPoint, at: datetime) -> WeatherInfo:
+        return WeatherInfo(temp_c=temp_c, summary=f"{temp_c:+.0f}°C", outdoor_ok=temp_c > -10,
+                           fetched_at=datetime(2026, 10, 19, 10, 0, tzinfo=UTC))
+    return get
+
+
+def test_warm_like_gives_indoor_stops_close_together(deps: Deps) -> None:
+    by_id = deps.store.by_id
+    plain = recommend(req("погулять", use_llm=False), deps)
+    assert any(not retrieval.is_indoor(by_id[c.poi_id]) for c in plain.cards)  # park, view
+    a = recommend(req("погулять", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    # indoor by the record (the test cafe has no "indoor" tag; OSM data always has it)
+    assert len(a.cards) >= 2 and all(retrieval.is_indoor(by_id[c.poi_id]) for c in a.cards)
+    assert a.route is not None and a.route.max_outdoor_leg_min is not None
+    assert a.route.max_outdoor_leg_min <= 10
+    assert all(c.walk_min <= 10 for c in a.cards)
+    assert WARM_LINE in a.data_used.filters and "в помещении" in a.data_used.filters
+    assert t_no_match() not in a.warnings  # «погулять» is not unmatched in the warm
+
+
+def t_no_match() -> str:
+    return TEXTS["ru"]["no_match"]
+
+
+def test_warm_by_the_indoor_switch_and_by_frost(deps: Deps, monkeypatch: pytest.MonkeyPatch
+                                                ) -> None:
+    switch = recommend(req("куда сходить", use_llm=False, overrides={"indoor_only": True}), deps)
+    assert WARM_LINE in switch.data_used.filters
+    assert not any(f.startswith("предпочтения") for f in switch.data_used.filters)
+    monkeypatch.setattr(weather, "get_weather", _frost(-20))
+    frost = recommend(req("куда сходить", use_llm=False), deps)
+    assert f"{WARM_LINE} (мороз −20 °C)" in frost.data_used.filters
+    assert all(retrieval.is_indoor(deps.store.by_id[c.poi_id]) for c in frost.cards)
+    en = recommend(req("where to go", use_llm=False, lang="en"), deps)
+    assert "warm: up to 10 min outside at a time (frost −20 °C)" in en.data_used.filters
+    kk = recommend(req("қайда баруға болады", use_llm=False, lang="kk"), deps)
+    assert "жылыда: далада қатарынан 10 минутқа дейін (аяз −20 °C)" in kk.data_used.filters
+    # the person avoids «в тепле»: frost does not switch it on
+    no = recommend(req("куда сходить", use_llm=False, prefs={"avoids": ["warm"]}), deps)
+    assert not any(f.startswith("в тепле:") for f in no.data_used.filters)
+    monkeypatch.setattr(weather, "get_weather", _frost(-9))
+    mild = recommend(req("куда сходить", use_llm=False), deps)
+    assert not any(f.startswith("в тепле:") for f in mild.data_used.filters)
+
+
+def test_warm_has_no_walk_loop(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A place at the start (inside the mall you stand in) is a fine warm stop; plan_walk would
+    skip it (AT_ORIGIN_M) and send the person out to a far one."""
+    calls: list[int] = []
+    real = route.plan_walk
+    monkeypatch.setattr(route, "plan_walk", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    a = recommend(req("прогулка на 60 минут", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    assert calls == [] and a.cards
+    assert a.route is None or a.route.legs[-1].to_id != "origin"
+
+
+def test_warm_cluster_keeps_stops_within_a_short_walk(synthetic_pois: list[POI]) -> None:
+    by_id = {p.id: p for p in synthetic_pois}
+
+    def cand(pid: str) -> Candidate:
+        return Candidate(poi=by_id[pid], distance_m=100, walk_min=2, score=0.5,
+                         hours=HoursVerdict(status="unknown", confidence="low", note="-"))
+
+    # 7 mall, 1 cafe, 9 restaurant: close together; 2 cafe 600 m east; 4 park outdoor
+    picked = pipeline_mod.warm_cluster([cand(i) for i in (
+        "test:poi/7", "test:poi/4", "test:poi/2", "test:poi/1", "test:poi/9")])
+    ids = [c.poi.id for c in picked]
+    assert ids[0] == "test:poi/7" and "test:poi/4" not in ids  # outdoor out: enough indoor
+    for a in picked:
+        for b in picked:
+            assert geo.walk_minutes(geo.haversine_m(a.poi.geo, b.poi.geo)) <= 10
+    # one indoor place only: outdoor ones stay in the pool, the far mall still goes
+    alone = pipeline_mod.warm_cluster([cand("test:poi/4"), cand("test:poi/7")])
+    assert [c.poi.id for c in alone] == ["test:poi/4"]
+
+
+def test_warm_with_too_few_indoor_places_says_so(deps: Deps) -> None:
+    only_outdoor = [p for p in deps.store.pois if p.category in ("park", "viewpoint", "monument",
+                                                                   "playground")]
+    store = make_store(only_outdoor, deps.store.landmarks)
+    a = recommend(req("куда сходить", use_llm=False, prefs={"likes": ["warm"]}),
+                  Deps(store=store, llm=deps.llm, settings=deps.settings))
+    assert a.cards
+    assert TEXTS["ru"]["warm_outdoor"] in a.warnings
+
+
+def test_warm_long_walk_outside_is_told(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = route.plan_route
+
+    def long_leg(*a: Any, **kw: Any) -> MiniRoute | None:
+        got = real(*a, **kw)
+        return got.model_copy(update={"max_outdoor_leg_min": 14}) if got else got
+
+    monkeypatch.setattr(route, "plan_route", long_leg)
+    a = recommend(req("куда сходить", use_llm=False, prefs={"likes": ["warm"]}), deps)
+    assert a.route is not None
+    assert TEXTS["ru"]["warm_long_leg"].format(n=14) in a.warnings
+
+
+# ------------------------------------------------- T123: events -> kind="event" cards (no net)
+
+
+def _event_record(slug: str = "jazz", starts: str = "2026-10-19T19:00:00+05:00",
+                  ends: str | None = "2026-10-19T21:00:00+05:00", **kw: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": f"event:{slug}", "title": {"ru": "Джазовый вечер", "kk": "Джаз кеші",
+                                         "en": "Jazz night"},
+        "category": "theatre", "tags": ["indoor", "live_music"],
+        "starts_at": starts, "ends_at": ends,
+        "venue": "Тест-музей", "address": "ул. Тестовая, 3",
+        "geo": {"lat": 51.0882, "lon": 71.4158},  # ~140 m from EXPO, next to test:poi/3
+        "venue_poi_id": "test:poi/3", "source_url": "https://example-venue.kz/afisha/jazz",
+        "source_name": "Тест-площадка", "fetched_at": "2026-10-18", "indoor": True,
+    }
+    data.update(kw)
+    return data
+
+
+def _events_deps(deps: Deps, tmp_path: Path, items: object) -> Deps:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "events.json").write_text(json.dumps(items, ensure_ascii=False),
+                                          encoding="utf-8")
+    return Deps(store=deps.store, llm=deps.llm,
+                settings=dataclasses.replace(deps.settings, data_dir=data_dir))
+
+
+EVENT_Q = "концерт или спектакль сегодня вечером"
+
+
+def test_event_becomes_an_event_card_on_the_template_path(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(EVENT_Q, use_llm=False), d)
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert len(ev_cards) == 1
+    c = ev_cards[0]
+    assert c.poi_id == "event:jazz" and c.title == "Джазовый вечер"
+    assert c.address == "Тест-музей, ул. Тестовая, 3"
+    assert c.facts_sources == ["manual"] and c.idea_source == "poi_data"
+    assert c.starts_at == datetime(2026, 10, 19, 19, 0, tzinfo=ASTANA_TZ)
+    assert c.ends_at == datetime(2026, 10, 19, 21, 0, tzinfo=ASTANA_TZ)
+    assert c.source_url == "https://example-venue.kz/afisha/jazz"
+    assert (c.open_status, c.open_confidence) == ("unknown", "low")
+    assert c.open_note == "Начало в 19:00; окончание в 21:00" + CHECK_RU
+    assert "начало в 19:00" in c.why and "часы работы не указаны" not in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (120, 120)
+    assert "manual" in a.data_used.sources
+    # the event is not an «unknown hours» place in the warnings
+    unknown = sum(x.open_status == "unknown" and x.kind == "place" for x in a.cards)
+    hours_lines = [w for w in a.warnings if "нет данных о часах" in w]
+    assert hours_lines == ([] if not unknown else [
+        TEXTS["ru"]["hours_unknown_1"] if unknown == 1
+        else TEXTS["ru"]["hours_unknown_n"].format(n=unknown)])
+    Card.model_validate(c.model_dump())  # the contract's event rules hold
+
+
+def test_the_venue_gives_its_place_to_its_event(deps: Deps, tmp_path: Path) -> None:
+    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum (the venue) is open on Tuesdays
+    plain = recommend(req("музей", use_llm=False, at=tuesday), deps)
+    assert "test:poi/3" in [c.poi_id for c in plain.cards]
+    show = _event_record("show", category="museum", title={"ru": "Выставка в музее"},
+                         starts="2026-10-20T11:00:00+05:00", ends="2026-10-20T19:00:00+05:00")
+    a = recommend(req("музей", use_llm=False, at=tuesday), _events_deps(deps, tmp_path, [show]))
+    ids = [c.poi_id for c in a.cards]
+    assert "event:show" in ids and "test:poi/3" not in ids
+
+
+def test_event_card_through_the_llm_path(deps: Deps, tmp_path: Path) -> None:
+    """The model writes «идёт сейчас» about an event that starts at 19:00: the sentence goes."""
+    llm = FakeLLM(whys=["Идёт сейчас! Джаз рядом с вами.", "Рядом и подходит."])
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    prompts: list[str] = []
+    real = llm.generate_structured
+
+    def spy(**kw: Any) -> Any:
+        prompts.append(kw["prompt"])
+        return real(**kw)
+
+    llm.generate_structured = spy  # type: ignore[method-assign]
+    a = recommend(req(EVENT_Q), d)
+    card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
+    assert '"kind": "event"' in card_prompt and '"on_now": false' in card_prompt
+    assert '"starts_local": "2026-10-19 19:00"' in card_prompt
+    ev_cards = [c for c in a.cards if c.kind == "event"]
+    assert ev_cards and a.data_used.generation == "llm"
+    assert "Идёт сейчас" not in ev_cards[0].why and "Джаз рядом" in ev_cards[0].why
+    assert ev_cards[0].source_url and ev_cards[0].facts_sources == ["manual"]
+
+
+def test_on_now_only_while_the_event_is_on(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T19:30:00+05:00"), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.open_note == "Идёт сейчас: 19:00–21:00 — по данным источника, проверьте перед визитом."
+    assert "идёт сейчас, до 21:00" in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (90, 90)  # what is left of it
+    no_end = _events_deps(deps, tmp_path, [_event_record(ends=None)])
+    b = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T19:30:00+05:00"), no_end)
+    c = next(c for c in b.cards if c.kind == "event")
+    assert c.ends_at is None and c.open_note == "Начало в 19:00" + CHECK_RU
+    assert "идёт" not in c.why.lower()
+
+
+@pytest.mark.parametrize(("lang", "title", "note"), [
+    ("kk", "Джаз кеші", "Басталуы: 19:00; аяқталуы: 21:00" + CHECK_KK),
+    ("en", "Jazz night", "Starts at 19:00; ends at 21:00 — per the source, check before you go."),
+])
+def test_event_card_in_kk_and_en(deps: Deps, tmp_path: Path, lang: str, title: str,
+                                 note: str) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req("concert tonight" if lang == "en" else "бүгін кешке концерт",
+                      use_llm=False, lang=lang), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.title == title and c.open_note == note
+
+
+def test_past_far_and_missing_events_give_no_event_card(deps: Deps, tmp_path: Path) -> None:
+    past = _event_record("past", starts="2026-10-19T10:00:00+05:00",
+                         ends="2026-10-19T12:00:00+05:00")
+    far = _event_record("far", geo={"lat": 51.16, "lon": 71.47})  # ~9 km away
+    later = _event_record("later", starts="2026-11-01T19:00:00+05:00", ends=None)
+    for items in ([past, far, later], [], {"broken": True}):
+        a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, items))
+        assert a.cards and not any(c.kind == "event" for c in a.cards)
+    missing = Deps(store=deps.store, llm=deps.llm,
+                   settings=dataclasses.replace(deps.settings, data_dir=tmp_path / "none"))
+    a = recommend(req(EVENT_Q, use_llm=False), missing)
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
+
+
+def test_events_follow_the_hard_filters(deps: Deps, tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    cafe = recommend(req("кофе", use_llm=False, overrides={"categories": ["cafe"]}), d)
+    assert not any(c.kind == "event" for c in cafe.cards)  # categories still filter
+    kids = recommend(req(EVENT_Q, use_llm=False, overrides={"with_kids": True}), d)
+    assert not any(c.kind == "event" for c in kids.cards)  # not marked kids_ok
+
+
+def test_a_live_event_passes_the_night_filter(deps: Deps, tmp_path: Path) -> None:
+    late = _event_record("late", starts="2026-10-19T22:00:00+05:00",
+                         ends="2026-10-19T23:59:00+05:00")
+    d = _events_deps(deps, tmp_path, [late])
+    a = recommend(req(EVENT_Q, use_llm=False, at="2026-10-19T23:00:00+05:00"), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert c.open_note.startswith("Идёт сейчас: 22:00–23:59")
+
+
+def test_event_card_prompt_rule_exists() -> None:
+    from app.llm import load_prompt
+
+    system = load_prompt("generate_cards")
+    assert 'kind = "event"' in system and "on_now" in system and "event_note" in system
+
+
+def test_a_broken_event_never_takes_the_places_down(deps: Deps, tmp_path: Path,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    real = retrieval.retrieve
+
+    def fragile(*a: Any, **kw: Any) -> list[Candidate]:
+        if kw.get("events"):
+            raise ValueError("bad event record")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(retrieval, "retrieve", fragile)
+    a = recommend(req(EVENT_Q, use_llm=False), _events_deps(deps, tmp_path, [_event_record()]))
+    assert a.cards and not any(c.kind == "event" for c in a.cards)
+    assert TEXTS["ru"]["search_error"] not in a.warnings
+
+
+# ------------------------------------- «Ещё» (contract 1.3.0, exclude_poi_ids): no repeats
+
+MORE_Q = "куда сходить сегодня"
+
+
+@pytest.mark.parametrize("use_llm", [False, True])
+def test_more_never_repeats_the_cards_already_shown(deps: Deps, tmp_path: Path,
+                                                    use_llm: bool) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    first = recommend(req(MORE_Q, use_llm=use_llm), d)
+    shown = [c.poi_id for c in first.cards]
+    assert len(shown) >= 2 and "event:jazz" in shown  # an event among them too
+    second = recommend(req(MORE_Q, use_llm=use_llm, exclude_poi_ids=shown), d)
+    assert second.cards and not set(shown) & {c.poi_id for c in second.cards}
+    assert second.route is None or not set(shown) & set(second.route.stop_ids)
+    assert "без уже показанных мест: " + str(len(shown)) in second.data_used.filters
+    third = recommend(req(MORE_Q, use_llm=use_llm,
+                          exclude_poi_ids=shown + [c.poi_id for c in second.cards]), d)
+    assert not set(shown + [c.poi_id for c in second.cards]) & {c.poi_id for c in third.cards}
+
+
+def test_more_with_nothing_left_is_an_honest_empty_answer(deps: Deps) -> None:
+    near = [p for p in deps.store.pois if p.id in ("test:poi/1", "test:poi/12")]
+    small = Deps(store=make_store(near, deps.store.landmarks), llm=deps.llm,
+                 settings=deps.settings)
+    first = recommend(req("кофе", use_llm=False), small)
+    assert {c.poi_id for c in first.cards} == {"test:poi/1", "test:poi/12"}
+    a = recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1", "test:poi/12"]),
+                  small)
+    assert a.cards == [] and a.route is None
+    assert a.summary == TEXTS["ru"]["summary_no_more"]
+    assert TEXTS["ru"]["nothing"] in a.warnings
+    en = recommend(req("coffee", use_llm=False, lang="en",
+                       exclude_poi_ids=["test:poi/1", "test:poi/12"]), small)
+    assert en.summary == TEXTS["en"]["summary_no_more"]
+
+
+def test_more_keeps_the_ids_out_of_the_retrieve_reasons(deps: Deps,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+    real = retrieval.retrieve
+
+    def spy(*a: Any, **kw: Any) -> list[Candidate]:
+        seen.append(kw.get("exclude_ids"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(retrieval, "retrieve", spy)
+    recommend(req("кофе", use_llm=False), deps)
+    assert seen == [None]  # nothing to exclude: the 1.2.0 call
+    seen.clear()
+    recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1"]), deps)
+    assert seen and seen[0] == frozenset({"test:poi/1"})
+
+
+
+# ---------------------------------------------- review de49d92: events, frost limit, «Ещё»
+
+
+def test_llm_summary_cannot_say_on_now_about_an_event_that_is_not_on(deps: Deps,
+                                                                    tmp_path: Path) -> None:
+    """Review BLOCK 1: «Джазовый вечер уже идёт совсем рядом.» while the card says 19:00."""
+    say = "Джазовый вечер уже идёт совсем рядом."
+    llm = FakeLLM(summary=say)
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    a = recommend(req(MORE_Q), d)
+    assert a.data_used.generation == "llm" and any(c.kind == "event" for c in a.cards)
+    assert "идёт" not in a.summary.lower()
+    on = recommend(req(MORE_Q, at="2026-10-19T19:30:00+05:00"), d)  # 19:00–21:00: on now
+    ev_cards = [c for c in on.cards if c.kind == "event"]
+    assert ev_cards and all(c.open_note.startswith("Идёт сейчас") for c in ev_cards)
+    assert on.summary == say  # true while it is on
+
+
+def test_llm_event_card_takes_the_visit_minutes_from_the_event(deps: Deps,
+                                                               tmp_path: Path) -> None:
+    d = _events_deps(deps, tmp_path, [_event_record()])  # FakeLLM says 20–30 min
+    a = recommend(req(MORE_Q), d)
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == "llm"
+    assert (c.visit_min_low, c.visit_min_high) == (120, 120)  # the 2-hour session
+
+
+RUN_RECORD = {"starts": "2026-10-01T10:00:00+05:00", "ends": "2026-11-30T18:00:00+05:00"}
+
+
+def test_a_run_of_many_days_is_not_on_now_and_not_night_sure(deps: Deps, tmp_path: Path
+                                                             ) -> None:
+    """Review BLOCK 2: an exhibition 01.10–30.11 at 23:00 is not «идёт сейчас: 10:00–18:00»
+    and does not pass the night filter as «surely on»."""
+    run = _event_record("expo-run", category="museum", title={"ru": "Выставка"}, **RUN_RECORD)
+    d = _events_deps(deps, tmp_path, [run])
+    day = recommend(req("выставка", use_llm=False), d)
+    c = next(c for c in day.cards if c.kind == "event")
+    assert c.open_note.startswith("Проходит до 30.11 18:00, часы работы площадки не указаны")
+    assert "проходит до 30.11 18:00" in c.why and "идёт сейчас" not in c.why
+    assert (c.visit_min_low, c.visit_min_high) == (60, 120)  # the museum estimate, not 300
+    night = recommend(req("куда сходить", use_llm=False, at="2026-10-19T23:00:00+05:00"), d)
+    assert not any(c.kind == "event" for c in night.cards)
+
+
+def test_an_explicit_walk_limit_survives_warm_mode(deps: Deps,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(weather, "get_weather", _frost(-20))
+    a = recommend(req("куда сходить", use_llm=False, overrides={"max_walk_min": 30}), deps)
+    assert "пешком до 30 мин" in a.data_used.filters  # not cut to 10 silently
+    assert "в тепле: между местами до 10 мин пешком (мороз −20 °C)" in a.data_used.filters
+    capped = recommend(req("куда сходить", use_llm=False), deps)
+    assert "пешком до 10 мин" in capped.data_used.filters
+
+
+def test_no_more_summary_only_for_an_honestly_empty_pick(deps: Deps,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(retrieval, "retrieve", _boom)
+    a = recommend(req("кофе", use_llm=False, exclude_poi_ids=["test:poi/1"]), deps)
+    assert a.cards == []
+    assert a.summary != TEXTS["ru"]["summary_no_more"]  # a failed search is not «no more»
+    assert TEXTS["ru"]["search_error"] in a.warnings
+
+
+def test_a_cut_one_sentence_llm_summary_falls_back_to_the_template(deps: Deps,
+                                                                   tmp_path: Path) -> None:
+    """Review nit: the model summary was one «идёт сейчас» sentence, cut -> not an empty
+    summary but the template one."""
+    llm = FakeLLM(summary="Джазовый вечер уже идёт совсем рядом.")
+    d = _events_deps(Deps(store=deps.store, llm=llm, settings=deps.settings), tmp_path,
+                     [_event_record()])
+    a = recommend(req(MORE_Q), d)
+    assert a.data_used.generation == "llm"
+    assert a.summary == TEXTS["ru"]["summary_n"].format(n=len(a.cards))
+    llm.summary = "Тут открыто сейчас."  # an «open now» claim without open/high
+    b = recommend(req("кофе"), deps_with(llm, deps))
+    assert b.summary.strip() and "открыто сейчас" not in b.summary
+
+
+def deps_with(llm: FakeLLM, deps: Deps) -> Deps:
+    return Deps(store=deps.store, llm=llm, settings=deps.settings)
+
+
+def test_llm_run_card_gets_the_category_visit_estimate(deps: Deps, tmp_path: Path) -> None:
+    run = _event_record("expo-run", category="museum", title={"ru": "Выставка"}, **RUN_RECORD)
+    a = recommend(req("выставка"), _events_deps(deps, tmp_path, [run]))  # FakeLLM: 20–30 min
+    c = next(c for c in a.cards if c.kind == "event")
+    assert a.data_used.generation == "llm"
+    assert (c.visit_min_low, c.visit_min_high) == (60, 120)  # the museum estimate
+
+
+# --------------------- an explicit «избегать» beats what the parser read in the text (UX check)
+
+
+def test_avoids_take_the_parsed_category_out_of_the_search(deps: Deps) -> None:
+    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids coffee): three cafes and the
+    panel saying «категории: кафе» next to «избегать: кофе» before. Now the parsed cafe
+    category and the coffee tag leave the search; the panel does not contradict itself."""
+    q = "Хочу тихое место с кофе"
+    plain = recommend(req(q, use_llm=False), deps)
+    assert plain.cards and all(c.category == "cafe" for c in plain.cards)
+    a = recommend(req(q, use_llm=False, prefs={"avoids": ["coffee"]}), deps)
+    # an avoid is a penalty, not a filter: the one quiet place of the test data (a cafe) may
+    # stay, the other cafes go
+    assert a.cards and sum(c.category == "cafe" for c in a.cards) <= 1
+    f = a.data_used.filters
+    assert not any(x.startswith("категории:") and "кафе" in x for x in f)
+    assert not any(x.startswith("теги:") and "кофе" in x for x in f)
+    assert "избегать: кофе" in f
+    assert a.intent.categories == ["cafe"]  # what was asked stays visible in the intent
+
+
+def test_explicit_ui_categories_stay_with_avoids(deps: Deps) -> None:
+    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["coffee"]},
+                      overrides={"categories": ["cafe"]}), deps)
+    assert a.cards and all(c.category == "cafe" for c in a.cards)  # the UI asked for cafes
+    assert "категории: кафе" in a.data_used.filters
+
+
+@pytest.mark.parametrize(("query", "label", "category", "gone"), [
+    ("музей рядом", "museums", "museum", True),
+    # the walk tag (not a parks label) still finds the one walk place of the test data
+    ("парк погулять", "parks", "park", False),
+])
+def test_avoids_drop_their_categories(deps: Deps, query: str, label: str, category: str,
+                                      gone: bool) -> None:
+    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum is open
+    name = pipeline_mod.CATEGORY_NAMES["ru"][category]
+    plain = recommend(req(query, use_llm=False, at=tuesday), deps)
+    assert any(name in x for x in plain.data_used.filters if x.startswith("категории:"))
+    a = recommend(req(query, use_llm=False, at=tuesday, prefs={"avoids": [label]}), deps)
+    assert not any(name in x for x in a.data_used.filters if x.startswith("категории:"))
+    if gone:  # the query word («музей») no longer pulls the avoided place up either
+        assert a.cards and not any(c.category == category for c in a.cards)
+
+
+def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
+    """«кофе рядом» + «Без кафе»: the word «кофе» does not pull cafes up against the chip."""
+    near = [p for p in deps.store.pois if p.id in ("test:poi/12", "test:poi/7", "test:poi/9")]
+    small = Deps(store=make_store(near, deps.store.landmarks), llm=deps.llm,
+                 settings=deps.settings)
+    plain = recommend(req("кофе рядом", use_llm=False), small)
+    assert [c.category for c in plain.cards] == ["cafe"]  # the category filter of the text
+    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["coffee"]}), small)
+    assert a.cards and a.cards[0].category != "cafe"
+    assert TEXTS["ru"]["no_match"] not in a.warnings  # the avoided word is not «unmatched»
+
+
+def test_avoided_categories_and_tags_follow_the_table() -> None:
+    from app.schemas import UserPrefs
+
+    cats, tags = retrieval.avoided(UserPrefs(avoids=["coffee", "museums", "night"]))
+    assert cats == {"cafe", "museum", "gallery"}
+    assert tags == {"coffee", "night", "late_open", "24_7"}
+    assert retrieval.avoided(None) == (frozenset(), frozenset())

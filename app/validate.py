@@ -8,11 +8,14 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
+from app import events as ev
 from app.hours import unknown_note
-from app.retrieval import explain, generic_key, poi_text, text_stems
+from app.retrieval import EVENT_WORDS, explain, generic_key, is_event, poi_text, text_stems
 from app.schemas import (
     POI,
     Candidate,
@@ -82,6 +85,11 @@ FINALIZE_WARNINGS: dict[str, dict[str, str]] = {
     },
 }
 UNKNOWN_HOURS_NOTE = unknown_note("ru")  # texts in ru/kk/en live in app.hours
+EVENT_TODO: dict[str, str] = {
+    "ru": "Проверьте время и билеты на странице источника и приходите заранее.",
+    "kk": "Уақыты мен билеттерді дереккөз бетінен тексеріп, ертерек келіңіз.",
+    "en": "Check the time and tickets on the source page and come a little early.",
+}
 
 _CLAIM_RE = re.compile(
     "|".join(r"\s+".join(map(re.escape, claim.split())) for claim in FORBIDDEN_OPEN_CLAIMS),
@@ -234,6 +242,12 @@ _EN_ALONE = re.compile(
 _ALL_DAY = re.compile(
     r"(круглосуточн\w*|24\s*/\s*7|24\s*час\w*|тәулік\s+бойы|around the clock|24 hours)"
 )
+# T123: «идёт сейчас» about an event is a claim too: only when starts_at ≤ now < ends_at
+_LIVE = re.compile(
+    r"(ид[её]т\s+сейчас|сейчас\s+ид[её]т|уже\s+ид[её]т|уже\s+начал\w*|в\s+разгаре|"
+    r"happening\s+now|\bon\s+now\b|already\s+(started|on)|under\s*way|"
+    r"қазір\s+өт\w*|басталып\s+кетт\w*)"
+)
 
 
 def _fold(text: str, to_cyrillic: bool) -> str:
@@ -268,6 +282,12 @@ def _sentences(text: str) -> list[str]:
     """Sentences as written (only invisible zero-width characters are removed)."""
     clean = text.translate(_ZERO_WIDTH)
     return [s for s in _SENTENCE_SPLIT.split(clean.strip()) if s]
+
+
+def has_live_claim(text: str) -> bool:
+    """«Идёт сейчас» / «happening now» / «қазір өтіп жатыр» in any sentence (ru, kk, en)."""
+    return any(_LIVE.search(_fold(s, True)) or _LIVE.search(_fold(s, False))
+               for s in _sentences(text))
 
 
 def has_open_claim(text: str, *, all_day_ok: bool = False) -> bool:
@@ -385,12 +405,17 @@ def _sentence_unverified(sentence: str, facts: _Facts) -> bool:
     return False
 
 
-def _guard_text(text: str, facts: _Facts, allow_open: bool) -> tuple[str, bool, bool]:
-    """(kept text, open claims removed?, unverifiable facts removed?) — whole sentences."""
+def _guard_text(text: str, facts: _Facts, allow_open: bool, allow_live: bool = True
+                ) -> tuple[str, bool, bool]:
+    """(kept text, open claims removed?, unverifiable facts removed?) — whole sentences.
+    allow_live=False: an event that is not on now — «идёт сейчас» is cut as a claim."""
     kept: list[str] = []
     claims = facts_cut = False
     for sentence in _sentences(text):
         if not allow_open and _sentence_claims_open(sentence, facts.all_day_ok):
+            claims = True
+            continue
+        if not allow_live and has_live_claim(sentence):
             claims = True
             continue
         if _sentence_unverified(sentence, facts):
@@ -405,7 +430,10 @@ def _guard_text(text: str, facts: _Facts, allow_open: bool) -> tuple[str, bool, 
 def _backed_by_data(text: str, poi: POI) -> bool:
     if (poi.description or "").strip():
         return True
-    return bool(text_stems(text) & text_stems(poi_text(poi)))
+    stems = text_stems(poi_text(poi))
+    if is_event(poi):  # the search words of an event («концерт», «афиша») are not its data
+        stems -= text_stems(EVENT_WORDS)
+    return bool(text_stems(text) & stems)
 
 
 # ------------------------------------------------------------------ helpers
@@ -432,11 +460,14 @@ def _sentence(reasons: list[str]) -> str:
     return text[0].upper() + text[1:] + ("" if text.endswith((".", "!", "?", "…")) else ".")
 
 
-def _template_why(cand: Candidate, intent: QueryIntent, ctx: SearchContext) -> str:
+def _template_why(cand: Candidate, intent: QueryIntent, ctx: SearchContext,
+                  event: ev.Event | None = None) -> str:
     if intent.lang == "ru" and cand.matched:
-        reasons = cand.matched
+        reasons = list(cand.matched)
     else:
         reasons = explain(cand, intent, ctx, lang=intent.lang)
+    if event is not None:  # the event time right after the walk: «≈5 мин пешком, начало в 19:00»
+        reasons.insert(1, ev.reason(event, ctx.local_time, intent.lang))
     return _trim(_sentence(reasons[:3]), MAX_WHY_CHARS)
 
 
@@ -471,8 +502,11 @@ def _card(
     todo: str,
     visit: tuple[int, int],
     idea_source: Literal["poi_data", "generated"],
+    event: ev.Event | None = None,
 ) -> Card:
     poi, hours = cand.poi, cand.hours
+    if event is not None:
+        return _event_card(rank, cand, intent, why, todo, visit, idea_source, event)
     note = hours.note  # already in the user's language (retrieval asks app.hours with lang)
     if hours.status == "unknown" and not (poi.opening_hours or "").strip():
         # same rule as pipeline._localize_hours, so its re-wording gives the same text
@@ -499,6 +533,51 @@ def _card(
         address=poi.address,
         website=poi.website,
     )
+
+
+def _event_card(
+    rank: int,
+    cand: Candidate,
+    intent: QueryIntent,
+    why: str,
+    todo: str,
+    visit: tuple[int, int],
+    idea_source: Literal["poi_data", "generated"],
+    event: ev.Event,
+) -> Card:
+    """kind="event" (contract 1.3.0): poi_id = event id, title in the answer language,
+    address = venue and address, facts_sources ["manual"], starts_at / ends_at / source_url
+    from data/events.json; open_status unknown / low with the event time as the note (code)."""
+    return Card(
+        rank=rank,
+        poi_id=event.id,
+        title=event.title_in(intent.lang),
+        category=event.category,
+        geo=event.geo,
+        distance_m=cand.distance_m,
+        walk_min=cand.walk_min,
+        visit_min_low=visit[0],
+        visit_min_high=visit[1],
+        why=why,
+        what_to_do=todo,
+        open_status="unknown",
+        open_confidence="low",
+        open_note=cand.hours.note,  # app.events.note: «Начало в 19:00 — по данным источника, …»
+        idea_source=idea_source,
+        facts_sources=["manual"],
+        data_confidence=cand.poi.data_confidence,
+        tags=list(cand.poi.tags),
+        address=event.place_line(),
+        website=None,
+        kind="event",
+        starts_at=event.starts_at,
+        ends_at=event.ends_at,
+        source_url=event.source_url,
+    )
+
+
+def _event_todo(lang: Lang) -> str:
+    return EVENT_TODO.get(lang, EVENT_TODO["ru"])
 
 
 def _distance_label(metres: int, lang: Lang) -> str:
@@ -587,17 +666,28 @@ def _facts_from_card(card: Card) -> _Facts:
 # ------------------------------------------------------------------ public
 
 
-def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> str:
+def _event_on_now(card: Card, now: datetime | None) -> bool:
+    """The same rule as app.events.is_live, from the card: a session on now (both times)."""
+    if now is None or card.starts_at is None or card.ends_at is None:
+        return False
+    return (card.starts_at <= now < card.ends_at
+            and card.ends_at - card.starts_at <= ev.SESSION_MAX)
+
+
+def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False,
+                     now: datetime | None = None) -> str:
     """Remove "open now" style sentences unless every card is open/high.
 
     finalize() never sees DraftResponse.summary; the pipeline calls this on it.
     llm=True (the summary was written by the model): also drop sentences with prices, phones,
-    links, addresses or numbers / times not found on the cards, and keep one short sentence.
+    links, addresses or numbers / times not found on the cards, and keep one short sentence;
+    T123: «идёт сейчас» stays only when every event card is on at `now` (the request time).
     The pipeline's own template summaries (counts, airport times) use the default llm=False.
     """
     all_open = bool(cards) and all(
         c.open_status == "open" and c.open_confidence == "high" for c in cards
     )
+    live_ok = all(_event_on_now(c, now) for c in cards if c.kind == "event")
     if not llm:
         sentences = _sentences(summary)
         kept = [s for s in sentences if all_open or not _sentence_claims_open(s)]
@@ -605,7 +695,7 @@ def sanitize_summary(summary: str, cards: list[Card], *, llm: bool = False) -> s
     facts = _Facts(frozenset({float(len(cards))}), frozenset(), (), True, True)
     for card in cards:
         facts = facts.merge(_facts_from_card(card))
-    text = _guard_text(summary, facts, allow_open=all_open)[0]
+    text = _guard_text(summary, facts, allow_open=all_open, allow_live=live_ok)[0]
     return _trim(_first_sentences(text, 1), MAX_SUMMARY_CHARS)
 
 
@@ -614,6 +704,8 @@ def finalize(
     candidates: list[Candidate],
     intent: QueryIntent,
     ctx: SearchContext,
+    *,
+    events: Mapping[str, ev.Event] | None = None,
 ) -> tuple[list[Card], list[str]]:
     """Turn LLM drafts into Cards. Returns (cards, warnings).
 
@@ -627,7 +719,10 @@ def finalize(
     - clamp visit minutes (low <= high), trim texts to limits, rank 1..3;
     - card titles are distinct: unnamed / same-named places get the distance;
     - if fewer than 1 valid card remains -> return template_cards(...) and a warning.
+    T123 `events` (id -> app.events.Event): a candidate that is an event becomes a
+    kind="event" card; «идёт сейчас» is cut unless starts_at ≤ now < ends_at.
     """
+    events = events or {}
     if not candidates:
         return [], [FINALIZE_WARNINGS.get(intent.lang, FINALIZE_WARNINGS["ru"])["no_candidates"]]
 
@@ -651,11 +746,17 @@ def finalize(
         if generic is not None:
             seen.add(generic)
 
+        event = events.get(poi_id)
         low, high = sorted((item.visit_min_low, item.visit_min_high))
+        if event is not None:  # the event times beat the model's guess (a 2-hour concert);
+            # a run (an exhibition of many days) gets the category estimate, as in the template
+            run = None if ev.is_session(event) else _visit_minutes(event.category, intent)
+            low, high = ev.visit_minutes(event, ctx.local_time) or run or (low, high)
         facts = _facts_for(cand, (low, high), intent, _title(cand.poi, intent.lang))
         allow_open = cand.hours.status == "open" and cand.hours.confidence == "high"
-        why, why_claim, why_facts = _guard_text(item.why, facts, allow_open)
-        todo, todo_claim, todo_facts = _guard_text(item.what_to_do, facts, allow_open)
+        live = event is None or ev.is_live(event, ctx.local_time)
+        why, why_claim, why_facts = _guard_text(item.why, facts, allow_open, live)
+        todo, todo_claim, todo_facts = _guard_text(item.what_to_do, facts, allow_open, live)
         stripped += why_claim or todo_claim
         facts_cut += why_facts or todo_facts
         why = _trim(_first_sentences(why, MAX_WHY_SENTENCES), MAX_WHY_CHARS)
@@ -668,10 +769,12 @@ def finalize(
                 rank=len(cards) + 1,
                 cand=cand,
                 intent=intent,
-                why=why or _template_why(cand, intent, ctx),
-                todo=todo or _template_todo(cand.poi, intent.lang),
+                why=why or _template_why(cand, intent, ctx, event),
+                todo=todo or (_event_todo(intent.lang) if event
+                              else _template_todo(cand.poi, intent.lang)),
                 visit=(low, high),
                 idea_source=idea_source,
+                event=event,
             )
         )
 
@@ -687,7 +790,7 @@ def finalize(
         warnings.append(text["facts"])
     if not cards:
         warnings.append(text["fallback"])
-        return template_cards(candidates, intent, ctx), warnings
+        return template_cards(candidates, intent, ctx, events=events), warnings
     return _distinct_titles(cards, [by_id[c.poi_id] for c in cards], intent.lang), warnings
 
 
@@ -696,13 +799,17 @@ def template_cards(
     intent: QueryIntent,
     ctx: SearchContext,
     n: int = 3,
+    *,
+    events: Mapping[str, ev.Event] | None = None,
 ) -> list[Card]:
     """Deterministic cards without LLM (fallback and `use_llm=False`).
 
     why = joined Candidate.matched reasons; what_to_do = per-category template in intent.lang;
     idea_source = "poi_data". Prefer category diversity among the n cards; never two cards
     for unnamed places with the same generic name (e.g. «Детская площадка»).
+    T123 `events`: an event candidate becomes a kind="event" card (time from app.events).
     """
+    events = events or {}
     n = max(0, min(n, MAX_CARDS))
     chosen: list[Candidate] = []
     for strict in (True, False):  # strict pass: at most 2 cards per category
@@ -718,16 +825,19 @@ def template_cards(
             if strict and sum(c.poi.category == cand.poi.category for c in chosen) >= 2:
                 continue
             chosen.append(cand)
-    cards = [
-        _card(
-            rank=rank,
-            cand=cand,
-            intent=intent,
-            why=_template_why(cand, intent, ctx),
-            todo=_template_todo(cand.poi, intent.lang),
-            visit=_visit_minutes(cand.poi.category, intent),
-            idea_source="poi_data",
-        )
-        for rank, cand in enumerate(chosen, start=1)
-    ]
+    cards = [_template_card(rank, cand, intent, ctx, events.get(cand.poi.id))
+             for rank, cand in enumerate(chosen, start=1)]
     return _distinct_titles(cards, chosen, intent.lang)
+
+
+def _template_card(rank: int, cand: Candidate, intent: QueryIntent, ctx: SearchContext,
+                   event: ev.Event | None) -> Card:
+    if event is None:
+        return _card(rank=rank, cand=cand, intent=intent,
+                     why=_template_why(cand, intent, ctx),
+                     todo=_template_todo(cand.poi, intent.lang),
+                     visit=_visit_minutes(cand.poi.category, intent), idea_source="poi_data")
+    visit = ev.visit_minutes(event, ctx.local_time) or _visit_minutes(event.category, intent)
+    return _card(rank=rank, cand=cand, intent=intent,
+                 why=_template_why(cand, intent, ctx, event), todo=_event_todo(intent.lang),
+                 visit=visit, idea_source="poi_data", event=event)

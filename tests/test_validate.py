@@ -32,6 +32,11 @@ from app.validate import (
 
 from .conftest import EXPO
 
+# the honest tail of an event note (app.events)
+CHECK_RU = " — по данным источника, проверьте перед визитом."
+CHECK_KK = " — дереккөз бойынша, барар алдында тексеріңіз."
+CHECK_EN = " — per the source, check before you go."
+
 
 def make_store_for(pois: list[POI]) -> Store:
     return Store(pois=pois, by_id={p.id: p for p in pois}, landmarks={})
@@ -738,3 +743,102 @@ def test_km_with_dot_is_not_a_time(cands: list[Candidate]) -> None:
     far = [cand(cands[3].poi, UNKNOWN, 1200)]
     resp = DraftResponse(summary="", cards=[draft("test:poi/4", why="Парк в 1.20 км. Тихо.")])
     assert finalize(resp, far, intent(), ctx())[0][0].why == "Парк в 1.20 км. Тихо."
+
+
+# ------------------------------------------------------ T123: event cards (contract 1.3.0)
+
+
+def _event(starts: str = "2026-10-20T19:00:00+05:00",
+           ends: str | None = "2026-10-20T21:00:00+05:00"):  # type: ignore[no-untyped-def]
+    from app import events
+
+    return events.Event.model_validate({
+        "id": "event:quartet", "title": {"ru": "Струнный квартет", "en": "String quartet"},
+        "category": "theatre", "tags": ["indoor", "live_music"],
+        "starts_at": starts, "ends_at": ends, "venue": "Зал", "address": "пр. Тестовый, 7",
+        "geo": {"lat": EXPO[0] + 0.001, "lon": EXPO[1]},
+        "source_url": "https://example-hall.kz/afisha/1", "indoor": True,
+    })
+
+
+def _event_cand(e, now: datetime | None = None):  # type: ignore[no-untyped-def]
+    from app import events
+
+    at = now or ctx().local_time
+    return Candidate(poi=events.as_poi(e, "ru"), distance_m=120, walk_min=3,
+                     hours=events.verdict(e, at, "ru"), score=0.5,
+                     matched=["≈3 мин пешком", "по вашим предпочтениям"])
+
+
+def test_template_event_card() -> None:
+    e = _event()
+    card = template_cards([_event_cand(e)], intent(), ctx(), events={e.id: e})[0]
+    assert card.kind == "event" and card.poi_id == "event:quartet"
+    assert card.title == "Струнный квартет" and card.address == "Зал, пр. Тестовый, 7"
+    assert card.starts_at == e.starts_at and card.ends_at == e.ends_at
+    assert card.source_url == "https://example-hall.kz/afisha/1"
+    assert card.facts_sources == ["manual"] and card.website is None
+    assert (card.open_status, card.open_confidence) == ("unknown", "low")
+    assert card.open_note == "Начало в 19:00; окончание в 21:00" + CHECK_RU
+    assert card.why == "≈3 мин пешком, начало в 19:00, по вашим предпочтениям."
+    assert "источника" in card.what_to_do
+    assert (card.visit_min_low, card.visit_min_high) == (120, 120)
+    en = template_cards([_event_cand(e)], intent("en"), ctx(), events={e.id: e})[0]
+    assert en.title == "String quartet" and "starts at 19:00" in en.why
+
+
+def test_without_the_events_map_it_stays_a_place() -> None:
+    e = _event()
+    card = template_cards([_event_cand(e)], intent(), ctx())[0]
+    assert card.kind == "place" and card.starts_at is None and card.source_url is None
+
+
+def test_finalize_cuts_on_now_unless_the_event_is_on() -> None:
+    e = _event()
+    d = DraftResponse(summary="x", cards=[CardDraft(
+        poi_id=e.id, why="Идёт сейчас, заходите. Квартет в двух шагах.",
+        what_to_do="Уже идёт — успейте к антракту.", visit_min_low=30, visit_min_high=60,
+        idea_source="generated")])
+    cards, warns = finalize(d, [_event_cand(e)], intent(), ctx(), events={e.id: e})
+    assert cards[0].kind == "event" and cards[0].why == "Квартет в двух шагах."
+    assert "Уже идёт" not in cards[0].what_to_do and cards[0].what_to_do  # template todo
+    assert any("текущей работе" in w for w in warns)
+    on = ctx().model_copy(update={"local_time": datetime(2026, 10, 20, 19, 30,
+                                                         tzinfo=ASTANA_TZ)})
+    live, _ = finalize(d, [_event_cand(e, on.local_time)], intent(), on, events={e.id: e})
+    assert live[0].why.startswith("Идёт сейчас")  # true while 19:00 ≤ now < 21:00
+
+
+def test_event_words_are_not_data_for_idea_source() -> None:
+    e = _event()
+    d = DraftResponse(summary="x", cards=[CardDraft(
+        poi_id=e.id, why="Хорошая афиша на сегодня.", what_to_do="Сходите на концерт.",
+        visit_min_low=30, visit_min_high=60, idea_source="poi_data")])
+    cards, _ = finalize(d, [_event_cand(e)], intent(), ctx(), events={e.id: e})
+    assert cards[0].idea_source == "generated"
+
+
+def test_live_claim_guard() -> None:
+    from app.validate import has_live_claim
+
+    for text in ("Идёт сейчас!", "Концерт уже идет.", "It is on now.", "Happening now",
+                 "Қазір өтіп жатыр."):
+        assert has_live_claim(text), text
+    for text in ("Начало в 19:00.", "Starts at 19:00.", "Идёт по набережной."):
+        assert not has_live_claim(text), text
+
+
+def test_llm_summary_live_claim_follows_the_event_cards() -> None:
+    """Review BLOCK 1: the model summary may say «идёт сейчас» only while every event is on."""
+    e = _event()
+    card = template_cards([_event_cand(e)], intent(), ctx(), events={e.id: e})[0]
+    text = "Квартет уже идёт совсем рядом."
+    assert sanitize_summary(text, [card], llm=True, now=ctx().local_time) == ""
+    assert sanitize_summary(text, [card], llm=True) == ""  # no time given: not confirmed
+    on = datetime(2026, 10, 20, 19, 30, tzinfo=ASTANA_TZ)
+    live = template_cards([_event_cand(e, on)], intent(),
+                          ctx().model_copy(update={"local_time": on}), events={e.id: e})[0]
+    assert sanitize_summary(text, [live], llm=True, now=on) == text
+    run = _event(starts="2026-10-01T10:00:00+05:00", ends="2026-11-30T18:00:00+05:00")
+    run_card = template_cards([_event_cand(run)], intent(), ctx(), events={run.id: run})[0]
+    assert sanitize_summary(text, [run_card], llm=True, now=ctx().local_time) == ""

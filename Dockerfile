@@ -27,6 +27,7 @@ COPY web/ ./web/
 COPY data/processed/ ./data/processed/
 COPY data/index/ ./data/index/
 COPY data/landmarks.json ./data/landmarks.json
+COPY data/events.json ./data/events.json
 
 USER 1000:1000
 EXPOSE 7860
