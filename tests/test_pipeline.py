@@ -2254,3 +2254,74 @@ def test_long_outdoor_keeps_walks_outside_short_without_the_indoor_filter(
     en = recommend(req("walk", use_llm=False, lang="en", prefs={"avoids": ["long_outdoor"]}),
                    deps)
     assert "no long walks outside: up to 10 min at a time" in en.data_used.filters
+
+
+# ------------------------------- T133: an event in the route — the last stop, or not a stop
+
+
+def _last_stop_fake(calls: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
+    """plan_route of CORE T131 (last_stop_id=...), faked: records the call, puts it last."""
+    real = route.plan_route
+
+    def plan(origin, stops, budget_min, visit_min, max_stops=3, *, last_stop_id=None,
+             **kw):  # type: ignore[no-untyped-def]
+        calls.append({"stops": [s.poi.id for s in stops], "last": last_stop_id})
+        got = real(origin, stops, budget_min, visit_min, max_stops, **kw)
+        if got is None or last_stop_id is None:
+            return got
+        ids = [i for i in got.stop_ids if i != last_stop_id] + [last_stop_id]
+        return got.model_copy(update={"stop_ids": ids})
+    return plan
+
+
+@pytest.mark.parametrize(("at", "is_stop"), [
+    ("2026-10-19T18:45:00+05:00", True),  # 15 min before the start
+    ("2026-10-19T18:30:00+05:00", True),  # exactly 30 min
+    ("2026-10-19T19:30:00+05:00", True),  # on now
+    ("2026-10-19T18:00:00+05:00", False),  # 60 min before: a card, not a stop
+])
+def test_event_is_the_last_stop_or_not_a_stop(deps: Deps, tmp_path: Path,
+                                              monkeypatch: pytest.MonkeyPatch, at: str,
+                                              is_stop: bool) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _last_stop_fake(calls))
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at=at), d)
+    assert any(c.kind == "event" for c in a.cards)  # the card stays either way
+    assert a.route is not None and calls
+    if is_stop:
+        assert calls[-1]["last"] == "event:jazz" and "event:jazz" in calls[-1]["stops"]
+        assert a.route.stop_ids[-1] == "event:jazz"
+    else:
+        assert calls[-1]["last"] is None and "event:jazz" not in calls[-1]["stops"]
+        assert "event:jazz" not in a.route.stop_ids
+
+
+def test_of_two_soon_events_the_earlier_ends_the_route(deps: Deps, tmp_path: Path,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(route, "plan_route", _last_stop_fake(calls))
+    early = _event_record("early", starts="2026-10-19T18:50:00+05:00",
+                          ends="2026-10-19T20:00:00+05:00")
+    late = _event_record("late", starts="2026-10-19T19:10:00+05:00",
+                         ends="2026-10-19T21:00:00+05:00",
+                         geo={"lat": 51.0886, "lon": 71.4170}, venue_poi_id=None)
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"),
+                  _events_deps(deps, tmp_path, [early, late]))
+    shown = {c.poi_id for c in a.cards if c.kind == "event"}
+    assert shown == {"event:early", "event:late"}
+    assert calls[-1]["last"] == "event:early" and "event:late" not in calls[-1]["stops"]
+
+
+def test_without_last_stop_support_an_event_is_never_a_stop(deps: Deps, tmp_path: Path
+                                                            ) -> None:
+    """Before CORE T131 is merged plan_route has no last_stop_id: the event stays a card and
+    the route covers the places only, so «the event stop is the last one» always holds."""
+    import inspect
+
+    if "last_stop_id" in inspect.signature(route.plan_route).parameters:
+        pytest.skip("CORE plan_route already takes last_stop_id")
+    d = _events_deps(deps, tmp_path, [_event_record()])
+    a = recommend(req(MORE_Q, use_llm=False, at="2026-10-19T18:45:00+05:00"), d)
+    assert any(c.kind == "event" for c in a.cards)
+    assert a.route is None or "event:jazz" not in a.route.stop_ids

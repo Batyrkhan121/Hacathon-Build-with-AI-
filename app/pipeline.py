@@ -107,6 +107,9 @@ NIGHT_FROM_H, NIGHT_TO_H = 22, 6  # night mode by the clock (local time)
 GROUP_MIN = 3
 FOOD_CATEGORIES = frozenset({"cafe", "restaurant", "fast_food", "bar"})
 EVENT_NIGHT_SOON_MIN = 60  # at night an event counts as «surely on» if it is on or this close
+# T133: an event is a route stop only when it starts within this many minutes (or is on); then
+# it is the last stop (route.plan_route(last_stop_id=...)). Later: a card, not a stop.
+EVENT_STOP_MAX_WAIT_MIN = 30
 SIGHT_CATEGORIES = frozenset({"attraction", "monument", "museum", "viewpoint", "gallery",
                               "religious", "park", "theatre"})
 MIN_WALK_BUDGET_MIN = 5  # QueryIntent.time_budget_min lower bound
@@ -1428,26 +1431,51 @@ def _route(
 ) -> tuple[MiniRoute | None, bool]:
     """(route, failed): a crash in plan_route is reported, not swallowed. `profile` is passed
     with and without the graph: a straight route comes back as "fastest" and its note says the
-    asked profile was not applied (route.plan_route)."""
+    asked profile was not applied (route.plan_route).
+    T133: an event card is a stop only if it starts within EVENT_STOP_MAX_WAIT_MIN (or is on),
+    and then the last one (`last_stop_id`; the earliest such event, the others stay cards).
+    A plan_route without `last_stop_id` (older CORE) gets no event stop at all."""
     if not want_route or len(cards) < 2:
         return None, False
     by_id = {c.poi.id: c for c in candidates}
-    stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id]
+    last = _event_stop(cards, ctx.local_time)
+    if last is not None and not _takes_last_stop():
+        last = None
+    stops = [by_id[c.poi_id] for c in cards if c.poi_id in by_id
+             and (c.kind == "place" or c.poi_id == last)]
+    if len(stops) < 2:
+        return None, False
+    extra: dict[str, object] = {"last_stop_id": last} if last is not None else {}
     try:
         visits = {c.poi_id: c.visit_min_low for c in cards}
         if graph is None:
             return route.plan_route(ctx.origin, stops, intent.time_budget_min, visits,
                                     loop=loop, note=note, lang=intent.lang,
-                                    profile=profile), False
+                                    profile=profile, **extra), False
         return route.plan_route(
             ctx.origin, stops, intent.time_budget_min, visits, loop=loop, note=note,
             graph=graph, mode=mode, origin_landmark=ctx.landmark_id, graph_note=graph_note,
-            lang=intent.lang, profile=profile,
+            lang=intent.lang, profile=profile, **extra,
         ), False
     except Exception as exc:  # noqa: BLE001 - the cards are still useful without a route
         log.error("request %s: plan_route failed (%s)\n%s", request_id, type(exc).__name__,
                   _frames(exc))
         return None, True
+
+
+def _event_stop(cards: list[Card], now: datetime) -> str | None:
+    """The event card that may end the route: on now or starting within
+    EVENT_STOP_MAX_WAIT_MIN; of several, the one that starts first."""
+    soon = [c for c in cards if c.kind == "event" and c.starts_at is not None
+            and c.starts_at - now <= timedelta(minutes=EVENT_STOP_MAX_WAIT_MIN)]
+    return min(soon, key=lambda c: (c.starts_at, c.rank)).poi_id if soon else None
+
+
+def _takes_last_stop() -> bool:
+    try:
+        return "last_stop_id" in inspect.signature(route.plan_route).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _context_warnings(
