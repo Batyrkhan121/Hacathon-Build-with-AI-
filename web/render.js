@@ -516,7 +516,9 @@ function renderEmpty(ctx, answer) {
     'div',
     { class: 'empty' },
     h('p', { class: 'empty-title', text: t('empty.title') }),
-    h('p', { class: 'empty-hint', text: dropNoCafe ? t('empty.noCafeHint') : t('empty.hint') }),
+    // пусто могло стать и не из-за «без кафе» («Ближе», «в помещении») — общий совет остаётся второй строкой
+    dropNoCafe ? h('p', { class: 'empty-hint', text: t('empty.noCafeHint') }) : null,
+    h('p', { class: 'empty-hint', text: t('empty.hint') }),
     h(
       'div',
       { class: 'empty-actions' },
