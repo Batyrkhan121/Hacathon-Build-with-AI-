@@ -393,6 +393,17 @@ function eventDomain(card) {
   return new URL(src).hostname.replace(/^www\./, '');
 }
 
+// 8.2: источник события — афиша, а не «наша база мест»: «Из афиши · домен» и подсказка про афишу
+function listingsLabel(card) {
+  const domain = eventDomain(card);
+  return domain ? t('event.fromListings', { domain }) : t('event.fromListingsBare');
+}
+
+function listingsTitle(card) {
+  const domain = eventDomain(card);
+  return domain ? t('event.listingsTitle', { domain }) : t('event.listingsTitleBare');
+}
+
 // 8.2: уже начавшееся событие (starts_at ≤ local_time < ends_at) — «идёт до 21:00»; без ends_at — «идёт сейчас»
 // (только если началось сегодня по UTC+5: вчерашнее начало без конца ничего не говорит о «сейчас»).
 // Возвращает подпись строчными или null, если событие ещё не началось или уже кончилось.
@@ -722,8 +733,8 @@ function renderCard(card, when, ctx) {
       { class: 'badges' },
       h('span', {
         class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`,
-        title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
-        text: isEvent ? t('event.fromListings', { domain: eventDomain(card) }) : poi ? t('badge.poi') : t('badge.ai'),
+        title: isEvent ? listingsTitle(card) : poi ? t('badge.poiTitle') : t('badge.aiTitle'),
+        text: isEvent ? listingsLabel(card) : poi ? t('badge.poi') : t('badge.ai'),
       }),
       isEvent ? null : h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
     ),
@@ -839,7 +850,7 @@ function renderDirections(card, origin, preciseStart, poi = false) {
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
     // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
     card.kind === 'event'
-      ? h('span', { class: 'dir-source v2-only', text: t('event.fromListings', { domain: eventDomain(card) }) })
+      ? h('span', { class: 'dir-source v2-only', text: listingsLabel(card), title: listingsTitle(card) })
       : poi
         ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') })
         : null,
