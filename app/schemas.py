@@ -1,8 +1,9 @@
 """Qadam — data contract between all layers.
 
-Owner: INTEGRATOR (main branch only; in wave 8 the wave-8 branch). Lanes must NOT edit this file.
-Need a change? Put a "CONTRACT CHANGE REQUEST" into your lane report; the integrator
-applies it on main (wave 8: on wave-8) and tells the lanes which commit to merge.
+Owner: INTEGRATOR (main branch only; wave 8: the wave-8 branch; wave 9: wave-9).
+Lanes must NOT edit this file. Need a change? Put a "CONTRACT CHANGE REQUEST" into your lane
+report; the integrator applies it on main (wave 8: on wave-8, wave 9: on wave-9) and tells
+the lanes which commit to merge.
 
 Flow: pipeline -> data/processed/poi.jsonl (POI) -> store/retrieval (Candidate)
       -> generate (DraftResponse) -> validate (Card) -> pipeline (Answer) -> api -> web/eval
@@ -15,11 +16,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.3.1"
+SCHEMA_VERSION = "1.4.0"
 # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10;
 # 1.3.0 (wave 8): route_profile, prefs and exclude_poi_ids in the request, route profile facts,
 # event cards, crossing kind unknown; 1.3.1 (wave 8.1): separate likes / avoids vocabularies,
-# conflicting pairs -> 422, MiniRoute.straight_share, Card.venue
+# conflicting pairs -> 422, MiniRoute.straight_share, Card.venue; 1.4.0 (wave 9): city gaps map
+# (CityGaps in data/processed/city_gaps.json, GET /api/city-gaps); requests and answers unchanged
 MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
@@ -499,3 +501,100 @@ class Answer(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     disclaimer: str
     latency_ms: int = Field(default=0, ge=0)
+
+
+# ------------------------------------------------------------- city gaps map (1.4.0)
+
+GAP_H3_RES = 8  # cells of the city gaps map: r8 ≈ 0,74 км², a district view; aggregates only
+GAP_MAX_CELLS = 5000  # Astana with its outskirts is ≈ 1 500 r8 cells
+# readers show a share only from these totals up; below them the cell is «мало данных»
+GAP_MIN_POI = 5
+GAP_MIN_WALK_M = 300
+GAP_MIN_CROSSINGS = 3
+OSM_ATTRIBUTION = "© OpenStreetMap contributors"
+ODBL_URL = "https://opendatacommons.org/licenses/odbl/1-0/"
+OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
+IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+
+
+class GapCounts(BaseModel):
+    """Open-data completeness counters of one area (an r8 cell or the whole city).
+
+    Totals and their «no data» parts only; readers compute shares (part / total). Exact
+    definitions: docs/ARCHITECTURE.md §5, «Контракт 1.4.0: карта пробелов данных».
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    poi: int = Field(ge=0)  # places of data/processed/poi.jsonl in the area (by POI.geo)
+    poi_no_hours: int = Field(ge=0)  # opening_hours empty or missing
+    poi_wheelchair_unknown: int = Field(ge=0)  # wheelchair == "unknown"
+    poi_no_name_kk: int = Field(ge=0)  # no Kazakh name in name_i18n["kk"]
+    walk_m: int = Field(ge=0)  # walk graph edge length, metres (edge counted by its midpoint)
+    walk_lit_unknown_m: int = Field(ge=0)  # ... with neither lit (edge bit 2) nor unlit (bit 32)
+    crossings: int = Field(ge=0)  # crossing nodes (node bit 1)
+    crossings_kind_unknown: int = Field(ge=0)  # none of node bits 2, 8, 32: kind unknown
+    crossings_kerb_unknown: int = Field(ge=0)  # neither kerb lowered (bit 4) nor raised (bit 16)
+
+    @model_validator(mode="after")
+    def _parts_within_totals(self) -> GapCounts:
+        pairs = ((self.poi_no_hours, self.poi), (self.poi_wheelchair_unknown, self.poi),
+                 (self.poi_no_name_kk, self.poi), (self.walk_lit_unknown_m, self.walk_m),
+                 (self.crossings_kind_unknown, self.crossings),
+                 (self.crossings_kerb_unknown, self.crossings))
+        if any(part > total for part, total in pairs):
+            raise ValueError("a «no data» count exceeds its total")
+        return self
+
+
+class GapCell(GapCounts):
+    """One r8 cell of the map; cells with no places, no walk graph and no crossings are left out."""
+
+    h3_cell: str = Field(pattern=r"^[0-9a-f]{15}$")
+
+    @model_validator(mode="after")
+    def _r8_cell(self) -> GapCell:
+        index = int(self.h3_cell, 16)
+        if (index >> 59) & 0xF != 1 or (index >> 52) & 0xF != GAP_H3_RES:
+            # mode bits (1 = cell) and resolution bits of the H3 index
+            raise ValueError(f"h3_cell must be an H3 cell of resolution {GAP_H3_RES}")
+        if self.poi == 0 and self.walk_m == 0 and self.crossings == 0:
+            raise ValueError("empty cells are left out of the map")
+        return self
+
+
+class CityGaps(BaseModel):
+    """«Карта пробелов данных»: data/processed/city_gaps.json, served as is by GET /api/city-gaps.
+
+    Aggregates of open data only (OSM places and the OSM walk graph): no user data, no requests,
+    no per-place lists. Built by the pipeline (DATA); the server validates it on load and never
+    recomputes it. Shares and the «мало данных» thresholds (GAP_MIN_*) are the readers' job.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: Literal[1] = 1
+    built_at: datetime  # when the pipeline built the file, with a time zone
+    poi_date: IsoDate  # newest POI.fetched_at
+    walk_graph_date: IsoDate  # newest OSM snapshot of the walk graph (walk_graph_meta.json)
+    h3_res: Literal[8] = 8  # = GAP_H3_RES
+    attribution: Literal["© OpenStreetMap contributors"] = "© OpenStreetMap contributors"
+    license: Literal["ODbL-1.0"] = "ODbL-1.0"
+    license_url: Literal["https://opendatacommons.org/licenses/odbl/1-0/"] = (
+        "https://opendatacommons.org/licenses/odbl/1-0/")
+    copyright_url: Literal["https://www.openstreetmap.org/copyright"] = (
+        "https://www.openstreetmap.org/copyright")
+    city: GapCounts  # the whole city: exactly the sum over cells
+    cells: list[GapCell] = Field(max_length=GAP_MAX_CELLS)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> CityGaps:
+        if self.built_at.tzinfo is None:
+            raise ValueError("built_at must carry a time zone")
+        ids = [cell.h3_cell for cell in self.cells]
+        if ids != sorted(set(ids)):
+            raise ValueError("cells must be unique and sorted by h3_cell")
+        for name in GapCounts.model_fields:
+            if getattr(self.city, name) != sum(getattr(cell, name) for cell in self.cells):
+                raise ValueError(f"city.{name} is not the sum over cells")
+        return self

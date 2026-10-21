@@ -9,10 +9,12 @@
 !web/*.css
 !web/*.js
 !web/mock/answer_sample.json
+!web/mock/city_gaps.json
 !web/vendor/**
 !data/landmarks.json
 !data/events.json
 !data/processed/poi.jsonl
+!data/processed/city_gaps.json
 !data/processed/REPORT.md
 !data/processed/walk_graph.npz
 !data/processed/walk_graph_meta.json
