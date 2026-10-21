@@ -808,28 +808,28 @@ def test_avoid_is_a_penalty_not_a_filter() -> None:
     cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee", "indoor"])
     park = make_poi("park", "park", dlat=0.006, tags=["walk", "outdoor"])
     store = make_store([cafe, park])
-    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
     assert ids(out) == [park.id, cafe.id]  # still there, just lower
     assert out[1].score_parts["prefs"] == PREF_AVOID_PENALTY
-    only = retrieve(make_store([cafe]), intent(), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    only = retrieve(make_store([cafe]), intent(), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
     assert ids(only) == [cafe.id]
 
 
-def test_no_bars_drops_bars_and_nightlife() -> None:
+def test_avoid_bars_drops_bars_and_nightlife() -> None:
     bar = make_poi("bar", "bar", dlat=0.001)
     club = make_poi("club", "nightlife", dlat=0.0012)
     cafe = make_poi("cafe", "cafe", dlat=0.002)
     store = make_store([bar, club, cafe])
     assert set(ids(retrieve(store, intent(), make_ctx(), None))) == {bar.id, club.id, cafe.id}
-    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(["no_bars"]))
+    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=["bars"]))
     assert ids(out) == [cafe.id]
-    assert "prefs" not in out[0].score_parts  # no_bars is a filter, not a plus
+    assert "prefs" not in out[0].score_parts  # bars is a filter, not a penalty
     late = datetime(2026, 10, 20, 12, 0, tzinfo=ASTANA_TZ)
     closed_bar = make_poi("bar2", "bar", dlat=0.001, opening_hours="Mo-Su 18:00-02:00")
     assert sum(hours_dropped(make_store([closed_bar]), intent(), make_ctx(at=late)).values()) == 1
     counts = hours_dropped(make_store([closed_bar]), intent(), make_ctx(at=late),
-                           prefs=_prefs(["no_bars"]))
-    assert sum(counts.values()) == 0  # the panel does not count what no_bars removed
+                           prefs=_prefs(avoids=["bars"]))
+    assert sum(counts.values()) == 0  # the panel does not count what «bars» removed
 
 
 @pytest.mark.parametrize(("label", "poi", "match"), [
@@ -848,7 +848,6 @@ def test_no_bars_drops_bars_and_nightlife() -> None:
     ("warm", {"category": "restaurant", "tags": ["indoor"]}, False),  # wants an order
     ("warm", {"category": "museum", "indoor": False}, False),  # an open-air museum
     ("warm", {"category": "park"}, False),
-    ("no_bars", {"category": "nightlife"}, True),
 ])
 def test_pref_labels_follow_the_architecture_table(label: str, poi: dict, match: bool) -> None:
     from app.retrieval import pref_match
@@ -938,15 +937,62 @@ def test_exclude_ids_drop_places_and_events_before_scoring() -> None:
 
 
 def test_query_words_of_an_avoided_label_do_not_pull_places_up() -> None:
-    """«кофе рядом» with avoids coffee: the word «кофе» gives cafes no keyword match."""
+    """«кофе рядом» with avoids cafes: the word «кофе» gives cafes no keyword match."""
     cafe = make_poi("cafe", "cafe", dlat=0.001, tags=["coffee"])
     mall = make_poi("mall", "mall", dlat=0.003)
     store = make_store([cafe, mall])
     plain = retrieve(store, intent("кофе"), make_ctx(), None)
     assert plain[0].poi.id == cafe.id and plain[0].score_parts["relevance"] > 0
-    out = retrieve(store, intent("кофе"), make_ctx(), None, prefs=_prefs(avoids=["coffee"]))
+    out = retrieve(store, intent("кофе"), make_ctx(), None, prefs=_prefs(avoids=["cafes"]))
     by_id = {c.poi.id: c for c in out}
     assert by_id[cafe.id].score_parts["relevance"] == 0.0
     assert out[0].poi.id == mall.id
     assert not query_unmatched(store, intent("кофе"), make_ctx(), out,
-                               prefs=_prefs(avoids=["coffee"]))
+                               prefs=_prefs(avoids=["cafes"]))
+
+
+# ---------------------------------------------------- T133: the avoids vocabulary of 1.3.1
+
+
+@pytest.mark.parametrize(("label", "poi", "match"), [
+    ("bars", {"category": "nightlife"}, True),
+    ("noisy", {"category": "mall"}, True),
+    ("noisy", {"category": "entertainment"}, True),
+    ("noisy", {"category": "cafe", "tags": ["live_music"]}, True),
+    ("noisy", {"category": "library"}, False),
+    ("kids_places", {"category": "playground"}, True),
+    ("kids_places", {"category": "museum", "tags": ["kids"]}, True),
+    ("kids_places", {"category": "museum"}, False),
+    ("cafes", {"category": "cafe"}, True),
+    ("cafes", {"category": "restaurant", "tags": ["coffee"]}, True),
+    ("long_outdoor", {"category": "park"}, False),  # a route rule, it names no place
+])
+def test_avoid_labels_follow_the_architecture_table(label: str, poi: dict, match: bool) -> None:
+    from app.retrieval import avoid_match
+
+    kwargs = dict(poi)
+    category = kwargs.pop("category")
+    assert avoid_match(make_poi("x", category, **kwargs), label) is match
+
+
+@pytest.mark.parametrize(("label", "loud", "calm"), [
+    ("noisy", {"category": "mall"}, {"category": "library"}),
+    ("kids_places", {"category": "playground"}, {"category": "monument"}),
+])
+def test_noisy_and_kids_places_are_penalties(label: str, loud: dict, calm: dict) -> None:
+    from app.retrieval import PREF_AVOID_PENALTY
+
+    a = make_poi("loud", loud["category"], dlat=0.001)
+    b = make_poi("calm", calm["category"], dlat=0.004)
+    store = make_store([a, b])
+    assert ids(retrieve(store, intent(), make_ctx(), None))[0] == a.id
+    out = retrieve(store, intent(), make_ctx(), None, prefs=_prefs(avoids=[label]))
+    assert ids(out) == [b.id, a.id]  # lower, still there
+    assert out[1].score_parts["prefs"] == PREF_AVOID_PENALTY
+
+
+def test_long_outdoor_names_no_place_and_gives_no_penalty() -> None:
+    park = make_poi("park", "park", dlat=0.001)
+    out = retrieve(make_store([park]), intent(), make_ctx(), None,
+                   prefs=_prefs(avoids=["long_outdoor"]))
+    assert ids(out) == [park.id] and "prefs" not in out[0].score_parts

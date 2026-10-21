@@ -283,11 +283,11 @@ def test_parse_prompt_sights_rule_matches_rules_parser() -> None:
 def test_prefs_go_into_the_request_block_as_codes(cands: list[Candidate]) -> None:
     from app.schemas import UserPrefs
 
-    prefs = UserPrefs(likes=["museums", "no_bars"], avoids=["coffee"])
+    prefs = UserPrefs(likes=["museums"], avoids=["bars", "cafes"])
     prompt = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands, prefs=prefs)
     request_block = prompt.split("КОНТЕКСТ:")[0]
     assert '"prefs"' in request_block and '"museums"' in request_block
-    assert '"avoids": [\n   "coffee"\n  ]' in request_block
+    assert '"avoids": [\n   "bars",\n   "cafes"\n  ]' in request_block
     plain = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands)
     assert '"prefs"' not in plain
     empty = build_prompt(QueryIntent(raw_query="куда сходить"), context(), cands,
@@ -306,4 +306,5 @@ def test_draft_cards_passes_prefs_to_the_prompt(cands: list[Candidate]) -> None:
 
 def test_system_prompt_explains_prefs() -> None:
     system = load_prompt("generate_cards")
-    assert "prefs" in system and "avoids" in system and "no_bars" in system
+    assert "prefs" in system and "avoids" in system and "kids_places" in system
+    assert "no_bars" not in system  # the 1.3.0 label is gone (1.3.1)

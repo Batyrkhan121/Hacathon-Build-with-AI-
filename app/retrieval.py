@@ -80,21 +80,36 @@ GROUP_UNFRIENDLY_TAGS = frozenset({"quiet", "work_friendly"})
 # T70 step 15: the user named tags (coffee, power_outlets, quiet …) and the place has none of
 # them -> it must not ride on proximity / popularity / MMR diversity past places that match
 NO_TAG_MATCH_PENALTY = -0.10
-# T123 (contract 1.3.0): prefs for one request, only PrefTag labels (ARCHITECTURE §5 table).
-# likes: a soft plus per matching label, avoids: a penalty (never a filter), no_bars (a like
-# only): no bar / nightlife at all. score_parts["prefs"] keeps the sum for explain().
-PREF_CATEGORIES: dict[str, frozenset[str]] = {
+# T123 / T133 (contract 1.3.1): prefs for one request, labels only (ARCHITECTURE §5 table).
+# likes (LikeTag): a soft plus per matching label. avoids (AvoidTag): "bars" drops bar /
+# nightlife; "noisy", "kids_places", "cafes" are a penalty (never a filter); "cafes" and
+# "bars" also leave the parse of the text (avoided()); "long_outdoor" is a route rule
+# (short walks outside, app.pipeline). score_parts["prefs"] keeps the sum for explain().
+PREF_CATEGORIES: dict[str, frozenset[str]] = {  # likes
     "coffee": frozenset({"cafe"}),
     "museums": frozenset({"museum", "gallery"}),
     "parks": frozenset({"park"}),
 }
-PREF_TAGS: dict[str, frozenset[str]] = {
+PREF_TAGS: dict[str, frozenset[str]] = {  # likes
     "quiet": frozenset({"quiet"}),
     "coffee": frozenset({"coffee"}),
     "kids": frozenset({"kids"}),
     "night": frozenset({"night", "late_open", "24_7"}),
 }
-NO_BARS_CATEGORIES = frozenset({"bar", "nightlife"})
+AVOID_CATEGORIES: dict[str, frozenset[str]] = {
+    "bars": frozenset({"bar", "nightlife"}),
+    "noisy": frozenset({"bar", "nightlife", "entertainment", "mall"}),
+    "kids_places": frozenset({"playground"}),
+    "cafes": frozenset({"cafe"}),
+}
+AVOID_TAGS: dict[str, frozenset[str]] = {
+    "noisy": frozenset({"live_music"}),
+    "kids_places": frozenset({"kids"}),
+    "cafes": frozenset({"coffee"}),
+}
+AVOID_FILTER = frozenset({"bars"})  # a hard filter, not a penalty
+AVOID_FROM_PARSE = frozenset({"bars", "cafes"})  # the explicit choice beats the text parse
+NO_BARS_CATEGORIES = AVOID_CATEGORIES["bars"]
 # «в тепле»: indoor places anyone may walk into to warm up; the same list as
 # pipeline.normalize.WARM_CATEGORIES (DATA, tested equal): restaurants and bars want an order
 WARM_CATEGORIES = frozenset({"mall", "museum", "library", "cafe", "theatre", "cinema"})
@@ -435,29 +450,35 @@ def warm_stop(poi: POI) -> bool:
 
 
 def pref_match(poi: POI, label: str) -> bool:
-    """Does the place carry this PrefTag (ARCHITECTURE §5)? no_bars: the place is a bar."""
+    """Does the place carry this like (LikeTag)? (ARCHITECTURE §5 table)"""
     if label == "warm":
         return warm_stop(poi)
-    if label == "no_bars":
-        return poi.category in NO_BARS_CATEGORIES
     if label == "kids" and poi.kids_friendly:
         return True
     return (poi.category in PREF_CATEGORIES.get(label, frozenset())
             or bool(PREF_TAGS.get(label, frozenset()) & set(poi.tags)))
 
 
+def avoid_match(poi: POI, label: str) -> bool:
+    """Is the place what this avoid (AvoidTag) names? long_outdoor names no place."""
+    return (poi.category in AVOID_CATEGORIES.get(label, frozenset())
+            or bool(AVOID_TAGS.get(label, frozenset()) & set(poi.tags)))
+
+
 def _passes_prefs(poi: POI, prefs: UserPrefs | None) -> bool:
-    return prefs is None or "no_bars" not in prefs.likes or not pref_match(poi, "no_bars")
+    if prefs is None:
+        return True
+    return not any(avoid_match(poi, label) for label in prefs.avoids if label in AVOID_FILTER)
 
 
 def avoided(prefs: UserPrefs | None) -> tuple[frozenset[str], frozenset[str]]:
-    """(categories, tags) that the person's avoids name, by the ARCHITECTURE §5 table: coffee
-    -> cafe + tag coffee, museums -> museum / gallery, parks -> park, quiet / kids / night ->
-    their tags. The pipeline takes them out of what the parser read in the text."""
+    """(categories, tags) that the person's avoids take out of the parse of the text: cafes ->
+    cafe + tag coffee («Без кафе»), bars -> bar / nightlife (they are filtered anyway)."""
     if prefs is None:
         return frozenset(), frozenset()
-    cats = {c for label in prefs.avoids for c in PREF_CATEGORIES.get(label, frozenset())}
-    tags = {x for label in prefs.avoids for x in PREF_TAGS.get(label, frozenset())}
+    labels = [x for x in prefs.avoids if x in AVOID_FROM_PARSE]
+    cats = {c for label in labels for c in AVOID_CATEGORIES.get(label, frozenset())}
+    tags = {x for label in labels for x in AVOID_TAGS.get(label, frozenset())}
     return frozenset(cats), frozenset(tags)
 
 
@@ -471,11 +492,12 @@ def _avoided_stems(prefs: UserPrefs | None) -> frozenset[str]:
 
 
 def _prefs_fit(poi: POI, prefs: UserPrefs | None) -> float:
-    """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty."""
+    """likes: +PREF_LIKE_BONUS per label matched (up to PREF_LIKE_MAX); avoids: the penalty
+    (bars is a filter, long_outdoor a route rule: no penalty from them)."""
     if prefs is None:
         return 0.0
-    liked = sum(pref_match(poi, label) for label in prefs.likes if label != "no_bars")
-    avoided = sum(pref_match(poi, label) for label in prefs.avoids)
+    liked = sum(pref_match(poi, label) for label in prefs.likes)
+    avoided = sum(avoid_match(poi, label) for label in prefs.avoids if label not in AVOID_FILTER)
     return (min(PREF_LIKE_MAX, liked * PREF_LIKE_BONUS)
             + max(PREF_AVOID_MAX, avoided * PREF_AVOID_PENALTY))
 
@@ -838,8 +860,8 @@ def retrieve(
     deterministic reasons in Russian (e.g. "есть кофе", "≈6 мин пешком").
     Final order is MMR (score vs. redundancy); Candidate.score keeps the raw weighted score.
     Unnamed places with the same generic name are kept once (the best one).
-    T123 `prefs` (contract 1.3.0): likes add PREF_LIKE_BONUS, avoids PREF_AVOID_PENALTY
-    (score_parts["prefs"]), likes "no_bars" drops bar / nightlife.
+    T123 / T133 `prefs` (contract 1.3.1): likes add PREF_LIKE_BONUS, avoids
+    PREF_AVOID_PENALTY (score_parts["prefs"]), avoids "bars" drops bar / nightlife.
     T123 `events`: (POI, verdict) of the events current at ctx.local_time (app.events). The
     same distance / profile / prefs filters; no hours filter (app.events already kept only
     events that are not over); EVENT_BONUS in score_parts["event"].

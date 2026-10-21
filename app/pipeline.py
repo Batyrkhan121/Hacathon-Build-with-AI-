@@ -199,6 +199,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_accessible": "запрошен маршрут без ступенек",
         "f_profile_req_lit": "запрошен маршрут по освещённым улицам",
         "f_warm_between": "в тепле: между местами до {v} мин пешком",
+        "f_short": "без долгих отрезков на улице: до {v} мин подряд",
+        "f_short_between": "без долгих отрезков на улице: между местами до {v} мин",
+        "short_long_leg": "Самый длинный отрезок по улице — {n} мин: ближе мест в "
+                          "данных нет.",
         "f_prefs_likes": "предпочтения: {v}", "f_prefs_avoids": "избегать: {v}",
         "f_excluded": "без уже показанных мест: {n}",
         "summary_no_more": "Других подходящих мест рядом нет: уже показанные не "
@@ -285,6 +289,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_accessible": "баспалдақсыз маршрут сұралды",
         "f_profile_req_lit": "жарықтандырылған көшелермен маршрут сұралды",
         "f_warm_between": "жылыда: орындар арасы {v} минутқа дейін жаяу",
+        "f_short": "далада ұзақ жүрмей: қатарынан {v} минутқа дейін",
+        "f_short_between": "далада ұзақ жүрмей: орындар арасы {v} минутқа дейін",
+        "short_long_leg": "Көшедегі ең ұзақ кесінді — {n} мин: деректерде жақынырақ "
+                          "орын жоқ.",
         "f_prefs_likes": "қалауыңыз: {v}", "f_prefs_avoids": "аулақ болу: {v}",
         "f_excluded": "көрсетілген орындарсыз: {n}",
         "summary_no_more": "Жақын жерде басқа лайықты орын жоқ: көрсетілгендерін "
@@ -369,6 +377,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "f_profile_req_accessible": "step-free route requested",
         "f_profile_req_lit": "route along lit streets requested",
         "f_warm_between": "warm: up to {v} min on foot between places",
+        "f_short": "no long walks outside: up to {v} min at a time",
+        "f_short_between": "no long walks outside: up to {v} min between places",
+        "short_long_leg": "The longest walk outside is {n} min: there is no closer "
+                          "place in the data.",
         "f_prefs_likes": "likes: {v}", "f_prefs_avoids": "avoid: {v}",
         "f_excluded": "excluding places already shown: {n}",
         "summary_no_more": "No other suitable places nearby: the ones already shown "
@@ -435,13 +447,17 @@ TAG_NAMES: dict[str, dict[str, str]] = {
 }
 
 
-# T123: prefs labels in the "data used" panel (ru = schemas.PREF_LABELS_RU)
+# T123 / T133: prefs labels in the "data used" panel (ru = schemas.PREF_LABELS_RU, 1.3.1)
 PREF_NAMES: dict[str, dict[str, str]] = {
     "ru": dict(PREF_LABELS_RU),
     "kk": {"quiet": "тыныш", "coffee": "кофе", "kids": "баламен", "museums": "мұражайлар",
-           "parks": "саябақтар", "no_bars": "барсыз", "warm": "жылыда", "night": "түнгі"},
+           "parks": "саябақтар", "warm": "жылыда", "night": "түнгі",
+           "bars": "барлар", "noisy": "шулы", "long_outdoor": "далада ұзақ",
+           "kids_places": "балалар орындары", "cafes": "кафелер"},
     "en": {"quiet": "quiet", "coffee": "coffee", "kids": "with kids", "museums": "museums",
-           "parks": "parks", "no_bars": "no bars", "warm": "warm", "night": "night"},
+           "parks": "parks", "warm": "warm", "night": "night",
+           "bars": "bars", "noisy": "noisy", "long_outdoor": "long walks outside",
+           "kids_places": "kids' places", "cafes": "cafes"},
 }
 
 
@@ -601,11 +617,15 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # T123 «в тепле»: indoor stops close to the start and to each other (see WARM_MAX_LEG_MIN)
     wx = weather.get_weather(origin, local_time)
     warm = warm_reason(req, wx)
+    # T133: avoids long_outdoor («долго на улице») — the same short walks outside as «в тепле»,
+    # but without the indoor requirement
+    short_out = warm is not None or (req.prefs is not None
+                                     and "long_outdoor" in req.prefs.avoids)
     warm_indoor = False  # the indoor filter was set by warm mode (not by the person)
+    if short_out and intent.max_walk_min is None:  # an explicit limit is kept as asked
+        cap = plan_update.get("max_walk_min")
+        plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
     if warm is not None:
-        if intent.max_walk_min is None:  # an explicit limit (text or UI) is kept as asked
-            cap = plan_update.get("max_walk_min")
-            plan_update["max_walk_min"] = min(int(cap or WARM_MAX_LEG_MIN), WARM_MAX_LEG_MIN)
         tags = plan_update.get("must_tags", intent.must_tags)
         plan_update["must_tags"] = [x for x in tags if x not in WARM_DROP_TAGS]  # type: ignore[union-attr]
         if intent.indoor == "any":
@@ -737,7 +757,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
 
     # T71: a walk of N minutes -> pick stops that fit together as a loop, then write them up
     walk_loop = (bool(plan_intent.time_budget_min) and "walk" in plan_intent.must_tags
-                 and not intent.tourist and not plan_intent.night and warm is None)
+                 and not intent.tourist and not plan_intent.night and not short_out)
     gen_candidates = candidates
     if walk_loop and req.want_route and len(candidates) >= 2:
         try:
@@ -774,8 +794,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
             gen_candidates = within
         else:
             warn.append(t["graph_over_limit"].format(v=plan_intent.max_walk_min))
-    if warm is not None:  # short walks outside between the stops too
-        gen_candidates = warm_cluster(gen_candidates)
+    if short_out:  # short walks outside between the stops too
+        gen_candidates = warm_cluster(gen_candidates, indoor_first=warm is not None)
 
     # 6. cards (event candidates become kind="event" cards: validate gets the events)
     ev_kw: dict[str, object] = {"events": by_event} if by_event else {}
@@ -843,9 +863,10 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                                      mode=walk_mode, graph_note=graph_note, profile=profile)
     if route_broke:
         warn.append(t["route_failed"])
-    if (warm is not None and mini_route is not None and mini_route.max_outdoor_leg_min
+    if (short_out and mini_route is not None and mini_route.max_outdoor_leg_min
             and mini_route.max_outdoor_leg_min > WARM_MAX_LEG_MIN):
-        warn.append(t["warm_long_leg"].format(n=mini_route.max_outdoor_leg_min))
+        key = "warm_long_leg" if warm is not None else "short_long_leg"
+        warn.append(t[key].format(n=mini_route.max_outdoor_leg_min))
 
     # 8. warnings, data used, answer
     if failed and not cards:
@@ -902,7 +923,8 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                              else None,
                              profile=profile, profile_auto=profile_auto,
                              profile_applied=_profile_applied(mini_route, profile),
-                             prefs=req.prefs, warm=warm, excluded=len(exclude),
+                             prefs=req.prefs, warm=warm, short_out=short_out,
+                             excluded=len(exclude),
                              temp_c=wx.temp_c if wx is not None else None),
             sources=_sources(cards, wx is not None),
             candidates_considered=len(candidates),
@@ -1282,11 +1304,9 @@ def _without_avoided(intent: QueryIntent, req: RecommendRequest) -> dict[str, ob
 
 def warm_reason(req: RecommendRequest, wx: WeatherInfo | None) -> str | None:
     """Why «в тепле» is on: "like" (prefs likes warm), "indoor" (the UI switch indoor_only),
-    "frost" (air temperature ≤ FROST_C by Open-Meteo), or None. Never when the person avoids
-    "warm"; text like «в тепле» only sets the indoor filter (query_parser), as before."""
+    "frost" (air temperature ≤ FROST_C by Open-Meteo), or None. Text like «в тепле» only
+    sets the indoor filter (query_parser), as before."""
     prefs = req.prefs
-    if prefs is not None and "warm" in prefs.avoids:
-        return None
     if prefs is not None and "warm" in prefs.likes:
         return "like"
     if req.overrides is not None and req.overrides.indoor_only:
@@ -1306,12 +1326,13 @@ def _search_prefs(prefs: UserPrefs | None, *, warm: bool) -> UserPrefs | None:
     return UserPrefs(likes=likes, avoids=avoids)  # type: ignore[arg-type]
 
 
-def warm_cluster(candidates: list[Candidate]) -> list[Candidate]:
+def warm_cluster(candidates: list[Candidate], *, indoor_first: bool = True
+                 ) -> list[Candidate]:
     """Best first, then every candidate within WARM_MAX_LEG_MIN on foot (straight × 1,3, as
     on the cards) of all the kept ones: any 2–3 of them make a route with short walks outside.
-    Only indoor places when there are enough of them."""
+    `indoor_first` («в тепле»): only indoor places when there are enough of them."""
     indoor = [c for c in candidates if retrieval.is_indoor(c.poi) is True]
-    pool = indoor if len(indoor) >= WARM_MIN_INDOOR else candidates
+    pool = indoor if indoor_first and len(indoor) >= WARM_MIN_INDOOR else candidates
     kept: list[Candidate] = []
     for cand in pool:
         if all(geo.walk_minutes(geo.haversine_m(cand.poi.geo, k.poi.geo)) <= WARM_MAX_LEG_MIN
@@ -1526,6 +1547,7 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
              profile: RouteProfile = "fastest", profile_auto: bool = False,
              profile_applied: bool = True,
              prefs: UserPrefs | None = None, warm: str | None = None,
+             short_out: bool = False,
              temp_c: float | None = None, excluded: int = 0) -> list[str]:
     """`semantic`: the query vector was computed. The Gemini quota can run out silently
     (embed_query then returns None), so the panel always says which search actually ran.
@@ -1561,12 +1583,15 @@ def _filters(t: dict[str, str], intent: QueryIntent, ctx: SearchContext, use_llm
     line = _prefs_line(t, prefs, lang)
     if line:
         out.append(line)
-    if warm is not None:  # what the code did: indoor stops, short walks outside
+    # what the code did: indoor stops (warm), short walks outside (warm, avoids long_outdoor);
+    # an explicit walk limit over WARM_MAX_LEG_MIN was kept: only «between places» holds
+    capped = (intent.max_walk_min or 0) <= WARM_MAX_LEG_MIN
+    if warm is not None:
         frost = warm == "frost" and temp_c is not None
-        # an explicit walk limit over WARM_MAX_LEG_MIN was kept: only «between places» holds
-        key = "f_warm" if (intent.max_walk_min or 0) <= WARM_MAX_LEG_MIN else "f_warm_between"
-        out.append(t[key].format(v=WARM_MAX_LEG_MIN)
+        out.append(t["f_warm" if capped else "f_warm_between"].format(v=WARM_MAX_LEG_MIN)
                    + (t["f_warm_frost"].format(t=_temp(temp_c)) if frost else ""))
+    elif short_out:
+        out.append(t["f_short" if capped else "f_short_between"].format(v=WARM_MAX_LEG_MIN))
     if excluded:  # «Ещё»: a count only, the ids stay out of the answer text
         out.append(t["f_excluded"].format(n=excluded))
     if semantic:

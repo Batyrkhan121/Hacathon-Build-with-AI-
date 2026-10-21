@@ -1624,7 +1624,7 @@ def test_walk_loop_gets_the_profile(deps: Deps, monkeypatch: pytest.MonkeyPatch)
 
 # ---------------------------------------------- T123: prefs -> search, panel, prompt, never logs
 
-PREFS = {"likes": ["museums", "no_bars"], "avoids": ["coffee"]}
+PREFS = {"likes": ["museums"], "avoids": ["bars", "cafes"]}
 
 
 def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.MonkeyPatch
@@ -1638,8 +1638,9 @@ def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(retrieval, "retrieve", spy)
     a = recommend(req("куда сходить", use_llm=False, prefs=PREFS), deps)
-    assert seen and seen[0] is not None and seen[0].likes == ["museums", "no_bars"]
-    assert "предпочтения: музеи, без баров; избегать: кофе" in a.data_used.filters
+    assert seen and seen[0] is not None and seen[0].likes == ["museums"]
+    assert seen[0].avoids == ["bars", "cafes"]
+    assert "предпочтения: музеи; избегать: бары, кафе" in a.data_used.filters
     seen.clear()
     plain = recommend(req("куда сходить", use_llm=False, prefs={}), deps)
     assert seen == [None]  # nothing to apply: the 1.2.0 call
@@ -1647,9 +1648,10 @@ def test_prefs_reach_retrieval_and_the_panel(deps: Deps, monkeypatch: pytest.Mon
 
 
 @pytest.mark.parametrize(("lang", "prefs", "line"), [
-    ("kk", PREFS, "қалауыңыз: мұражайлар, барсыз; аулақ болу: кофе"),
-    ("en", PREFS, "likes: museums, no bars; avoid: coffee"),
-    ("en", {"avoids": ["night"]}, "avoid: night"),
+    ("kk", PREFS, "қалауыңыз: мұражайлар; аулақ болу: барлар, кафелер"),
+    ("en", PREFS, "likes: museums; avoid: bars, cafes"),
+    ("en", {"avoids": ["noisy", "long_outdoor", "kids_places"]},
+     "avoid: noisy, long walks outside, kids' places"),
     ("ru", {"likes": ["warm", "kids"]}, "предпочтения: в тепле, с ребёнком"),
 ])
 def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: dict[str, Any],
@@ -1661,7 +1663,7 @@ def test_prefs_line_follows_the_answer_language(deps: Deps, lang: str, prefs: di
 def test_prefs_shift_the_pick_on_the_real_core(deps: Deps) -> None:
     plain = recommend(req("куда сходить", use_llm=False), deps)
     liked = recommend(req("куда сходить", use_llm=False,
-                          prefs={"likes": ["parks", "no_bars"], "avoids": ["coffee"]}), deps)
+                          prefs={"likes": ["parks"], "avoids": ["bars", "cafes"]}), deps)
     before, after = [c.category for c in plain.cards], [c.category for c in liked.cards]
     assert "park" not in before and "cafe" in before
     assert after[0] == "park" and "cafe" not in after
@@ -1682,8 +1684,8 @@ def test_prefs_go_to_the_card_prompt_as_codes(deps: Deps, monkeypatch: pytest.Mo
     monkeypatch.setattr(llm, "generate_structured", spy)
     recommend(req("куда сходить", prefs=PREFS), deps)
     card_prompt = next(p for p in prompts if "КАНДИДАТЫ" in p)
-    assert '"likes": [\n   "museums",\n   "no_bars"\n  ]' in card_prompt
-    assert '"avoids": [\n   "coffee"\n  ]' in card_prompt
+    assert '"likes": [\n   "museums"\n  ]' in card_prompt
+    assert '"avoids": [\n   "bars",\n   "cafes"\n  ]' in card_prompt
 
 
 # Every PrefTag code and its labels in ru / kk / en: none of them may show up in a log record
@@ -1692,8 +1694,8 @@ PREF_LOG_MARKERS = sorted(
     {*pipeline_mod.PREF_NAMES["ru"], *(v for names in pipeline_mod.PREF_NAMES.values()
                                        for v in names.values()), "prefs", "likes", "avoids"},
     key=len, reverse=True)
-ALL_PREFS = {"likes": ["quiet", "museums", "parks", "no_bars", "warm", "night"],
-             "avoids": ["coffee", "kids"]}
+ALL_PREFS = {"likes": ["quiet", "museums", "parks", "warm", "night"],
+             "avoids": ["bars", "noisy", "long_outdoor", "kids_places", "cafes"]}
 EXCLUDE = ["test:poi/1", "test:poi/12", "event:jazz"]  # «Ещё»: ids of cards already shown
 
 
@@ -1791,9 +1793,6 @@ def test_warm_by_the_indoor_switch_and_by_frost(deps: Deps, monkeypatch: pytest.
     assert "warm: up to 10 min outside at a time (frost −20 °C)" in en.data_used.filters
     kk = recommend(req("қайда баруға болады", use_llm=False, lang="kk"), deps)
     assert "жылыда: далада қатарынан 10 минутқа дейін (аяз −20 °C)" in kk.data_used.filters
-    # the person avoids «в тепле»: frost does not switch it on
-    no = recommend(req("куда сходить", use_llm=False, prefs={"avoids": ["warm"]}), deps)
-    assert not any(f.startswith("в тепле:") for f in no.data_used.filters)
     monkeypatch.setattr(weather, "get_weather", _frost(-9))
     mild = recommend(req("куда сходить", use_llm=False), deps)
     assert not any(f.startswith("в тепле:") for f in mild.data_used.filters)
@@ -2175,45 +2174,42 @@ def test_llm_run_card_gets_the_category_visit_estimate(deps: Deps, tmp_path: Pat
 
 
 def test_avoids_take_the_parsed_category_out_of_the_search(deps: Deps) -> None:
-    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids coffee): three cafes and the
+    """«Хочу тихое место с кофе» + the «Без кафе» chip (avoids cafes): three cafes and the
     panel saying «категории: кафе» next to «избегать: кофе» before. Now the parsed cafe
     category and the coffee tag leave the search; the panel does not contradict itself."""
     q = "Хочу тихое место с кофе"
     plain = recommend(req(q, use_llm=False), deps)
     assert plain.cards and all(c.category == "cafe" for c in plain.cards)
-    a = recommend(req(q, use_llm=False, prefs={"avoids": ["coffee"]}), deps)
+    a = recommend(req(q, use_llm=False, prefs={"avoids": ["cafes"]}), deps)
     # an avoid is a penalty, not a filter: the one quiet place of the test data (a cafe) may
     # stay, the other cafes go
     assert a.cards and sum(c.category == "cafe" for c in a.cards) <= 1
     f = a.data_used.filters
     assert not any(x.startswith("категории:") and "кафе" in x for x in f)
     assert not any(x.startswith("теги:") and "кофе" in x for x in f)
-    assert "избегать: кофе" in f
+    assert "избегать: кафе" in f
     assert a.intent.categories == ["cafe"]  # what was asked stays visible in the intent
 
 
 def test_explicit_ui_categories_stay_with_avoids(deps: Deps) -> None:
-    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["coffee"]},
+    a = recommend(req("Хочу тихое место с кофе", use_llm=False, prefs={"avoids": ["cafes"]},
                       overrides={"categories": ["cafe"]}), deps)
     assert a.cards and all(c.category == "cafe" for c in a.cards)  # the UI asked for cafes
     assert "категории: кафе" in a.data_used.filters
 
 
-@pytest.mark.parametrize(("query", "label", "category", "gone"), [
-    ("музей рядом", "museums", "museum", True),
-    # the walk tag (not a parks label) still finds the one walk place of the test data
-    ("парк погулять", "parks", "park", False),
-])
-def test_avoids_drop_their_categories(deps: Deps, query: str, label: str, category: str,
-                                      gone: bool) -> None:
-    tuesday = "2026-10-20T15:00:00+05:00"  # the test museum is open
+@pytest.mark.parametrize(("query", "label", "category"), [
+    ("кафе рядом", "cafes", "cafe"), ("бар рядом", "bars", "bar")])
+def test_avoids_drop_their_categories(deps: Deps, query: str, label: str,
+                                      category: str) -> None:
+    late = "2026-10-19T20:00:00+05:00"  # the test bar is open (18:00–04:00)
     name = pipeline_mod.CATEGORY_NAMES["ru"][category]
-    plain = recommend(req(query, use_llm=False, at=tuesday), deps)
+    plain = recommend(req(query, use_llm=False, at=late), deps)
     assert any(name in x for x in plain.data_used.filters if x.startswith("категории:"))
-    a = recommend(req(query, use_llm=False, at=tuesday, prefs={"avoids": [label]}), deps)
+    a = recommend(req(query, use_llm=False, at=late, prefs={"avoids": [label]}), deps)
     assert not any(name in x for x in a.data_used.filters if x.startswith("категории:"))
-    if gone:  # the query word («музей») no longer pulls the avoided place up either
-        assert a.cards and not any(c.category == category for c in a.cards)
+    # the query word («кафе», «бар») no longer pulls the avoided place up either
+    assert a.cards and not any(c.category == category for c in a.cards)
 
 
 def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
@@ -2223,7 +2219,7 @@ def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
                  settings=deps.settings)
     plain = recommend(req("кофе рядом", use_llm=False), small)
     assert [c.category for c in plain.cards] == ["cafe"]  # the category filter of the text
-    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["coffee"]}), small)
+    a = recommend(req("кофе рядом", use_llm=False, prefs={"avoids": ["cafes"]}), small)
     assert a.cards and a.cards[0].category != "cafe"
     assert TEXTS["ru"]["no_match"] not in a.warnings  # the avoided word is not «unmatched»
 
@@ -2231,7 +2227,30 @@ def test_the_no_cafe_chip_on_a_coffee_query(deps: Deps) -> None:
 def test_avoided_categories_and_tags_follow_the_table() -> None:
     from app.schemas import UserPrefs
 
-    cats, tags = retrieval.avoided(UserPrefs(avoids=["coffee", "museums", "night"]))
-    assert cats == {"cafe", "museum", "gallery"}
-    assert tags == {"coffee", "night", "late_open", "24_7"}
+    cats, tags = retrieval.avoided(UserPrefs(avoids=["cafes", "bars", "noisy"]))
+    assert cats == {"cafe", "bar", "nightlife"}  # noisy is a penalty only, not the parse
+    assert tags == {"coffee"}
     assert retrieval.avoided(None) == (frozenset(), frozenset())
+
+
+# ----------------------------------- T133: avoids long_outdoor — short walks, indoor not needed
+
+
+def test_long_outdoor_keeps_walks_outside_short_without_the_indoor_filter(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+    real = route.plan_walk
+    monkeypatch.setattr(route, "plan_walk", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    a = recommend(req("погулять", use_llm=False, prefs={"avoids": ["long_outdoor"]}), deps)
+    f = a.data_used.filters
+    assert "без долгих отрезков на улице: до 10 мин подряд" in f
+    assert "в помещении" not in f and not any(x.startswith("в тепле") for x in f)
+    assert "пешком до 10 мин" in f and a.cards
+    for x in a.cards:
+        for y in a.cards:
+            assert geo.walk_minutes(geo.haversine_m(x.geo, y.geo)) <= 10
+    assert calls == []  # no walk loop: short legs, one way
+    en = recommend(req("walk", use_llm=False, lang="en", prefs={"avoids": ["long_outdoor"]}),
+                   deps)
+    assert "no long walks outside: up to 10 min at a time" in en.data_used.filters

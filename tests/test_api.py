@@ -547,3 +547,15 @@ def test_bad_prefs_are_422_without_echo(client: TestClient, caplog: pytest.LogCa
     assert r.status_code == 422
     for text in (r.text, caplog.text):
         assert "history" not in text and "у воды" not in text and "no_bars" not in text
+
+
+@pytest.mark.parametrize("prefs", [
+    {"likes": ["kids"], "avoids": ["kids_places"]},  # 1.3.1 conflicting pairs
+    {"likes": ["coffee"], "avoids": ["cafes"]},
+    {"likes": ["bars"]},  # a tag of the other list
+])
+def test_conflicting_or_foreign_prefs_are_422(client: TestClient, prefs: dict[str, object]
+                                              ) -> None:
+    r = client.post("/api/recommend", json=body(prefs=prefs))
+    assert r.status_code == 422
+    assert "kids_places" not in r.text and "cafes" not in r.text and "bars" not in r.text
