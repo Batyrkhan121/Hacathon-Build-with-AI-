@@ -295,7 +295,10 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                 # No request data exists at startup, so the full traceback is safe to log.
                 log.exception("store failed to load; data endpoints answer 503")
             else:
-                start_weather_warm_up(app.state.deps)
+                try:
+                    start_weather_warm_up(app.state.deps)
+                except Exception:  # noqa: BLE001 - the weather is optional (rule 5)
+                    log.exception("weather warm-up did not start; requests ask on their own")
         yield
 
     app = FastAPI(title="Qadam API", version=SCHEMA_VERSION, lifespan=lifespan)

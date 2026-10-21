@@ -199,6 +199,27 @@ def detect_lang(text: str) -> Lang:
     return "en" if latin > cyrillic else "ru"
 
 
+def _named_categories(t: str, lang: Lang) -> list[str]:
+    """Categories named by a word of their own (normalised text): «музей», «театр», «бар»."""
+    categories = [cat for cat, rx in _CATEGORY_PATTERNS if rx.search(t)]
+    if lang == "kk" and "bar" in categories and not re.search(r"\bbars?\b|\bpubs?\b|паб", t):
+        categories.remove("bar")  # Kazakh "бар" means "there is"
+    if "viewpoint" in categories and "playground" in categories and "смотров" in t:
+        categories.remove("playground")
+    return categories
+
+
+def explicit_categories(text: str, lang_hint: Lang | None = None) -> list[str]:
+    """T133 (Megah): the categories the text names explicitly — «хочу в музей», «поесть» —
+    not the general phrases («что интересного», «куда сходить», «worth seeing») that
+    parse_rules widens to all sights and parks. Events are filtered only by these."""
+    t = _normalise(text)
+    categories = _named_categories(t, lang_hint or detect_lang(text))
+    if _FOOD_RE.search(t):
+        categories = _dedupe(categories + FOOD)
+    return categories
+
+
 def parse_rules(text: str, lang_hint: Lang | None, landmarks: dict[str, Landmark]) -> QueryIntent:
     """Keywords -> categories / must_tags / with_kids / wheelchair / night / tourist /
     group_size; time: "30–60 минут", "1–2 часа", "полчаса", "пару часов", "2 hours", "2 сағат"."""
@@ -210,11 +231,7 @@ def parse_rules(text: str, lang_hint: Lang | None, landmarks: dict[str, Landmark
     if max_walk is None and budget is None and _NEAR_RE.search(t):
         max_walk = NEAR_WALK_MIN
 
-    categories = [cat for cat, rx in _CATEGORY_PATTERNS if rx.search(t)]
-    if lang == "kk" and "bar" in categories and not re.search(r"\bbars?\b|\bpubs?\b|паб", t):
-        categories.remove("bar")  # Kazakh "бар" means "there is"
-    if "viewpoint" in categories and "playground" in categories and "смотров" in t:
-        categories.remove("playground")
+    categories = _named_categories(t, lang)
     if "attraction" in categories:
         categories = _dedupe(categories + SIGHTS)
     if _SEE_RE.search(t):

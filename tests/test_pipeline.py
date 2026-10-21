@@ -2454,7 +2454,7 @@ def test_a_soon_concert_is_a_card_and_the_last_stop(deps: Deps, tmp_path: Path) 
     assert c.title == "Тестовый концерт" and c.venue == "Тестовая площадка"
     assert c.address == "пр. Мангилик Ел, 55/23" and c.facts_sources == ["manual"]
     assert a.route is not None and a.route.stop_ids[-1] == "event:test-soon"
-    assert "события: по словам запроса, без фильтра категорий" in a.data_used.filters
+    assert "события: без фильтра по категориям мест" in a.data_used.filters
     early = recommend(req(SOON_Q, use_llm=False, at="2026-10-22T14:00:00+05:00"), d)
     assert any(c.kind == "event" for c in early.cards)  # 75 min ahead: a card…
     assert early.route is None or "event:test-soon" not in early.route.stop_ids  # …not a stop
@@ -2502,3 +2502,53 @@ def test_data_lane_records_load_as_they_are_written() -> None:
         record = data_events.to_record(item, venue, "Астана Опера")
     got = ev.Event.model_validate(record)
     assert got.id == "event:opera-tosca-2026-11-01" and got.title_in("ru") == "Опера «Тоска»"
+
+
+# ---------- Megah: general queries do not hide events, an explicit category does (wave 8.1)
+
+GENERAL_QUERIES = [
+    ("ru", "Что интересного рядом"), ("ru", "Куда сходить"), ("ru", "Хочу необычное"),
+    ("kk", "Жақын жерде не қызықты бар"), ("en", "What's interesting nearby"),
+    ("en", "Where to go"),
+]
+
+
+@pytest.mark.parametrize(("lang", "query"), GENERAL_QUERIES)
+def test_general_queries_keep_the_soon_event(deps: Deps, tmp_path: Path, lang: str,
+                                             query: str) -> None:
+    d = _events_deps(deps, tmp_path, [SOON])
+    a = recommend(req(query, use_llm=False, lang=lang, at="2026-10-22T15:00:00+05:00"), d)
+    assert "event:test-soon" in [c.poi_id for c in a.cards if c.kind == "event"]
+    assert a.route is not None and a.route.stop_ids[-1] == "event:test-soon"  # real CORE
+
+
+@pytest.mark.parametrize(("lang", "query"), [
+    ("ru", "Хочу в музей"), ("kk", "Мұражайға барғым келеді"), ("en", "I want a museum")])
+def test_an_explicit_category_keeps_only_matching_events(deps: Deps, tmp_path: Path,
+                                                         lang: str, query: str) -> None:
+    show = {**SOON, "id": "event:test-show", "title": {"ru": "Выставка-тест"},
+            "category": "gallery", "geo": {"lat": 51.0890, "lon": 71.4160}}
+    d = _events_deps(deps, tmp_path, [SOON, show])
+    a = recommend(req(query, use_llm=False, lang=lang, at="2026-10-22T15:00:00+05:00"), d)
+    shown = {c.poi_id for c in a.cards if c.kind == "event"}
+    assert "event:test-soon" not in shown  # an entertainment event is not a museum
+    assert "event:test-show" in shown  # an exhibition is (museum ~ gallery for events)
+
+
+def test_explicit_categories_are_the_named_ones_only() -> None:
+    from app.query_parser import explicit_categories
+
+    assert explicit_categories("Что интересного рядом") == []
+    assert explicit_categories("What's worth seeing nearby?") == []
+    assert explicit_categories("Хочу в музей") == ["museum"]
+    assert set(explicit_categories("где поесть")) >= {"restaurant", "cafe"}
+    assert explicit_categories("kk бар ма", "kk") == []  # Kazakh «бар» = «there is»
+
+
+def test_no_bars_in_likes_reads_as_avoid_bars(deps: Deps) -> None:
+    """Contract 66a26ca: the 1.3.0 like «no_bars» is a synonym of avoids «bars» (no 422)."""
+    late = "2026-10-19T20:00:00+05:00"  # the test bar is open
+    a = recommend(req("куда сходить", use_llm=False, at=late, prefs={"likes": ["no_bars"]}),
+                  deps)
+    assert "избегать: бары" in a.data_used.filters
+    assert not any(c.category in ("bar", "nightlife") for c in a.cards)

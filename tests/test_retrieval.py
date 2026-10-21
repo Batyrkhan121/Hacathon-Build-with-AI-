@@ -1014,6 +1014,7 @@ def test_events_asked_skips_the_parsed_place_filters() -> None:
     q = intent("концерт", categories=["museum"], must_tags=["live_music"])
     store = make_store([museum])
     assert "event:night-show" not in ids(retrieve(store, q, make_ctx(), None, events=[pair]))
-    out = retrieve(store, q, make_ctx(), None, events=[pair], events_asked=True)
+    out = retrieve(store, q, make_ctx(), None, events=[pair], events_asked=True,
+                   event_categories=[])
     assert ids(out)[0] == "event:night-show" and "no_tags" not in out[0].score_parts
     assert ids(out)[1:] == [museum.id]  # places keep the filters (and the tag penalty)

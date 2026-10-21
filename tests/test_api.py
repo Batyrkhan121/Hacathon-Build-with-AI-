@@ -580,3 +580,15 @@ def test_conflicting_or_foreign_prefs_are_422(client: TestClient, prefs: dict[st
     r = client.post("/api/recommend", json=body(prefs=prefs))
     assert r.status_code == 422
     assert "kids_places" not in r.text and "cafes" not in r.text and "bars" not in r.text
+
+
+def test_a_weather_warm_up_that_cannot_start_never_stops_the_server(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_thread(_deps: Deps) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(api, "build_default_deps", lambda: deps)
+    monkeypatch.setattr(api, "start_weather_warm_up", no_thread)
+    with TestClient(api.create_app()) as c:
+        assert c.get("/api/health").json()["poi_count"] == 14  # rule 5: the demo still runs

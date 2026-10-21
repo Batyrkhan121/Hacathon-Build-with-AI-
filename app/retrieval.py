@@ -126,9 +126,9 @@ PREF_AVOID_MAX = -0.35
 EVENT_BONUS = 0.08
 EVENT_WORDS = ("событие мероприятие афиша сегодня вечером концерт спектакль выставка шоу "
                "event events today tonight concert show exhibition іс-шара бүгін кеш көрме")
-# Words that ask for events («концерт или шоу?»): then the categories and tags the parser read
-# in the text («что интересного» -> sights, «концерт» -> live_music) describe places, not the
-# event, so an event is not filtered or penalised by them (retrieve(events_asked=True))
+# Words that ask for events («концерт или шоу?»): then the tags the parser read in the text
+# («концерт» -> live_music) describe places, not the event: no tag filter / penalty for events
+# (retrieve(events_asked=True)). Categories: retrieve(event_categories=...), see there.
 EVENT_ASK_WORDS = ("концерт концерты спектакль спектакли выставка выставки шоу фестиваль афиша "
                    "мероприятие мероприятия событие события премьера опера балет "
                    "concert concerts show shows exhibition festival event events gig "
@@ -864,6 +864,7 @@ def retrieve(
     events: Sequence[tuple[POI, HoursVerdict]] = (),
     exclude_ids: AbstractSet[str] = frozenset(),
     events_asked: bool = False,
+    event_categories: Sequence[str] | None = None,
 ) -> list[Candidate]:
     """Return up to k candidates sorted by final score (best first).
 
@@ -881,8 +882,10 @@ def retrieve(
     events that are not over); EVENT_BONUS in score_parts["event"].
     `exclude_ids` (request.exclude_poi_ids, the «Ещё» chip): places and events already shown,
     dropped before any scoring.
-    `events_asked` (the query asks for events, no categories set in the UI): events are
-    filtered and scored without the parsed categories / must_tags — those describe places.
+    `events_asked` (the query asks for events): events are filtered and scored without the
+    parsed must_tags — those describe places. `event_categories`: the categories events must
+    have (T133, Megah: the ones the text names or the UI set, [] = any; None = as places) —
+    general words («что интересного», «куда сходить») do not hide events.
     """
     if k <= 0 or not store.pois:
         return []
@@ -901,8 +904,12 @@ def retrieve(
         verdict = evaluate_hours(poi.opening_hours, ctx.local_time, lang=intent.lang)
         if _passes_hours(poi, verdict, intent):
             passed.append((i, poi, distance, verdict))
-    event_intent = (intent.model_copy(update={"categories": [], "must_tags": []})
-                    if events_asked else intent)
+    event_update: dict[str, object] = {}
+    if event_categories is not None:
+        event_update["categories"] = list(event_categories)
+    if events_asked:
+        event_update["must_tags"] = []
+    event_intent = intent.model_copy(update=event_update) if event_update else intent
     for poi, verdict in events:
         distance = haversine_m(ctx.origin, poi.geo)
         if (poi.id not in exclude_ids and distance <= ctx.radius_m
