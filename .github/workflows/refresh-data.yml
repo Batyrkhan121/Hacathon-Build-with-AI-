@@ -32,3 +32,4 @@ jobs:
           path: |
             data/processed/poi.jsonl
             data/processed/REPORT.md
+            data/processed/city_gaps.json
