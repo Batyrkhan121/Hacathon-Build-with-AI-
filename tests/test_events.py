@@ -255,3 +255,44 @@ def test_times_on_another_day_carry_the_date() -> None:
     assert events.note(future_run, at("23:00"), "en") == (
         "Starts 25.10 at 10:00; ends 30.11 at 18:00" + CHECK_EN)
     assert events.reason(future_run, at("23:00"), "ru") == "начало 25.10 в 10:00"
+
+
+# --------------------------------- T133 (DATA ec50aa7): the forbidden sources, read once more
+
+
+@pytest.mark.parametrize(("url", "refused"), [
+    ("https://afisha.yandex.kz/astana/event/1", True),
+    ("https://yandex.ru/afisha/1", True),
+    ("https://go.2gis.com/x", True),
+    ("https://ya.ru/x", True),
+    ("https://ticketon.kz/astana/event/1", True),
+    ("https://www.ticketon.kz/event/1", True),
+    ("https://sxodim.com/astana/event/1", True),
+    ("https://eventbrite.com/e/1", True),
+    ("https://notyandex.kz/afisha/1", False),  # labels, not a substring
+    ("https://my2gisfan.kz/e/1", False),
+    ("https://notticketon.kz/e/1", False),
+    ("https://astanaopera.kz/afisha/tosca", False),
+])
+def test_forbidden_sources_are_refused_by_host_labels(tmp_path: Path, url: str,
+                                                      refused: bool) -> None:
+    got = events.load_events(write(tmp_path, [record(source_url=url)]))
+    assert (got == []) is refused
+
+
+def test_the_reader_covers_the_data_lane_list() -> None:
+    """pipeline.events.FORBIDDEN_SOURCES (DATA, T132) is the one list; this reader repeats it
+    (pipeline/ is not in the server image) and must refuse every name of it."""
+    from pipeline import events as data_events
+
+    theirs = getattr(data_events, "FORBIDDEN_SOURCES", None)
+    if theirs is None:
+        pytest.skip("pipeline.events.FORBIDDEN_SOURCES not merged here yet")
+    assert set(theirs) <= events.FORBIDDEN_SOURCES
+
+
+def test_source_kind_is_read_when_given(tmp_path: Path) -> None:
+    got = events.load_events(write(tmp_path, [record("one", source_kind="venue"),
+                                              record("two")]))
+    assert [e.source_kind for e in got] == ["venue", None]
+    assert events.load_events(write(tmp_path, [record(source_kind="aggregator")])) == []

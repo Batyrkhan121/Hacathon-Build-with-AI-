@@ -42,7 +42,18 @@ NO_END_MIN = 120  # an event without ends_at is taken to last this long (and not
 AHEAD_H = 6  # besides today: events starting within this many hours (after midnight)
 SESSION_MAX = timedelta(hours=12)  # longer = a run (exhibition): daily hours not known
 DATA_CONFIDENCE = 0.8  # checked by a person against the organiser's page (pipeline.events)
-FORBIDDEN_HOSTS = ("2gis", "yandex", "ya.ru")  # their terms forbid storing (CLAUDE.md)
+# Never a source of events: maps whose terms forbid storing (CLAUDE.md) and ticket
+# aggregators (T132). The same list as pipeline.events.FORBIDDEN_SOURCES (DATA, tested to
+# cover it): the build refuses them, and this reader refuses them once more. pipeline/ is not
+# in the server image, so the list is repeated here, not imported. A name with a dot matches
+# that domain and its subdomains, a name without one matches a whole host label: afisha.
+# yandex.kz is refused, notyandex.kz is not.
+FORBIDDEN_SOURCES: frozenset[str] = frozenset({
+    "2gis", "yandex", "ya.ru",
+    "ticketon.kz", "sxodim.com", "kino.kz", "kassir.ru", "ticketland.ru", "afisha.ru",
+    "radario.ru", "timepad.ru", "intickets.ru", "ticketmaster.com", "eventbrite.com",
+})
+SourceKind = Literal["venue", "organizer", "city_portal"]
 
 
 class Event(BaseModel):
@@ -65,6 +76,7 @@ class Event(BaseModel):
     fetched_at: str | None = None
     indoor: bool | None = None
     kids_ok: bool | None = None
+    source_kind: SourceKind | None = None  # T132: venue | organizer | city_portal (if given)
 
     @model_validator(mode="after")
     def _checked(self) -> Event:
@@ -72,8 +84,7 @@ class Event(BaseModel):
             raise ValueError("title.ru is required")
         if self.ends_at is not None and self.ends_at <= self.starts_at:
             raise ValueError("ends_at must be after starts_at")
-        host = urlsplit(self.source_url).hostname or ""
-        if any(bad in host for bad in FORBIDDEN_HOSTS):
+        if forbidden_source(urlsplit(self.source_url).hostname or ""):
             raise ValueError("source not allowed")
         return self
 
@@ -89,6 +100,14 @@ class Event(BaseModel):
 
 
 _CACHE: dict[str, tuple[tuple[int, int], list[Event]]] = {}
+
+
+def forbidden_source(host: str) -> bool:
+    """The host is a map or a ticket aggregator (FORBIDDEN_SOURCES), by host labels."""
+    host = host.lower().rstrip(".")
+    labels = host.split(".")
+    return any((host == name or host.endswith("." + name)) if "." in name else name in labels
+               for name in FORBIDDEN_SOURCES)
 
 
 def load_events(path: Path) -> list[Event]:
