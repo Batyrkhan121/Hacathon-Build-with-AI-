@@ -34,7 +34,7 @@ Qadam рекомендует только реальные места из от�
 | 5. События | `pipeline/events.py` | проверка `data/manual/events.json`, площадки привязаны к POI → `data/events.json` |
 | 6. Отчёт | `pipeline/report.py` | `data/processed/REPORT.md` |
 
-Отдельно, не в `run_all`: пешеходный граф `python -m pipeline.walk_graph` (Overpass, 9 плиток) → `data/processed/walk_graph.npz` и `walk_graph_meta.json`; покрытие его тегов `python -m pipeline.walk_coverage` → `data/processed/walk_coverage.json` и таблица в REPORT.md.
+Отдельно, не в `run_all`: пешеходный граф `python -m pipeline.walk_graph` (Overpass, 9 плиток) → `data/processed/walk_graph.npz` и `walk_graph_meta.json`; покрытие его тегов `python -m pipeline.walk_coverage` → `data/processed/walk_coverage.json` и таблица в REPORT.md; карта пробелов данных `python -m pipeline.city_gaps` → `data/processed/city_gaps.json` (шаг `run_all` перед отчётом, раздел «Карта пробелов» в REPORT.md).
 
 Флаги `run_all`:
 - `--area astana|zones|fixture` — что собирать;
@@ -164,6 +164,30 @@ popularity = 0.4 × [есть wikidata или wikipedia]
 - «без ступенек» означает «без лестниц, известных OSM»: лестниц в данных мало, неотмеченные ступени возможны;
 - про бордюры обещать нельзя: данные есть у 71 перехода из 4075;
 - тип перехода у трети переходов в OSM не указан: такой переход без битов 2, 8 и 32, и маршрут называет его «переход», а не «зебра».
+
+## Карта пробелов данных
+
+`data/processed/city_gaps.json` — где в открытых данных Астаны нет сведений, по ячейкам H3 r8 (около 0,74 км²) и по городу. Формат — `CityGaps` в `app/schemas.py` (контракт 1.4.0, docs/ARCHITECTURE.md, раздел 5); его отдаёт `GET /api/city-gaps`, а показывает экран «Карта пробелов данных».
+
+- Источник: места `data/processed/poi.jsonl` и пешеходный граф `walk_graph.npz` с `walk_graph_meta.json` — то есть OpenStreetMap. Лицензия ODbL 1.0, атрибуция «© OpenStreetMap contributors»: в файле `attribution`, `license`, `license_url`, `copyright_url`, даты `poi_date` (самая поздняя выгрузка мест) и `walk_graph_date` (самый поздний снимок OSM в графе).
+- Только агрегаты: в файле нет мест, их id, запросов и ячеек пользователей (лишние поля схема отклоняет).
+- Пересобрать: `.venv/Scripts/python -m pipeline.city_gaps` (без сети, секунды). То же делает шаг `run_all` перед отчётом; если графа нет или шаг упал, сборка идёт дальше, а файл остаётся прежним. После пересборки графа (`pipeline.walk_graph`) карту нужно пересобрать.
+
+Счётчики ячейки и города:
+
+| Слой | Всего | «Нет данных» |
+|---|---|---|
+| часы работы | `poi` | `poi_no_hours`: `opening_hours` пусто или нет |
+| доступность для коляски | `poi` | `poi_wheelchair_unknown`: `wheelchair=unknown` |
+| название на казахском | `poi` | `poi_no_name_kk`: нет `name_i18n["kk"]` или пусто |
+| освещённость | `walk_m` | `walk_lit_unknown_m`: рёбра без битов 2 и 32 |
+| тип перехода | `crossings` (узлы с битом 1) | `crossings_kind_unknown`: без битов 2, 8 и 32 |
+| бордюр на переходе | `crossings` | `crossings_kerb_unknown`: без битов 4 и 16 |
+
+- Место — в ячейке своей `geo`, узел — своей точки, ребро — середины отрезка между концами. Метры ячейки — округлённая сумма её рёбер; город — ровно сумма по ячейкам; ячейки без мест, метров и переходов не пишутся; порядок — по `h3_cell`. Тот же вход даёт тот же файл, кроме `built_at`.
+- Доли и «мало данных» считает читатель по порогам `GAP_MIN_*` (5 мест, 300 м путей, 3 перехода). Доля — «в OSM нет сведений», а не оценка района.
+- REPORT.md, раздел «Карта пробелов»: итоги города и сверка с `walk_coverage.json` и `poi.jsonl` — числа точно, длина до 0,5 км, доли до 0,1 п. п. Тест сверяет закоммиченные файлы.
+- Районы — только в REPORT.md, не в файле: полная разбивка «есть / нет / нет данных» по районам по границам OSM (`python -m pipeline.city_gaps --fetch-districts`: административные границы уровней 5–9 в bbox города через Overpass, кэш 30 дней в `data/raw/osm_astana_districts.json`; районы — границы, почти целиком лежащие в городе, самого крупного уровня). Нет границ на диске — в отчёте так и написано, остаются ячейки.
 
 ## События
 

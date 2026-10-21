@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import statistics
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
@@ -20,7 +21,7 @@ import h3
 
 from app.config import get_settings
 from app.hours import ASTANA_TZ, evaluate_hours
-from app.schemas import POI
+from app.schemas import GAP_MIN_CROSSINGS, GAP_MIN_POI, GAP_MIN_WALK_M, POI
 from pipeline.fetch_osm import area_chunks, is_partial
 from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import (
@@ -32,6 +33,8 @@ from pipeline.normalize import (
     osm_base,
     raw_files,
 )
+
+log = logging.getLogger(__name__)
 
 # a landmark POI = the OSM object of a landmark that our selectors did not fetch, so
 # normalize.finalize added it; "manual" in sources is not a marker (overrides add it too)
@@ -213,6 +216,99 @@ def walk_coverage_lines(cov: Mapping) -> list[str]:
     return lines
 
 
+def _share(part: float, whole: float, enough: bool) -> str:
+    return f"{100 * part / whole:.1f}%" if enough and whole else "мало данных"
+
+
+def _district_row(name: str, t) -> str:
+    """One district (a pipeline.city_gaps.Tally): the full «есть / нет / нет данных» split."""
+    walk = sum(t.lit_m.values())
+    crossings = sum(t.crossings.values())
+    places = sum(t.wheelchair.values())
+    lit_ok, cross_ok, poi_ok = (walk >= GAP_MIN_WALK_M, crossings >= GAP_MIN_CROSSINGS,
+                                places >= GAP_MIN_POI)
+
+    def split(counter, keys, whole, ok) -> str:
+        return " / ".join(_share(counter[k], whole, ok) for k in keys)
+
+    return (
+        f"| {name} | {walk / 1000:.1f} | {split(t.lit_m, ('yes', 'no', 'unknown'), walk, lit_ok)}"
+        f" | {crossings} | "
+        f"{split(t.crossings, ('signals', 'marked', 'unmarked', 'unknown'), crossings, cross_ok)}"
+        f" | {split(t.kerbs, ('lowered', 'raised', 'unknown'), crossings, cross_ok)} | {places} | "
+        f"{split(t.wheelchair, ('yes', 'limited', 'no', 'unknown'), places, poi_ok)} | "
+        f"{_share(t.hours['known'], places, poi_ok)} | {_share(t.name_kk['yes'], places, poi_ok)} |"
+    )
+
+
+def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] = (),
+                    districts: tuple | None = None) -> list[str]:
+    """«Карта пробелов»: city totals of data/processed/city_gaps.json, the check against
+    walk_coverage.json and poi.jsonl, and (boundaries on disk) the districts."""
+    city, cells = gaps["city"], gaps.get("cells") or []
+
+    def row(layer: str, whole: float, part: float, unit: str = "") -> str:
+        share = f"{100 * part / whole:.1f}%" if whole else "—"
+        return f"| {layer} | {whole}{unit} | {part}{unit} | {share} |"
+
+    lines = [
+        "",
+        "## Карта пробелов",
+        "`data/processed/city_gaps.json` (контракт 1.4.0, `CityGaps`) собирает "
+        "`python -m pipeline.city_gaps` из `poi.jsonl` и пешеходного графа: где в открытых "
+        f"данных OSM нет сведений, по {len(cells)} ячейкам H3 r{gaps.get('h3_res', 8)} и по "
+        f"городу. Места на {gaps.get('poi_date')}, граф на {gaps.get('walk_graph_date')}; "
+        f"{gaps.get('attribution')}, {gaps.get('license')}. Доля — «в OSM нет сведений», "
+        "а не оценка района.",
+        "",
+        "| Слой | всего | нет данных | доля |",
+        "|---|---:|---:|---:|",
+        row("часы работы", city["poi"], city["poi_no_hours"]),
+        row("доступность для коляски", city["poi"], city["poi_wheelchair_unknown"]),
+        row("название на казахском", city["poi"], city["poi_no_name_kk"]),
+        row("освещённость, км путей", round(city["walk_m"] / 1000, 1),
+            round(city["walk_lit_unknown_m"] / 1000, 1)),
+        row("тип перехода", city["crossings"], city["crossings_kind_unknown"]),
+        row("бордюр на переходе", city["crossings"], city["crossings_kerb_unknown"]),
+        "",
+        f"Ячеек «мало данных» (пороги `GAP_MIN_*`): мест меньше {GAP_MIN_POI} — "
+        f"{sum(1 for c in cells if c['poi'] < GAP_MIN_POI)}, путей меньше {GAP_MIN_WALK_M} м — "
+        f"{sum(1 for c in cells if c['walk_m'] < GAP_MIN_WALK_M)}, переходов меньше "
+        f"{GAP_MIN_CROSSINGS} — {sum(1 for c in cells if c['crossings'] < GAP_MIN_CROSSINGS)}.",
+    ]
+    if checks:
+        lines += [
+            "",
+            "Сверка итогов карты с `walk_coverage.json` (таблицы выше) и `poi.jsonl`; допуски "
+            "ARCHITECTURE: числа точно, длина до 0,5 км, доли до 0,1 п. п.",
+            "",
+            "| Что | карта | отчёт | сходится |",
+            "|---|---:|---:|---|",
+            *(f"| {c['what']} | {c['map']} | {c['report']} | {'да' if c['ok'] else '**нет**'} |"
+              for c in checks),
+        ]
+    if districts is None:
+        lines += ["", "Районов нет: границ районов OSM на диске нет (`python -m pipeline."
+                  "city_gaps --fetch-districts`, нужен Overpass) — только ячейки."]
+        return lines
+    found, tallies = districts
+    from pipeline.city_gaps import OUTSIDE, Tally
+
+    lines += [
+        "",
+        "По районам (границы OSM; ребро — по середине, переход и место — по точке; доля "
+        f"при {GAP_MIN_POI}+ местах, {GAP_MIN_WALK_M}+ м путей, {GAP_MIN_CROSSINGS}+ переходах):",
+        "",
+        "| Район | км путей | освещено / нет / нет данных | переходов | светофор / разметка / "
+        "без разметки / тип не указан | бордюр занижен / не занижен / нет данных | мест | "
+        "коляска: да / частично / нет / нет данных | часы известны | название kk |",
+        "|---|---:|---|---:|---|---|---:|---|---:|---:|",
+        *(_district_row(d.name, tallies.get(d.name, Tally())) for d in found),
+        _district_row(OUTSIDE, tallies.get(OUTSIDE, Tally())),
+    ]
+    return lines
+
+
 SOURCE_KIND_RU = {"venue": "площадки", "organizer": "организаторы",
                   "city_portal": "городские порталы"}
 
@@ -269,11 +365,16 @@ def build_report(
     walk_meta: Mapping | None = None,
     walk_coverage: Mapping | None = None,
     events: Mapping | None = None,
+    city_gaps: Mapping | None = None,
+    city_gaps_checks: Sequence[Mapping] = (),
+    city_gaps_districts: tuple | None = None,
 ) -> str:
     """`missing_chunks`: city tiles not on disk; None when the build is not the whole city.
     `outlines_meta`: the `qadam` block of data/raw/osm_mall_outlines.json, if any.
     `walk_meta`, `walk_coverage`: data/processed/walk_graph_meta.json, walk_coverage.json.
-    `events`: the summary of pipeline.events (data/manual/events.json), if checked."""
+    `events`: the summary of pipeline.events (data/manual/events.json), if checked.
+    `city_gaps`: data/processed/city_gaps.json; `city_gaps_checks`: pipeline.city_gaps.reconcile;
+    `city_gaps_districts`: pipeline.city_gaps.district_tallies (None: no boundaries)."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
     now = generated_at or datetime.now(ASTANA_TZ)
@@ -441,6 +542,8 @@ def build_report(
         lines += walk_graph_lines(walk_meta)
     if walk_coverage:
         lines += walk_coverage_lines(walk_coverage)
+    if city_gaps:
+        lines += city_gaps_lines(city_gaps, city_gaps_checks, city_gaps_districts)
     if events:
         lines += events_lines(events)
 
@@ -486,11 +589,24 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
         return (json.loads(path.read_text(encoding="utf-8"))
                 if area == "astana" and path.exists() else None)
 
+    gaps, coverage = processed("city_gaps.json"), processed("walk_coverage.json")
+    checks: list[dict] = []
+    districts = None
+    if gaps:
+        from pipeline import city_gaps
+
+        checks = city_gaps.reconcile(gaps["city"], coverage, len(pois),
+                                     sum(1 for p in pois if p.wheelchair == "unknown"))
+        try:
+            districts = city_gaps.district_tallies(raw_dir)
+        except Exception:  # noqa: BLE001 - the district table is extra, the report is not
+            log.exception("district table skipped")
     text = build_report(
         pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
         outlines_meta=(outlines or {}).get("qadam"), walk_meta=processed("walk_graph_meta.json"),
-        walk_coverage=processed("walk_coverage.json"),
+        walk_coverage=coverage,
         events=events_summary() if area == "astana" else None,
+        city_gaps=gaps, city_gaps_checks=checks, city_gaps_districts=districts,
     )
     out.write_text(text, encoding="utf-8")
     return out
