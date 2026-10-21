@@ -135,6 +135,7 @@ class GraphPath:
     lit_m: float = 0.0  # metres on ways tagged lit=yes
     unlit_m: float = 0.0  # metres on ways tagged lit=no
     stairs_fallback: bool = False  # profile "accessible", but no step-free way worth taking
+    links_m: tuple[float, float] = (0.0, 0.0)  # straight links: start point -> node -> end point
 
     @property
     def unknown_lit_m(self) -> float:
@@ -449,6 +450,7 @@ class WalkGraph:
             steps=sum(1 for e in edges if self._e_flags[e] & EDGE_STEPS),
             lit_m=sum(self._e_len[e] for e in edges if self._lit[e] > 0),
             unlit_m=sum(self._e_len[e] for e in edges if self._lit[e] < 0),
+            links_m=(link_a, link_b),
         )
 
     def _node_kerb(self, node: int) -> Kerb:

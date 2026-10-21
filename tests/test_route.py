@@ -640,3 +640,22 @@ def test_a_0_m_step_to_a_stop_where_you_stand_is_not_a_straight_part(tmp_path) -
         assert r is not None and r.path_source == "graph"
         assert r.legs[0].to_id == "test:poi/here" and r.legs[0].distance_m == 0
         assert r.straight_share == 0 and r.note == "graph note"
+
+
+@pytest.mark.parametrize(("link_m", "share"), [(50, 0.0), (51, 0.093)])
+def test_a_link_over_50_m_counts_as_straight(tmp_path, link_m, share) -> None:  # type: ignore[no-untyped-def]
+    """Integrator: links to the walk graph up to 50 m (whole metres) are part of the graph leg;
+    a longer one (up to 150 m, S3: 131 m) has unchecked steps: it counts whole as straight.
+    51 m of 551 m = 0.0926 -> 0.093 (rounded up)."""
+    from .test_walkgraph import FOOTWAY
+
+    g = load_graph(write_graph(tmp_path, {"A": (0, 0, 0), "B": (500, 0, 0)}, [("A", "B", FOOTWAY)]))
+    assert g is not None
+    a, b = g.point(0), g.point(1)  # the stored (float32) node points
+    m_per_deg = haversine_m(a, GeoPoint(lat=a.lat + 1e-3, lon=a.lon)) / 1e-3
+    origin = GeoPoint(lat=a.lat - link_m / m_per_deg, lon=a.lon)  # link_m south of node A
+    assert haversine_m(origin, a) == pytest.approx(link_m, abs=0.01)
+    r = plan_route(origin, [cand_at("b", b)], None, {}, graph=g, graph_note="graph note")
+    assert r is not None and r.path_source == "graph" and r.total_walk_m == 500 + link_m
+    assert r.straight_share == share
+    assert r.note == "graph note"  # the minutes are not x1.3: no «part straight» sentence
