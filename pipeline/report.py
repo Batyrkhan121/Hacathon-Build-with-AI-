@@ -213,6 +213,10 @@ def walk_coverage_lines(cov: Mapping) -> list[str]:
     return lines
 
 
+SOURCE_KIND_RU = {"venue": "площадки", "organizer": "организаторы",
+                  "city_portal": "городские порталы"}
+
+
 def events_lines(summary: Mapping) -> list[str]:
     """Hand-added events (pipeline.events): how many passed the check, by source."""
     bound = summary.get("bound_by") or {}
@@ -231,6 +235,9 @@ def events_lines(summary: Mapping) -> list[str]:
         f"{bound.get('none', 0)}.",
         "- По источникам: "
         + (", ".join(f"{name} — {n}" for name, n in by_source.items()) or "событий пока нет")
+        + ("; по видам: " + ", ".join(f"{SOURCE_KIND_RU.get(k, k)} — {n}"
+                                       for k, n in summary["by_kind"].items())
+           if summary.get("by_kind") else "")
         + ".",
     ]
     lines += [f"- Ошибка: {e}" for e in (summary.get("errors") or [])[:10]]

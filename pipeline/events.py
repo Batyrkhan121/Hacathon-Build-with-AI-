@@ -2,12 +2,14 @@
 
     python -m pipeline.events            # check, bind venues, write data/events.json
     python -m pipeline.events --check    # check only, write nothing; exit code 1 on errors
-    python -m pipeline.events --schema   # rewrite data/manual/events.schema.json
+    python -m pipeline.events --schema   # rewrite the JSON schemas of the two manual files
 
-People add events from the official site of a venue or an organiser: facts and a link only,
-no descriptions, so nothing is retold (an unknown field such as "description" is an error).
-A source's domain must first be listed in data/manual/event_sources.json with the page of
-its terms that allows storing these facts; 2GIS and Yandex are refused even if listed.
+A person from the team adds events from the official site of a venue, an organiser or a city
+portal: facts and a link only, no descriptions, so nothing is retold (an unknown field such
+as "description" is an error). A source's domain must first be listed in
+data/manual/event_sources.json with its kind (venue | organizer | city_portal) and the page
+of its terms that allows storing these facts. Map services (2GIS, Yandex) and ticket
+aggregators are refused even if listed: FORBIDDEN_SOURCES below is the one list of them.
 
 The venue is given by our POI id or by coordinates. Coordinates are bound to a POI by the
 venue name within 300 m, or, without a name, to the nearest POI within 50 m; an event that
@@ -52,8 +54,33 @@ BIND_BY_NAME_M = 300.0  # the venue name matches a POI this close
 BIND_NEAREST_M = 50.0  # no venue name: the nearest POI this close
 ID_GEO_MAX_M = 300.0  # venue_poi_id and geo both given: they must agree
 MAX_DURATION = timedelta(days=366)  # a longer event is a typo in a date
-# their terms forbid storing their data (CLAUDE.md): never a source, even if listed
-FORBIDDEN_HOSTS = ("2gis", "yandex", "ya.ru")
+# Never an event source, even if listed in event_sources.json. Map services: their terms
+# forbid storing their data (CLAUDE.md). Ticket aggregators: not taken for now, only the
+# official sites of venues and organisers and city portals (Megah, 21.10). A brand (a name
+# without a dot) matches a label of the host in any zone and on any subdomain ("ticketon.com",
+# "afisha.yandex.kz"); a generic word ("kino", "afisha") would hit honest sites, so those
+# brands are listed as domains, which match themselves and their subdomains. Keep
+# docs/DATA.md in step.
+MAPS = "2GIS и Яндекс нельзя: их условия запрещают хранить данные"
+TICKETS = ("агрегаторы билетов пока не берём: только сайты площадок, организаторов и "
+           "городские порталы")
+FORBIDDEN_SOURCES: dict[str, str] = {
+    "2gis": MAPS,
+    "yandex": MAPS,
+    "ya.ru": MAPS,
+    "ticketon": TICKETS,
+    "sxodim": TICKETS,
+    "kassir": TICKETS,
+    "ticketland": TICKETS,
+    "radario": TICKETS,
+    "timepad": TICKETS,
+    "intickets": TICKETS,
+    "ticketmaster": TICKETS,
+    "eventbrite": TICKETS,
+    "kino.kz": TICKETS,
+    "afisha.ru": TICKETS,
+}
+SourceKind = Literal["venue", "organizer", "city_portal"]
 NOT_VENUES = frozenset({"playground"})  # an unnamed «Детская площадка» is not a venue
 _NON_WORD = re.compile(r"[\W_]+")
 
@@ -127,9 +154,8 @@ class EventIn(BaseModel):
         parts = urlsplit(value)
         if parts.scheme != "https" or not parts.hostname or " " in value:
             raise ValueError("нужна ссылка https://")
-        if any(bad in parts.hostname for bad in FORBIDDEN_HOSTS):
-            raise ValueError("2GIS и Яндекс запрещены как источник: их условия не разрешают "
-                             "хранить данные")
+        if reason := forbidden_source(parts.hostname):
+            raise ValueError(f"{parts.hostname}: {reason}")
         return value
 
     @model_validator(mode="after")
@@ -157,18 +183,49 @@ class EventsFile(BaseModel):
 class Source(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    domain: str = Field(pattern=r"^[a-z0-9.-]+\.[a-z]{2,}$")
+    domain: str = Field(pattern=r"^[a-z0-9.-]+\.[a-z]{2,}$",
+                        description="astanaopera.kz: без www. и протокола")
     name: str = Field(min_length=2, max_length=120)
+    kind: SourceKind = Field(description="venue | organizer | city_portal")
     terms_url: str = Field(pattern=r"^https://\S+$")
     checked_at: date
     note: str | None = None
 
+    @field_validator("domain", mode="before")
+    @classmethod
+    def _normal(cls, value: object) -> object:
+        """"WWW.AstanaOpera.kz." -> "astanaopera.kz": one site, one entry."""
+        if not isinstance(value, str):
+            return value
+        value = value.strip().lower().rstrip(".")
+        return value.removeprefix("www.")
+
     @field_validator("domain")
     @classmethod
     def _allowed(cls, value: str) -> str:
-        if any(bad in value for bad in FORBIDDEN_HOSTS):
-            raise ValueError("2GIS и Яндекс нельзя: их условия запрещают хранить данные")
+        if reason := forbidden_source(value):
+            raise ValueError(f"{value}: {reason}")
         return value
+
+
+class SourcesFile(BaseModel):
+    """data/manual/event_sources.json as a whole (only for the JSON schema)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_ref: str | None = Field(default=None, alias="$schema")
+    format_version: Literal[1]
+    sources: list[Source]
+
+
+def forbidden_source(host: str) -> str | None:
+    """Why this host may never be an event source (FORBIDDEN_SOURCES), or None."""
+    host = host.lower().rstrip(".")
+    labels = host.split(".")
+    for name, reason in FORBIDDEN_SOURCES.items():
+        if ("." in name and (host == name or host.endswith("." + name))) or name in labels:
+            return reason
+    return None
 
 
 @dataclass
@@ -188,6 +245,7 @@ class CheckResult:
     past: int = 0
     bound_by: Counter = field(default_factory=Counter)  # id / name / nearest / none
     by_source: Counter = field(default_factory=Counter)
+    by_kind: Counter = field(default_factory=Counter)  # venue / organizer / city_portal
     readable: bool = True  # False: a manual file is not valid JSON -> keep data/events.json
 
     def summary(self) -> dict:
@@ -195,6 +253,7 @@ class CheckResult:
             "total": self.total, "valid": self.valid, "upcoming": len(self.events),
             "past": self.past, "bound_by": dict(self.bound_by),
             "by_source": dict(self.by_source.most_common()),
+            "by_kind": dict(self.by_kind.most_common()),
             "errors": self.errors, "warnings": self.warnings,
         }
 
@@ -248,7 +307,7 @@ def _price(price: int | PriceRange | None) -> dict | None:
     return {"min": price.min, "max": price.max, "currency": "KZT"}
 
 
-def to_record(event: EventIn, venue: Venue, source_name: str) -> dict:
+def to_record(event: EventIn, venue: Venue, source: Source) -> dict:
     """The data/events.json object (docs/ARCHITECTURE.md, section 5) + price/indoor/kids_ok."""
     title = Title(ru=event.title) if isinstance(event.title, str) else event.title
     poi = venue.poi
@@ -276,7 +335,8 @@ def to_record(event: EventIn, venue: Venue, source_name: str) -> dict:
         "venue_poi_id": poi.id if poi else None,
         "venue_bound_by": venue.bound_by,
         "source_url": event.source_url,
-        "source_name": source_name,
+        "source_name": source.name,
+        "source_kind": source.kind,
         "fetched_at": event.fetched_at.isoformat(),
         "price": price,
         "indoor": indoor,
@@ -312,9 +372,14 @@ def check(
     else:
         for i, item in enumerate(sources_raw["sources"], 1):
             try:
-                sources.append(Source.model_validate(item))
+                source = Source.model_validate(item)
             except ValidationError as exc:
                 res.errors += [f"источник #{i}: {_error_text(e)}" for e in exc.errors()]
+                continue
+            if any(s.domain == source.domain for s in sources):
+                res.errors.append(f"источник #{i}: домен {source.domain} уже в списке")
+                continue
+            sources.append(source)
     if not isinstance(raw, dict) or not isinstance(raw.get("events"), list):
         res.errors.append('events.json: нужен объект {"format_version": 1, "events": [...]}')
         return res
@@ -363,7 +428,8 @@ def check(
         if event.starts_at - now > MAX_DURATION:
             res.warnings.append(f"{label}: начало больше чем через год — проверьте год")
         res.by_source[source.name] += 1
-        res.events.append(to_record(event, venue, source.name))
+        res.by_kind[source.kind] += 1
+        res.events.append(to_record(event, venue, source))
     res.events.sort(key=lambda e: (e["starts_at"], e["id"]))
     return res
 
@@ -407,22 +473,31 @@ def run(now: datetime | None = None) -> CheckResult:
     return res
 
 
-def json_schema() -> dict:
-    schema = EventsFile.model_json_schema(by_alias=True)
-    schema["title"] = "Qadam: события, внесённые вручную (data/manual/events.json)"
-    return schema
+def json_schemas() -> dict[str, dict]:
+    """{file name in data/manual: JSON schema} for the two hand-edited files."""
+    out = {}
+    for name, model, title in (
+        ("events.schema.json", EventsFile,
+         "Qadam: события, внесённые вручную (data/manual/events.json)"),
+        ("event_sources.schema.json", SourcesFile,
+         "Qadam: источники событий (data/manual/event_sources.json)"),
+    ):
+        out[name] = model.model_json_schema(by_alias=True) | {"title": title}
+    return out
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="check only, write nothing")
-    parser.add_argument("--schema", action="store_true", help="rewrite events.schema.json")
+    parser.add_argument("--schema", action="store_true",
+                        help="rewrite events.schema.json and event_sources.schema.json")
     args = parser.parse_args(argv)
     if args.schema:
-        out = get_settings().data_dir / "manual" / "events.schema.json"
-        out.write_text(json.dumps(json_schema(), ensure_ascii=False, indent=2) + "\n",
-                       encoding="utf-8")
-        print(f"schema -> {out}")
+        for name, schema in json_schemas().items():
+            out = get_settings().data_dir / "manual" / name
+            out.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8")
+            print(f"schema -> {out}")
         return
     res = check_files() if args.check else run()
     for line in res.errors:
