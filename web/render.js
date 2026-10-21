@@ -384,7 +384,7 @@ function renderEventBlock(card, ctx) {
   );
 }
 
-// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min (≤ 120), «без кафе» → prefs.avoids coffee,
+// 1.3.0, чипы уточнения под ответом: «ближе» → overrides.max_walk_min (≤ 120), «без кафе» → prefs.avoids cafes,
 // «ещё» → exclude_poi_ids (показанные в серии места). Разовый повтор запроса, поправки складываются, без сохранения.
 function renderRefineChips(answer, ctx) {
   if (!answer.cards.length || !ctx.onCloser) return null;
@@ -397,7 +397,7 @@ function renderRefineChips(answer, ctx) {
       h('button', { type: 'button', class: 'chip', onclick: () => ctx.onCloser(closer) }, t('refineChip.closer')),
     );
   }
-  if (!req.prefs?.avoids?.includes('coffee')) {
+  if (!req.prefs?.avoids?.includes('cafes')) {
     chips.push(h('button', { type: 'button', class: 'chip', onclick: ctx.onNoCafe }, t('refineChip.noCafe')));
   }
   // «Ещё» (exclude_poi_ids): скрыт, когда в серии показано уже 9 мест
@@ -416,7 +416,7 @@ function renderRefineChips(answer, ctx) {
 // «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть — значит, кофе просили
 // в самом запросе и сервер отдал приоритет запросу. Говорим об этом прямо, а не молча.
 function renderNoCafeConflict(answer, ctx) {
-  const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('coffee');
+  const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('cafes');
   if (!avoidsCoffee || !answer.cards.some((c) => c.category === 'cafe')) return null;
   return h('p', { class: 'warning no-cafe-conflict', role: 'note', text: t('noCafe.conflict') });
 }

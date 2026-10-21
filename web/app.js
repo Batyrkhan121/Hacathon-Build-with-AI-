@@ -17,8 +17,11 @@ const BUDGETS = [30, 60, 120];
 // Режимы (T72) — переключатели в UserOverrides; «в помещении» остаётся обычным фильтром.
 const MODES = ['tourist', 'night', 'with_kids', 'wheelchair', 'group'];
 const FILTER_FLAGS = ['indoor_only'];
-// 1.3.0: словарь меток предпочтений (PrefTag в app/schemas.py); no_bars — только «нравится»
-const PREF_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'no_bars', 'warm', 'night'];
+// 1.3.1: раздельные словари (LikeTag / AvoidTag в app/schemas.py) и противоречивые пары (PREF_CONFLICTS):
+// выбор одной метки пары снимает другую — вместе их сервер не примет (422)
+const LIKE_TAGS = ['quiet', 'coffee', 'kids', 'museums', 'parks', 'warm', 'night'];
+const AVOID_TAGS = ['bars', 'noisy', 'long_outdoor', 'kids_places', 'cafes'];
+const PREF_CONFLICT = { kids: 'kids_places', kids_places: 'kids', coffee: 'cafes', cafes: 'coffee' };
 const PREFS_KEY = 'qadam.prefs.v1';
 const MAX_EXCLUDE = 9; // контракт: exclude_poi_ids до 9 (3 ответа × 3 карточки)
 const MAX_WALK_MIN = 120; // контракт: overrides.max_walk_min ≤ 120
@@ -187,12 +190,13 @@ function mergePrefs(base, patch = {}) {
   let likes = [...(base?.likes || [])];
   let avoids = [...(base?.avoids || [])];
   for (const tag of patch.likes || []) {
-    avoids = avoids.filter((x) => x !== tag);
+    if (!LIKE_TAGS.includes(tag)) continue;
+    avoids = avoids.filter((x) => x !== PREF_CONFLICT[tag]);
     if (!likes.includes(tag)) likes.push(tag);
   }
   for (const tag of patch.avoids || []) {
-    if (tag === 'no_bars') continue; // «без баров» — только в likes (контракт 1.3.0)
-    likes = likes.filter((x) => x !== tag);
+    if (!AVOID_TAGS.includes(tag)) continue;
+    likes = likes.filter((x) => x !== PREF_CONFLICT[tag]); // «без кафе» снимает «кофе» в этом запросе
     if (!avoids.includes(tag)) avoids.push(tag);
   }
   return { likes, avoids };
@@ -385,7 +389,7 @@ function renderAnswer({ redrawMap = true } = {}) {
     onWarm: () => refine({ likes: ['warm'] }),
     // Чипы уточнения под ответом: разовый повтор запроса, поправки серии складываются, ничего не сохраняется
     onCloser: (maxWalk) => refine({ overrides: { max_walk_min: Math.min(MAX_WALK_MIN, maxWalk) } }),
-    onNoCafe: () => refine({ avoids: ['coffee'] }),
+    onNoCafe: () => refine({ avoids: ['cafes'] }),
     // «Ещё»: те же условия, без мест, уже показанных в этой серии
     onMore: state.series.shown.length < MAX_EXCLUDE ? () => refine({ exclude: [...state.series.shown] }) : null,
   });
@@ -917,13 +921,11 @@ function syncLangButtons() {
 function loadPrefs() {
   try {
     const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
-    const pick = (list, allowNoBars) =>
-      [...new Set(Array.isArray(list) ? list : [])].filter(
-        (x) => PREF_TAGS.includes(x) && (allowNoBars || x !== 'no_bars'),
-      );
-    const likes = pick(raw?.likes, true).slice(0, 8);
-    const avoids = pick(raw?.avoids, false)
-      .filter((x) => !likes.includes(x))
+    // старые метки (no_bars, avoids прежнего словаря) отбрасываем; из противоречивой пары оставляем «нравится»
+    const pick = (list, vocab) => [...new Set(Array.isArray(list) ? list : [])].filter((x) => vocab.includes(x));
+    const likes = pick(raw?.likes, LIKE_TAGS).slice(0, 8);
+    const avoids = pick(raw?.avoids, AVOID_TAGS)
+      .filter((x) => !likes.includes(PREF_CONFLICT[x]))
       .slice(0, 8);
     return { likes, avoids };
   } catch {
@@ -947,7 +949,8 @@ function togglePref(list, tag) {
   const other = list === 'likes' ? 'avoids' : 'likes';
   const on = state.prefs[list].includes(tag);
   state.prefs[list] = on ? state.prefs[list].filter((x) => x !== tag) : [...state.prefs[list], tag];
-  if (!on) state.prefs[other] = state.prefs[other].filter((x) => x !== tag);
+  // пара «с ребёнком» + «детские места», «кофе» + «кафе»: выбор одной снимает другую
+  if (!on) state.prefs[other] = state.prefs[other].filter((x) => x !== PREF_CONFLICT[tag]);
   savePrefs();
   renderPrefs();
   filtersChanged();
@@ -955,11 +958,11 @@ function togglePref(list, tag) {
 
 function renderPrefs() {
   els.prefsLikes.replaceChildren(
-    ...PREF_TAGS.map((tag) => chip(t(`pref.${tag}`), state.prefs.likes.includes(tag), () => togglePref('likes', tag))),
+    ...LIKE_TAGS.map((tag) => chip(t(`pref.${tag}`), state.prefs.likes.includes(tag), () => togglePref('likes', tag))),
   );
   els.prefsAvoids.replaceChildren(
-    ...PREF_TAGS.filter((tag) => tag !== 'no_bars').map((tag) =>
-      chip(t(`pref.${tag}`), state.prefs.avoids.includes(tag), () => togglePref('avoids', tag)),
+    ...AVOID_TAGS.map((tag) =>
+      chip(t(`avoid.${tag}`), state.prefs.avoids.includes(tag), () => togglePref('avoids', tag)),
     ),
   );
   const n = state.prefs.likes.length + state.prefs.avoids.length;
