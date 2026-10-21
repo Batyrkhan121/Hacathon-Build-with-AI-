@@ -15,10 +15,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.3.1"
 # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10;
 # 1.3.0 (wave 8): route_profile, prefs and exclude_poi_ids in the request, route profile facts,
-# event cards, crossing kind unknown
+# event cards, crossing kind unknown; 1.3.1 (wave 8.1): separate likes / avoids vocabularies,
+# conflicting pairs -> 422, MiniRoute.straight_share, Card.venue
 MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
@@ -92,20 +93,37 @@ Source = Literal[
 OpenStatus = Literal["open", "closed", "unknown"]
 Confidence = Literal["high", "medium", "low"]
 Wheelchair = Literal["yes", "limited", "no", "unknown"]
-RouteProfile = Literal["fastest", "accessible", "lit"]  # быстрее / без ступенек / по освещённым
+# быстрее / без ступенек / ночью — по крупным улицам (lit: the API name kept for compatibility)
+RouteProfile = Literal["fastest", "accessible", "lit"]
 
-# 1.3.0: fixed preference vocabulary. No free text: an unknown tag is a 422.
-PrefTag = Literal["quiet", "coffee", "kids", "museums", "parks", "no_bars", "warm", "night"]
-PREF_LABELS_RU: dict[str, str] = {
+# Fixed preference vocabularies. No free text: an unknown tag is a 422.
+# 1.3.1: likes and avoids have separate vocabularies («без баров» left likes: avoids "bars").
+LikeTag = Literal["quiet", "coffee", "kids", "museums", "parks", "warm", "night"]
+AvoidTag = Literal["bars", "noisy", "long_outdoor", "kids_places", "cafes"]
+PrefTag = Literal[LikeTag, AvoidTag]  # any tag of either list
+PREF_LIKE_LABELS_RU: dict[str, str] = {
     "quiet": "тихо",
     "coffee": "кофе",
     "kids": "с ребёнком",
     "museums": "музеи",
     "parks": "парки",
-    "no_bars": "без баров",
     "warm": "в тепле",
     "night": "ночные",
 }
+PREF_AVOID_LABELS_RU: dict[str, str] = {
+    "bars": "бары",
+    "noisy": "шумно",
+    "long_outdoor": "долго на улице",
+    "kids_places": "детские места",
+    "cafes": "кафе",
+}
+PREF_LABELS_RU: dict[str, str] = {**PREF_LIKE_LABELS_RU, **PREF_AVOID_LABELS_RU}
+# a like and an avoid that contradict each other: both in one request -> 422
+# 1.3.0 like -> 1.3.1 avoid, read as a synonym for one version (until 1.4), never a 422
+DEPRECATED_LIKES: dict[str, str] = {"no_bars": "bars"}
+PREF_CONFLICTS: frozenset[tuple[str, str]] = frozenset(
+    {("kids", "kids_places"), ("coffee", "cafes")}
+)
 MAX_PREFS = 8
 MAX_EXCLUDE = 9  # «Ещё»: places already shown in this series (3 answers × 3 cards)
 PoiId = Annotated[str, Field(pattern=r"^[a-z_]+:[A-Za-z0-9_./-]+$", max_length=200)]  # as POI.id
@@ -213,26 +231,43 @@ class UserOverrides(BaseModel):
 
 
 class UserPrefs(BaseModel):
-    """1.3.0. Likes and avoids for ONE request, only from PrefTag (labels: PREF_LABELS_RU).
+    """Likes and avoids for ONE request. 1.3.1: likes only from LikeTag, avoids only from AvoidTag
+    (labels: PREF_LIKE_LABELS_RU, PREF_AVOID_LABELS_RU); a pair from PREF_CONFLICTS is a 422.
 
     No free text and no history: the server does not store prefs and never logs them together
-    with the cell, the landmark or the query. "no_bars" is a like ("без баров"), not an avoid.
+    with the cell, the landmark or the query.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    likes: list[PrefTag] = Field(default_factory=list, max_length=MAX_PREFS)
-    avoids: list[PrefTag] = Field(default_factory=list, max_length=MAX_PREFS)
+    likes: list[LikeTag] = Field(default_factory=list, max_length=MAX_PREFS)
+    avoids: list[AvoidTag] = Field(default_factory=list, max_length=MAX_PREFS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _deprecated_likes(cls, data: object) -> object:
+        """«no_bars» in likes (1.3.0) moves to avoids as «bars»; anything malformed is left to
+        the normal validation (a 422)."""
+        if not isinstance(data, dict):
+            return data
+        likes, avoids = data.get("likes"), data.get("avoids", [])
+        if not isinstance(likes, list) or not isinstance(avoids, list):
+            return data
+        moved = [DEPRECATED_LIKES[t] for t in likes if isinstance(t, str) and t in DEPRECATED_LIKES]
+        if not moved:
+            return data
+        kept = [t for t in likes if not (isinstance(t, str) and t in DEPRECATED_LIKES)]
+        added = [t for t in dict.fromkeys(moved) if t not in avoids]
+        return {**data, "likes": kept, "avoids": avoids + added}
 
     @model_validator(mode="after")
     def _consistent(self) -> UserPrefs:
         for name, tags in (("likes", self.likes), ("avoids", self.avoids)):
             if len(set(tags)) != len(tags):
                 raise ValueError(f"duplicate tags in {name}")
-        if set(self.likes) & set(self.avoids):
-            raise ValueError("a tag cannot be in both likes and avoids")
-        if "no_bars" in self.avoids:
-            raise ValueError("no_bars is a like")
+        likes, avoids = set(self.likes), set(self.avoids)
+        if likes & avoids or any(a in likes and b in avoids for a, b in PREF_CONFLICTS):
+            raise ValueError("a like and an avoid contradict each other")
         return self
 
 
@@ -362,12 +397,13 @@ class Card(BaseModel):
     starts_at: datetime | None = None  # event only, tz-aware (UTC+5)
     ends_at: datetime | None = None  # event only, optional, after starts_at
     source_url: str | None = Field(default=None, max_length=2048, pattern=r"^https://\S+$")
+    venue: str | None = Field(default=None, max_length=200)  # 1.3.1, event only: the venue name
 
     @model_validator(mode="after")
     def _event_fields(self) -> Card:
         if self.kind == "place":
-            if (self.starts_at, self.ends_at, self.source_url) != (None, None, None):
-                raise ValueError("starts_at, ends_at and source_url are for events only")
+            if (self.starts_at, self.ends_at, self.source_url, self.venue) != (None,) * 4:
+                raise ValueError("starts_at, ends_at, source_url and venue are for events only")
             return self
         if self.starts_at is None or self.source_url is None:
             raise ValueError("an event needs starts_at and source_url")
@@ -420,6 +456,9 @@ class MiniRoute(BaseModel):
     kerb_lowered: int | None = Field(default=None, ge=0)  # crossings with kerb=lowered/flush
     kerb_unknown: int | None = Field(default=None, ge=0)  # crossings without kerb data
     max_outdoor_leg_min: int | None = Field(default=None, ge=0)  # longest walk between stops
+    # 1.3.1: share of the path length on straight segments (0 = all on the walk graph,
+    # 1 = all straight); «без ступенек» is claimed only at 0
+    straight_share: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def _lit_shares(self) -> MiniRoute:
