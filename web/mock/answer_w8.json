@@ -101,8 +101,7 @@
   "route": {
     "stop_ids": [
       "mock:poi/alem_ai",
-      "mock:poi/boulevard",
-      "mock:poi/mega_silk_way"
+      "mock:poi/boulevard"
     ],
     "legs": [
       {
@@ -116,16 +115,10 @@
         "to_id": "mock:poi/boulevard",
         "distance_m": 422,
         "walk_min": 6
-      },
-      {
-        "from_id": "mock:poi/boulevard",
-        "to_id": "mock:poi/mega_silk_way",
-        "distance_m": 259,
-        "walk_min": 4
       }
     ],
-    "total_walk_m": 989,
-    "total_min": 115,
+    "total_walk_m": 730,
+    "total_min": 86,
     "fits_budget": true,
     "path": [
       {
@@ -155,14 +148,6 @@
       {
         "lat": 51.091109,
         "lon": 71.411388
-      },
-      {
-        "lat": 51.0903,
-        "lon": 71.4112
-      },
-      {
-        "lat": 51.0889,
-        "lon": 71.4103
       }
     ],
     "note": "МОК: путь по тротуарам и переходам OSM, скорость 4,5 км/ч",
@@ -177,11 +162,6 @@
         "lat": 51.09075,
         "lon": 71.4139,
         "kind": "unknown"
-      },
-      {
-        "lat": 51.0903,
-        "lon": 71.4112,
-        "kind": "unmarked"
       }
     ],
     "steps_count": 0,
