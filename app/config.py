@@ -12,6 +12,8 @@ WALK_GRAPH (default on): routes follow the OSM walk graph data/processed/walk_gr
 file exists (`walk_graph_ready`); off, missing or any error -> straight segments.
 QADAM_EVENTS_PATH (default data/events.json): the dated events file; eval points it at its own
 fixture so a test event never goes into data/.
+QADAM_CITY_GAPS_PATH (default data/processed/city_gaps.json): the city gaps map (CityGaps) that
+GET /api/city-gaps serves; tests point it at their own file.
 Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`.
 """
 
@@ -60,6 +62,8 @@ class Settings:
     walk_graph_path: Path | None = None  # data/processed/walk_graph.npz (QADAM_WALK_GRAPH_PATH)
     # data/events.json (QADAM_EVENTS_PATH); eval points it at its own fixture, data stays as is
     events_path: Path | None = None
+    # data/processed/city_gaps.json (QADAM_CITY_GAPS_PATH): aggregates of open data, wave 9
+    city_gaps_path: Path | None = None
 
     @property
     def has_llm(self) -> bool:
@@ -125,4 +129,6 @@ def get_settings() -> Settings:
         walk_graph_path=Path(os.getenv("QADAM_WALK_GRAPH_PATH",
                                        data_dir / "processed" / "walk_graph.npz")),
         events_path=Path(os.getenv("QADAM_EVENTS_PATH", data_dir / "events.json")),
+        city_gaps_path=Path(os.getenv("QADAM_CITY_GAPS_PATH",
+                                      data_dir / "processed" / "city_gaps.json")),
     )

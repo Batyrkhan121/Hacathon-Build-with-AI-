@@ -8,7 +8,22 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import POI, TAG_VOCAB, Answer, LocationInput, RecommendRequest
+from app.schemas import (
+    GAP_H3_RES,
+    GAP_MIN_CROSSINGS,
+    GAP_MIN_POI,
+    GAP_MIN_WALK_M,
+    ODBL_URL,
+    OSM_ATTRIBUTION,
+    OSM_COPYRIGHT_URL,
+    POI,
+    TAG_VOCAB,
+    Answer,
+    CityGaps,
+    GapCounts,
+    LocationInput,
+    RecommendRequest,
+)
 
 from .conftest import FIXTURES, ROOT, read_jsonl
 
@@ -171,7 +186,7 @@ def _event_card(**over: object) -> dict:
 def test_1_2_0_request_gets_1_3_0_defaults() -> None:
     from app.schemas import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == "1.3.1"
+    assert SCHEMA_VERSION == "1.4.0"  # 1.4.0 adds the city gaps map only
     req = RecommendRequest.model_validate({"query": "кофе", "location": {"landmark_id": "expo"}})
     assert (req.route_profile, req.prefs) == ("fastest", None)
     for profile in ("fastest", "accessible", "lit"):
@@ -371,4 +386,95 @@ def test_events_path_defaults_to_data_and_can_point_elsewhere(monkeypatch: pytes
     monkeypatch.setenv("QADAM_EVENTS_PATH", str(fixture))
     get_settings.cache_clear()
     assert get_settings().events_path == fixture
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------- 1.4.0: city gaps map
+
+GAPS_MOCK = ROOT / "web" / "mock" / "city_gaps.json"
+GAPS_DATA = ROOT / "data" / "processed" / "city_gaps.json"
+
+
+def _gaps() -> dict:
+    return json.loads(GAPS_MOCK.read_text(encoding="utf-8"))
+
+
+def test_city_gaps_mock_valid() -> None:
+    gaps = CityGaps.model_validate(_gaps())
+    assert gaps.h3_res == GAP_H3_RES == 8
+    assert gaps.attribution == OSM_ATTRIBUTION and gaps.license_url == ODBL_URL
+    assert gaps.copyright_url == OSM_COPYRIGHT_URL
+    # the mock shows both sides of the thresholds: a share and «мало данных»
+    assert any(c.poi >= GAP_MIN_POI for c in gaps.cells)
+    assert any(0 < c.poi < GAP_MIN_POI for c in gaps.cells)
+    assert any(c.walk_m >= GAP_MIN_WALK_M for c in gaps.cells)
+    assert any(c.crossings >= GAP_MIN_CROSSINGS for c in gaps.cells)
+
+
+def test_city_gaps_data_file_valid() -> None:
+    if not GAPS_DATA.exists():
+        pytest.skip("data/processed/city_gaps.json is built by DATA (T141)")
+    gaps = CityGaps.model_validate_json(GAPS_DATA.read_text(encoding="utf-8"))
+    assert gaps.cells and gaps.city.poi > 0 and gaps.city.walk_m > 0
+
+
+def _city_sum(doc: dict) -> None:
+    for name in GapCounts.model_fields:
+        doc["city"][name] = sum(cell[name] for cell in doc["cells"])
+
+
+@pytest.mark.parametrize("break_it", [
+    lambda d: d["cells"][0].update(poi_no_hours=d["cells"][0]["poi"] + 1),  # part > total
+    lambda d: d["cells"][0].update(walk_lit_unknown_m=d["cells"][0]["walk_m"] + 1),
+    lambda d: d["cells"][0].update(crossings_kerb_unknown=d["cells"][0]["crossings"] + 1),
+    lambda d: d["cells"][0].update(h3_cell="891f1d48177ffff"),  # r9, not r8
+    lambda d: d["cells"][0].update(h3_cell="zz1f1d4817fffff"),  # not an H3 index
+    lambda d: d["cells"].append(dict(d["cells"][0])),  # duplicate cell
+    lambda d: d["cells"].reverse(),  # not sorted
+    lambda d: d["cells"][0].update(poi=0, poi_no_hours=0, poi_wheelchair_unknown=0,
+                                   poi_no_name_kk=0, walk_m=0, walk_lit_unknown_m=0,
+                                   crossings=0, crossings_kind_unknown=0,
+                                   crossings_kerb_unknown=0),  # empty cell
+    lambda d: d["cells"][0].update(poi_ids=["osm:node/1"]),  # no per-place lists
+    lambda d: d.update(h3_cell="881f1d4817fffff"),  # no request echo / extra fields
+    lambda d: d.update(attribution="Qadam"),
+    lambda d: d.update(license_url="https://example.org/"),
+    lambda d: d.update(built_at="2026-10-22T10:00:00"),  # naive time
+    lambda d: d.update(poi_date="22.10.2026"),
+    lambda d: d.update(h3_res=9),
+])
+def test_city_gaps_rejects(break_it) -> None:
+    doc = _gaps()
+    break_it(doc)
+    _city_sum(doc)
+    with pytest.raises(ValidationError):
+        CityGaps.model_validate(doc)
+
+
+def test_city_gaps_city_must_be_the_sum_over_cells() -> None:
+    doc = _gaps()
+    doc["city"]["poi"] += 1
+    doc["city"]["poi_no_hours"] += 1
+    with pytest.raises(ValidationError, match="sum over cells"):
+        CityGaps.model_validate(doc)
+
+
+def test_city_gaps_in_docker_allowlist() -> None:
+    allow = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "!data/processed/city_gaps.json" in allow
+    assert "!web/mock/city_gaps.json" in allow
+
+
+def test_city_gaps_path_defaults_to_processed_and_can_point_elsewhere(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from app.config import get_settings
+
+    monkeypatch.delenv("QADAM_CITY_GAPS_PATH", raising=False)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.city_gaps_path == s.data_dir / "processed" / "city_gaps.json"
+    fixture = tmp_path / "city_gaps.json"
+    monkeypatch.setenv("QADAM_CITY_GAPS_PATH", str(fixture))
+    get_settings.cache_clear()
+    assert get_settings().city_gaps_path == fixture
     get_settings.cache_clear()
