@@ -845,7 +845,13 @@ export function popupFor(card, no = card.rank) {
   return h(
     'div',
     { class: 'popup' },
-    h('strong', { text: `${no == null ? '' : `${no}. `}${cardTitle(card)}` }),
+    h(
+      'strong',
+      { class: 'popup-title' },
+      // событие вне маршрута — без номера, но со значком календаря, как на карточке и метке
+      no == null && card.kind === 'event' ? h('span', { class: 'cal-icon', 'aria-hidden': 'true' }) : null,
+      `${no == null ? '' : `${no}. `}${cardTitle(card)}`,
+    ),
     h('span', { text: t('card.walk', { dist: formatDistance(card.distance_m), min: card.walk_min }) }),
   );
 }

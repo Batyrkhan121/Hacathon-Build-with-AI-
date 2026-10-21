@@ -3042,3 +3042,14 @@ body:not(.v2) .submit-row .btn-primary {
   background: var(--surface-2);
   color: var(--ink-2);
 }
+
+/* T140: событие вне маршрута в попапе карты — значок календаря перед названием */
+.popup-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.popup-title .cal-icon {
+  flex: none;
+}
