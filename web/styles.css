@@ -3310,6 +3310,6 @@ body:not(.v2) .submit-row .btn-primary {
 }
 
 .gaps-link {
-  margin: 8px 0 0;
+  margin: 16px 0 0;
   font-size: var(--v2-fs-s);
 }
