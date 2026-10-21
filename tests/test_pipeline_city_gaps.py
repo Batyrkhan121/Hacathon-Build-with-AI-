@@ -302,3 +302,13 @@ def test_a_failed_map_step_does_not_stop_run_all(
     assert (tmp_data / "processed" / "poi.jsonl").exists()
     assert (tmp_data / "processed" / "REPORT.md").exists()
     assert not (tmp_data / "processed" / "city_gaps.json").exists()
+
+
+@pytest.mark.parametrize(("hours", "kk", "no_hours", "no_kk"), [
+    (None, None, 1, 1), ("", "", 1, 1), ("   ", "  \t", 1, 1), ("24/7", "Кафе", 0, 0),
+])
+def test_blank_hours_and_kk_name_are_missing(hours: str | None, kk: str | None,
+                                             no_hours: int, no_kk: int) -> None:
+    place = poi("osm:node/9", 51.1281, 71.4305, hours=hours, kk=kk)
+    c = cells_by_id(build_city_gaps(GRAPH, [place], META, BUILT))[cell(51.1281, 71.4305)]
+    assert (c.poi, c.poi_no_hours, c.poi_no_name_kk) == (1, no_hours, no_kk)
