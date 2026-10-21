@@ -413,8 +413,8 @@ function renderRefineChips(answer, ctx) {
   );
 }
 
-// «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть — значит, кофе просили
-// в самом запросе и сервер отдал приоритет запросу. Говорим об этом прямо, а не молча.
+// «Без кафе» включено (чип или «Мои предпочтения»), а кафе в ответе всё равно есть (кофе в тексте запроса
+// или сервер не учёл метку) — говорим об этом прямо, без догадок о причине.
 function renderNoCafeConflict(answer, ctx) {
   const avoidsCoffee = ctx.request?.prefs?.avoids?.includes('cafes');
   if (!avoidsCoffee || !answer.cards.some((c) => c.category === 'cafe')) return null;
