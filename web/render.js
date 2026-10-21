@@ -225,16 +225,25 @@ export function renderAnswer(root, answer, ctx) {
       )
     : null;
 
+  // 1.3.1: событие, до которого больше 30 мин (от context.local_time), — не остановка «сейчас», а отдельный
+  // блок «Вечером рядом»; остальные события — последними среди карточек (как и в маршруте — последней остановкой).
+  const nowIso = answer.context?.local_time;
+  const cardCtx = { ...ctx, origin: answer.context?.origin, nowIso };
+  const later = answer.cards.filter((c) => isLaterEvent(c, nowIso));
+  const nowCards = answer.cards.filter((c) => !later.includes(c));
+  nowCards.sort((a, b) => (a.kind === 'event') - (b.kind === 'event'));
   const body = answer.cards.length
     ? [
         answer.route ? renderRoute(answer.route, byId, ctx, ctx.originName) : null,
-        h(
-          'ol',
-          { class: 'cards' },
-          answer.cards.map((c) =>
-            renderCard(c, when, { ...ctx, origin: answer.context?.origin, nowIso: answer.context?.local_time }),
-          ),
-        ),
+        nowCards.length ? h('ol', { class: 'cards' }, nowCards.map((c) => renderCard(c, when, cardCtx))) : null,
+        later.length
+          ? h(
+              'section',
+              { class: 'later-events', 'aria-labelledby': 'later-events-title' },
+              h('h3', { class: 'later-events-title', id: 'later-events-title', text: laterTitle(later, nowIso) }),
+              h('ol', { class: 'cards' }, later.map((c) => renderCard(c, when, cardCtx))),
+            )
+          : null,
       ]
     : [renderEmpty(ctx)];
 
@@ -309,6 +318,26 @@ function eventWhen(card, nowIso) {
   return t('event.onDate', { date: `${d}.${m}`, time: span });
 }
 
+const LATER_MIN = 30; // до начала больше 30 мин — событие «позже», а не остановка «сейчас»
+
+function isLaterEvent(card, nowIso) {
+  if (card.kind !== 'event' || !card.starts_at || !nowIso) return false;
+  return Date.parse(card.starts_at) - Date.parse(nowIso) > LATER_MIN * 60000;
+}
+
+// «Вечером рядом», если первое из событий начинается с 17:00 по Астане; иначе «Позже рядом»
+function laterTitle(cards, nowIso) {
+  const first = cards.map((c) => c.starts_at).sort()[0];
+  const hour = Number(localParts(first).time.slice(0, 2));
+  return t(hour >= 17 ? 'event.laterEvening' : 'event.later');
+}
+
+function eventDomain(card) {
+  const src = card.source_url ? httpsOnly(card.source_url) : null;
+  if (!src) return '';
+  return new URL(src).hostname.replace(/^www\./, '');
+}
+
 function eventIsNow(card, nowIso) {
   if (!nowIso || !card.ends_at) return false;
   const now = Date.parse(nowIso);
@@ -336,7 +365,9 @@ function renderEventBlock(card, ctx) {
       h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
       eventIsNow(card, ctx.nowIso) ? h('span', { class: 'event-now', text: t('event.now') }) : null,
     ),
-    card.address ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.address }) }) : null,
+    card.venue || card.address
+      ? h('p', { class: 'event-venue', text: t('event.venue', { place: card.venue || card.address }) })
+      : null,
     src
       ? h(
           'a',
@@ -532,7 +563,13 @@ function renderRoute(route, byId, ctx, originName) {
             h('span', { class: 'visually-hidden', text: `${t('route.stop')} ${card.rank}: ` }),
             h('strong', { text: cardTitle(card) }),
             isWarmStop(card) ? warmMark() : null,
-            h('span', { class: 'tl-visit', text: ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}` }),
+            h('span', {
+              class: 'tl-visit',
+              text:
+                card.kind === 'event' && card.starts_at
+                  ? ` · ${t('event.by', { time: localParts(card.starts_at).time })}`
+                  : ` · ${t('card.visit', { lo: card.visit_min_low, hi: card.visit_min_high })}`,
+            }),
           ),
         ),
       );
@@ -622,7 +659,7 @@ function renderCard(card, when, ctx) {
       h('span', {
         class: `badge ${poi ? 'badge-poi' : 'badge-ai'}`,
         title: poi ? t('badge.poiTitle') : t('badge.aiTitle'),
-        text: poi ? t('badge.poi') : t('badge.ai'),
+        text: isEvent ? t('event.fromListings', { domain: eventDomain(card) }) : poi ? t('badge.poi') : t('badge.ai'),
       }),
       isEvent ? null : h('span', { class: `badge badge-hours is-${badge.cls}`, text: badge.text }),
     ),
@@ -737,7 +774,11 @@ function renderDirections(card, origin, preciseStart, poi = false) {
     { class: 'directions' },
     h('span', { class: 'directions-label', text: t(fromHere ? 'dir.titleHere' : 'dir.title') }),
     // v2.1: источник места мелко справа от «Как пройти» (бейдж источника в v2 скрыт; «Идея ИИ» остаётся бейджем)
-    poi ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') }) : null,
+    card.kind === 'event'
+      ? h('span', { class: 'dir-source v2-only', text: t('event.fromListings', { domain: eventDomain(card) }) })
+      : poi
+        ? h('span', { class: 'dir-source v2-only', text: t('badge.poi'), title: t('badge.poiTitle') })
+        : null,
     link(twogis, t('dir.2gis'), 'twogis'),
     link(yandex, t('dir.yandex'), 'yandex'),
   );
