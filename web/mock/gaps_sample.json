@@ -1,0 +1,4183 @@
+{
+ "mock": true,
+ "version": 1,
+ "built_at": "2026-10-21T06:00:00+05:00",
+ "resolution": 8,
+ "min_n": 5,
+ "source": "OpenStreetMap",
+ "metrics": [
+  "lit",
+  "kerb",
+  "crossing",
+  "access",
+  "hours"
+ ],
+ "districts": [
+  {
+   "id": "almaty",
+   "name": {
+    "ru": "Алматы",
+    "kk": "Алматы",
+    "en": "Almaty"
+   },
+   "metrics": {
+    "lit": {
+     "n": 1283,
+     "unknown": 739
+    },
+    "kerb": {
+     "n": 302,
+     "unknown": 244
+    },
+    "crossing": {
+     "n": 280,
+     "unknown": 96
+    },
+    "access": {
+     "n": 384,
+     "unknown": 313
+    },
+    "hours": {
+     "n": 518,
+     "unknown": 273
+    }
+   }
+  },
+  {
+   "id": "baikonur",
+   "name": {
+    "ru": "Байконур",
+    "kk": "Байқоңыр",
+    "en": "Baikonur"
+   },
+   "metrics": {
+    "lit": {
+     "n": 683,
+     "unknown": 366
+    },
+    "kerb": {
+     "n": 138,
+     "unknown": 111
+    },
+    "crossing": {
+     "n": 138,
+     "unknown": 59
+    },
+    "access": {
+     "n": 210,
+     "unknown": 168
+    },
+    "hours": {
+     "n": 267,
+     "unknown": 117
+    }
+   }
+  },
+  {
+   "id": "yesil",
+   "name": {
+    "ru": "Есиль",
+    "kk": "Есіл",
+    "en": "Yesil"
+   },
+   "metrics": {
+    "lit": {
+     "n": 1852,
+     "unknown": 1093
+    },
+    "kerb": {
+     "n": 469,
+     "unknown": 376
+    },
+    "crossing": {
+     "n": 478,
+     "unknown": 160
+    },
+    "access": {
+     "n": 772,
+     "unknown": 591
+    },
+    "hours": {
+     "n": 803,
+     "unknown": 363
+    }
+   }
+  },
+  {
+   "id": "saryarka",
+   "name": {
+    "ru": "Сарыарка",
+    "kk": "Сарыарқа",
+    "en": "Saryarka"
+   },
+   "metrics": {
+    "lit": {
+     "n": 1543,
+     "unknown": 917
+    },
+    "kerb": {
+     "n": 358,
+     "unknown": 288
+    },
+    "crossing": {
+     "n": 371,
+     "unknown": 147
+    },
+    "access": {
+     "n": 446,
+     "unknown": 380
+    },
+    "hours": {
+     "n": 664,
+     "unknown": 311
+    }
+   }
+  },
+  {
+   "id": "nura",
+   "name": {
+    "ru": "Нура",
+    "kk": "Нұра",
+    "en": "Nura"
+   },
+   "metrics": {
+    "lit": {
+     "n": 505,
+     "unknown": 292
+    },
+    "kerb": {
+     "n": 137,
+     "unknown": 107
+    },
+    "crossing": {
+     "n": 153,
+     "unknown": 65
+    },
+    "access": {
+     "n": 241,
+     "unknown": 218
+    },
+    "hours": {
+     "n": 266,
+     "unknown": 161
+    }
+   }
+  }
+ ],
+ "cells": [
+  {
+   "h3": "8821538001fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 75,
+     "unknown": 31
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 3
+    },
+    "access": {
+     "n": 25,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 18,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538003fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 9,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 11,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538005fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 30,
+     "unknown": 18
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 1
+    },
+    "access": {
+     "n": 8,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 22,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "8821538007fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 9,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 3
+    },
+    "access": {
+     "n": 4,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538009fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 46,
+     "unknown": 18
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 4
+    },
+    "access": {
+     "n": 18,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 23,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "882153800bfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 33,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 17,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 2
+    },
+    "access": {
+     "n": 6,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 18,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "882153800dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 50,
+     "unknown": 34
+    },
+    "kerb": {
+     "n": 15,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 3
+    },
+    "access": {
+     "n": 13,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538011fffff",
+   "district": "nura",
+   "metrics": {
+    "kerb": {
+     "n": 11,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 5
+    },
+    "access": {
+     "n": 6,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 11,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538013fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 15,
+     "unknown": 14
+    },
+    "access": {
+     "n": 1,
+     "unknown": 1
+    },
+    "hours": {
+     "n": 5,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538015fffff",
+   "district": "nura",
+   "metrics": {
+    "kerb": {
+     "n": 13,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 6
+    },
+    "access": {
+     "n": 25,
+     "unknown": 25
+    },
+    "hours": {
+     "n": 5,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538017fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 6,
+     "unknown": 4
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "access": {
+     "n": 7,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 4,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538019fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 56,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 5
+    },
+    "access": {
+     "n": 7,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "882153801bfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 7,
+     "unknown": 4
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 13,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 5,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "882153801dfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 21,
+     "unknown": 12
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 10
+    },
+    "access": {
+     "n": 10,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 11,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538021fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 27,
+     "unknown": 14
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 6
+    },
+    "access": {
+     "n": 23,
+     "unknown": 21
+    },
+    "hours": {
+     "n": 3,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "8821538023fffff",
+   "district": "nura",
+   "metrics": {
+    "kerb": {
+     "n": 10,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "access": {
+     "n": 15,
+     "unknown": 15
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538029fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 4,
+     "unknown": 3
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 3
+    },
+    "access": {
+     "n": 15,
+     "unknown": 15
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "882153802bfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 21,
+     "unknown": 10
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 16,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 15
+    }
+   }
+  },
+  {
+   "h3": "882153802dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 31,
+     "unknown": 24
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 11
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 3
+    },
+    "access": {
+     "n": 7,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538031fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 32,
+     "unknown": 22
+    },
+    "kerb": {
+     "n": 1,
+     "unknown": 1
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 4
+    },
+    "access": {
+     "n": 15,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 3,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "8821538035fffff",
+   "district": "nura",
+   "metrics": {
+    "crossing": {
+     "n": 4,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538039fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 23,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 3
+    },
+    "access": {
+     "n": 5,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "882153803bfffff",
+   "district": "nura",
+   "metrics": {
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "hours": {
+     "n": 3,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "882153803dfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 33,
+     "unknown": 22
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 2
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538041fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 31,
+     "unknown": 10
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 1
+    },
+    "access": {
+     "n": 37,
+     "unknown": 24
+    },
+    "hours": {
+     "n": 32,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538043fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 33,
+     "unknown": 22
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 5
+    },
+    "access": {
+     "n": 19,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 21,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "8821538045fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 63,
+     "unknown": 44
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 5
+    },
+    "access": {
+     "n": 13,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 28,
+     "unknown": 16
+    }
+   }
+  },
+  {
+   "h3": "8821538047fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 69,
+     "unknown": 33
+    },
+    "kerb": {
+     "n": 19,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 16,
+     "unknown": 2
+    },
+    "access": {
+     "n": 4,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 21,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538049fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 54,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 4
+    },
+    "access": {
+     "n": 25,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 39,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "882153804bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 25,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 26,
+     "unknown": 4
+    },
+    "access": {
+     "n": 27,
+     "unknown": 19
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "882153804dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 36,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 4
+    },
+    "access": {
+     "n": 28,
+     "unknown": 23
+    },
+    "hours": {
+     "n": 40,
+     "unknown": 13
+    }
+   }
+  },
+  {
+   "h3": "8821538051fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 79,
+     "unknown": 50
+    },
+    "kerb": {
+     "n": 17,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 3
+    },
+    "access": {
+     "n": 10,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "8821538053fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 68,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 2
+    },
+    "access": {
+     "n": 13,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 19,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538055fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 13,
+     "unknown": 7
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 22,
+     "unknown": 4
+    },
+    "access": {
+     "n": 24,
+     "unknown": 20
+    },
+    "hours": {
+     "n": 37,
+     "unknown": 21
+    }
+   }
+  },
+  {
+   "h3": "8821538057fffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 69,
+     "unknown": 41
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 3
+    },
+    "access": {
+     "n": 8,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 27,
+     "unknown": 17
+    }
+   }
+  },
+  {
+   "h3": "8821538059fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 57,
+     "unknown": 40
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 14,
+     "unknown": 2
+    },
+    "access": {
+     "n": 22,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 31,
+     "unknown": 15
+    }
+   }
+  },
+  {
+   "h3": "882153805bfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 83,
+     "unknown": 57
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 17,
+     "unknown": 9
+    },
+    "access": {
+     "n": 7,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 25,
+     "unknown": 16
+    }
+   }
+  },
+  {
+   "h3": "882153805dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 24,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 19,
+     "unknown": 7
+    },
+    "access": {
+     "n": 23,
+     "unknown": 20
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538061fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 28,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 1
+    },
+    "access": {
+     "n": 14,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 13,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538063fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 63,
+     "unknown": 26
+    },
+    "kerb": {
+     "n": 17,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 6
+    },
+    "access": {
+     "n": 16,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 19,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538065fffff",
+   "district": "yesil",
+   "metrics": {
+    "kerb": {
+     "n": 7,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 4
+    },
+    "access": {
+     "n": 16,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538067fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 53,
+     "unknown": 33
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 3
+    },
+    "access": {
+     "n": 11,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538069fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 52,
+     "unknown": 38
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 3
+    },
+    "access": {
+     "n": 32,
+     "unknown": 19
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "882153806bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 6,
+     "unknown": 2
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 4
+    },
+    "access": {
+     "n": 18,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 32,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "882153806dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 30,
+     "unknown": 15
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 20,
+     "unknown": 6
+    },
+    "access": {
+     "n": 9,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "88215380c9fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 22,
+     "unknown": 12
+    },
+    "kerb": {
+     "n": 1,
+     "unknown": 1
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 0
+    },
+    "hours": {
+     "n": 2,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "88215380cdfffff",
+   "district": "nura",
+   "metrics": {
+    "lit": {
+     "n": 28,
+     "unknown": 19
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 2
+    },
+    "access": {
+     "n": 14,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "8821538159fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 38,
+     "unknown": 28
+    }
+   }
+  },
+  {
+   "h3": "882153815bfffff",
+   "district": "yesil",
+   "metrics": {
+    "kerb": {
+     "n": 9,
+     "unknown": 8
+    },
+    "access": {
+     "n": 11,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 13,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538201fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 107,
+     "unknown": 76
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 1
+    },
+    "access": {
+     "n": 6,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 27,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538203fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 51,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 15,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 16,
+     "unknown": 5
+    },
+    "access": {
+     "n": 14,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 25,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538205fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 39,
+     "unknown": 18
+    },
+    "crossing": {
+     "n": 22,
+     "unknown": 6
+    },
+    "access": {
+     "n": 20,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 30,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "8821538207fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 61,
+     "unknown": 29
+    },
+    "kerb": {
+     "n": 15,
+     "unknown": 11
+    },
+    "crossing": {
+     "n": 14,
+     "unknown": 3
+    },
+    "access": {
+     "n": 10,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 38,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538209fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 68,
+     "unknown": 39
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 4
+    },
+    "access": {
+     "n": 13,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "882153820bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 49,
+     "unknown": 24
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 0
+    },
+    "hours": {
+     "n": 36,
+     "unknown": 21
+    }
+   }
+  },
+  {
+   "h3": "882153820dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 21,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 18,
+     "unknown": 17
+    },
+    "crossing": {
+     "n": 16,
+     "unknown": 8
+    },
+    "access": {
+     "n": 16,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 28,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538211fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 29,
+     "unknown": 12
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 5
+    },
+    "access": {
+     "n": 13,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538213fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 47,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 7
+    },
+    "access": {
+     "n": 13,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 15,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538215fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 39,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 18,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 2
+    },
+    "access": {
+     "n": 15,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538217fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 17,
+     "unknown": 7
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 1
+    },
+    "access": {
+     "n": 28,
+     "unknown": 24
+    },
+    "hours": {
+     "n": 34,
+     "unknown": 18
+    }
+   }
+  },
+  {
+   "h3": "8821538219fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 35,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 5
+    },
+    "access": {
+     "n": 10,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "882153821bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 60,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "882153821dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 37,
+     "unknown": 14
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 4
+    },
+    "access": {
+     "n": 12,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538221fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 73,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 4
+    },
+    "access": {
+     "n": 24,
+     "unknown": 20
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538223fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 70,
+     "unknown": 19
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 1
+    },
+    "access": {
+     "n": 17,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538225fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 40,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 25,
+     "unknown": 5
+    },
+    "access": {
+     "n": 16,
+     "unknown": 15
+    },
+    "hours": {
+     "n": 23,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538227fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 25,
+     "unknown": 8
+    },
+    "kerb": {
+     "n": 23,
+     "unknown": 17
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 3
+    },
+    "access": {
+     "n": 42,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 34,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538229fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 64,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 14,
+     "unknown": 2
+    },
+    "access": {
+     "n": 10,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 13,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "882153822bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 61,
+     "unknown": 24
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 4
+    },
+    "access": {
+     "n": 25,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "882153822dfffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 83,
+     "unknown": 58
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 3
+    },
+    "access": {
+     "n": 21,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 17,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538231fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 60,
+     "unknown": 31
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 5
+    },
+    "access": {
+     "n": 27,
+     "unknown": 20
+    },
+    "hours": {
+     "n": 28,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "8821538233fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 68,
+     "unknown": 35
+    },
+    "kerb": {
+     "n": 18,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 16,
+     "unknown": 4
+    },
+    "access": {
+     "n": 22,
+     "unknown": 17
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538235fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 80,
+     "unknown": 19
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 0
+    },
+    "access": {
+     "n": 23,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 36,
+     "unknown": 13
+    }
+   }
+  },
+  {
+   "h3": "8821538237fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 37,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 21,
+     "unknown": 2
+    },
+    "access": {
+     "n": 16,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 37,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538239fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 41,
+     "unknown": 21
+    },
+    "kerb": {
+     "n": 15,
+     "unknown": 13
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 7
+    },
+    "access": {
+     "n": 23,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "882153823bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 31,
+     "unknown": 15
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 3
+    },
+    "access": {
+     "n": 26,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 5,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "882153823dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 55,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 19,
+     "unknown": 6
+    },
+    "access": {
+     "n": 12,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 47,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538241fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 12,
+     "unknown": 9
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 4
+    },
+    "access": {
+     "n": 6,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538243fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 60,
+     "unknown": 29
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 2
+    },
+    "access": {
+     "n": 6,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 29,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538245fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 29,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 17,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538247fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 51,
+     "unknown": 36
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 19,
+     "unknown": 5
+    },
+    "access": {
+     "n": 5,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538249fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 25,
+     "unknown": 19
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 1
+    },
+    "access": {
+     "n": 3,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 19,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "882153824bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 18,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 9,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 7
+    },
+    "access": {
+     "n": 6,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "882153824dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 10,
+     "unknown": 8
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 14,
+     "unknown": 9
+    },
+    "access": {
+     "n": 9,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538251fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 51,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 0
+    },
+    "hours": {
+     "n": 17,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "8821538253fffff",
+   "district": "saryarka",
+   "metrics": {
+    "kerb": {
+     "n": 9,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "access": {
+     "n": 5,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538255fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 39,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 1
+    },
+    "access": {
+     "n": 22,
+     "unknown": 20
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538257fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 57,
+     "unknown": 45
+    },
+    "kerb": {
+     "n": 9,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 4
+    },
+    "access": {
+     "n": 13,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 13
+    }
+   }
+  },
+  {
+   "h3": "8821538259fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 10,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "882153825bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 30,
+     "unknown": 25
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "882153825dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 16,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 4
+    },
+    "access": {
+     "n": 21,
+     "unknown": 17
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538261fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 43,
+     "unknown": 31
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 17,
+     "unknown": 7
+    },
+    "access": {
+     "n": 12,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "8821538263fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 47,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 2
+    },
+    "access": {
+     "n": 22,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 25,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538265fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 44,
+     "unknown": 33
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 8
+    },
+    "access": {
+     "n": 19,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 21,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538267fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 49,
+     "unknown": 18
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 17,
+     "unknown": 8
+    },
+    "access": {
+     "n": 14,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 35,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538269fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 20,
+     "unknown": 10
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 1
+    },
+    "access": {
+     "n": 3,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "882153826bfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 18,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 6
+    },
+    "access": {
+     "n": 16,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 13,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "882153826dfffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 5,
+     "unknown": 3
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 9
+    },
+    "access": {
+     "n": 11,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 6,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538281fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 32,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538285fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 36,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 3
+    },
+    "access": {
+     "n": 19,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 19,
+     "unknown": 15
+    }
+   }
+  },
+  {
+   "h3": "8821538287fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 5,
+     "unknown": 4
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 0
+    },
+    "access": {
+     "n": 10,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538289fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 24,
+     "unknown": 19
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "access": {
+     "n": 11,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "882153828dfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 62,
+     "unknown": 44
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 2
+    },
+    "access": {
+     "n": 7,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 1,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "88215382a1fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 11,
+     "unknown": 6
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 3
+    },
+    "access": {
+     "n": 4,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 3,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "88215382a3fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 6,
+     "unknown": 4
+    },
+    "kerb": {
+     "n": 18,
+     "unknown": 18
+    },
+    "access": {
+     "n": 9,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "88215382a5fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 35,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 6
+    },
+    "access": {
+     "n": 28,
+     "unknown": 24
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "88215382a7fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 14,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 5
+    },
+    "access": {
+     "n": 4,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 17,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "88215382a9fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 24,
+     "unknown": 12
+    },
+    "kerb": {
+     "n": 15,
+     "unknown": 11
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 5
+    },
+    "access": {
+     "n": 10,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "88215382abfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 55,
+     "unknown": 36
+    },
+    "kerb": {
+     "n": 16,
+     "unknown": 16
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 2
+    },
+    "access": {
+     "n": 13,
+     "unknown": 13
+    },
+    "hours": {
+     "n": 28,
+     "unknown": 21
+    }
+   }
+  },
+  {
+   "h3": "88215382adfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 37,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "access": {
+     "n": 8,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 27,
+     "unknown": 17
+    }
+   }
+  },
+  {
+   "h3": "88215382b5fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 28,
+     "unknown": 19
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 5
+    },
+    "access": {
+     "n": 9,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "88215382bdfffff",
+   "district": "almaty",
+   "metrics": {
+    "crossing": {
+     "n": 8,
+     "unknown": 5
+    },
+    "access": {
+     "n": 11,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 11,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "88215382c1fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 11,
+     "unknown": 9
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 14
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "88215382c3fffff",
+   "district": "almaty",
+   "metrics": {
+    "kerb": {
+     "n": 1,
+     "unknown": 1
+    },
+    "access": {
+     "n": 9,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "88215382c5fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 29,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 3
+    },
+    "access": {
+     "n": 11,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 21,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "88215382c7fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 40,
+     "unknown": 34
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 2
+    },
+    "access": {
+     "n": 5,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "88215382c9fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 43,
+     "unknown": 32
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 2,
+     "unknown": 2
+    }
+   }
+  },
+  {
+   "h3": "88215382cbfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 63,
+     "unknown": 34
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 2
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "88215382cdfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 26,
+     "unknown": 13
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 1
+    },
+    "access": {
+     "n": 25,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 25,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "88215382e1fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 18,
+     "unknown": 10
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 4
+    },
+    "access": {
+     "n": 8,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "88215382e3fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 37,
+     "unknown": 22
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 8,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "88215382e5fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 50,
+     "unknown": 25
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 3
+    },
+    "access": {
+     "n": 13,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 13
+    }
+   }
+  },
+  {
+   "h3": "88215382e7fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 23,
+     "unknown": 14
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 7
+    },
+    "access": {
+     "n": 11,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 22,
+     "unknown": 15
+    }
+   }
+  },
+  {
+   "h3": "88215382e9fffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 11,
+     "unknown": 7
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 11
+    },
+    "access": {
+     "n": 5,
+     "unknown": 4
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "88215382ebfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 20,
+     "unknown": 15
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "access": {
+     "n": 12,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 24,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "88215382edfffff",
+   "district": "almaty",
+   "metrics": {
+    "lit": {
+     "n": 58,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 1,
+     "unknown": 1
+    },
+    "crossing": {
+     "n": 18,
+     "unknown": 6
+    },
+    "access": {
+     "n": 19,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821538301fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 19,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 4
+    },
+    "access": {
+     "n": 6,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 16,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538303fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 8,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 3
+    },
+    "access": {
+     "n": 16,
+     "unknown": 14
+    },
+    "hours": {
+     "n": 11,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "8821538307fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 3,
+     "unknown": 2
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538309fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 62,
+     "unknown": 49
+    },
+    "kerb": {
+     "n": 8,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 3
+    },
+    "access": {
+     "n": 8,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "882153830bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 7,
+     "unknown": 5
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 8
+    },
+    "access": {
+     "n": 13,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 7
+    }
+   }
+  },
+  {
+   "h3": "8821538311fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 27,
+     "unknown": 20
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 8,
+     "unknown": 2
+    },
+    "access": {
+     "n": 23,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 28,
+     "unknown": 12
+    }
+   }
+  },
+  {
+   "h3": "8821538313fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 57,
+     "unknown": 38
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 1
+    },
+    "access": {
+     "n": 15,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538315fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 58,
+     "unknown": 26
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 2
+    },
+    "access": {
+     "n": 21,
+     "unknown": 16
+    },
+    "hours": {
+     "n": 18,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538317fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 34,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 15,
+     "unknown": 4
+    },
+    "access": {
+     "n": 16,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "8821538319fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 72,
+     "unknown": 34
+    },
+    "kerb": {
+     "n": 14,
+     "unknown": 12
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 6
+    },
+    "access": {
+     "n": 14,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 10,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "882153831bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 74,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 11,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 17,
+     "unknown": 4
+    },
+    "access": {
+     "n": 17,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "882153831dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 62,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 8
+    },
+    "access": {
+     "n": 20,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538331fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 21,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "access": {
+     "n": 6,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538333fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 23,
+     "unknown": 11
+    },
+    "kerb": {
+     "n": 9,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "access": {
+     "n": 3,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538335fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 31,
+     "unknown": 19
+    },
+    "crossing": {
+     "n": 10,
+     "unknown": 5
+    },
+    "access": {
+     "n": 11,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538337fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 9,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 12,
+     "unknown": 7
+    },
+    "access": {
+     "n": 4,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538339fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 55,
+     "unknown": 31
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 4
+    },
+    "access": {
+     "n": 12,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 2,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "882153833bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 48,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 16,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 35,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "882153833dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 58,
+     "unknown": 43
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 2,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "8821538343fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 2,
+     "unknown": 1
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 1,
+     "unknown": 0
+    },
+    "access": {
+     "n": 13,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 9,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "882153834bfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 3,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 2
+    },
+    "access": {
+     "n": 8,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821538351fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 28,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "access": {
+     "n": 21,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 23,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "8821538353fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 51,
+     "unknown": 32
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 16,
+     "unknown": 3
+    },
+    "access": {
+     "n": 15,
+     "unknown": 9
+    },
+    "hours": {
+     "n": 26,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821538355fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 60,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 9,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 2
+    },
+    "access": {
+     "n": 9,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821538357fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 44,
+     "unknown": 27
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 6,
+     "unknown": 3
+    },
+    "access": {
+     "n": 8,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 29,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821538359fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 32,
+     "unknown": 26
+    },
+    "kerb": {
+     "n": 12,
+     "unknown": 9
+    },
+    "crossing": {
+     "n": 7,
+     "unknown": 3
+    },
+    "access": {
+     "n": 14,
+     "unknown": 11
+    },
+    "hours": {
+     "n": 20,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "882153835bfffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 42,
+     "unknown": 28
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 6
+    },
+    "access": {
+     "n": 5,
+     "unknown": 3
+    },
+    "hours": {
+     "n": 2,
+     "unknown": 1
+    }
+   }
+  },
+  {
+   "h3": "882153835dfffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 30,
+     "unknown": 23
+    },
+    "kerb": {
+     "n": 10,
+     "unknown": 8
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 2
+    },
+    "access": {
+     "n": 29,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 5,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "88215390b5fffff",
+   "district": "saryarka",
+   "metrics": {
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "88215390b7fffff",
+   "district": "saryarka",
+   "metrics": {
+    "kerb": {
+     "n": 7,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 3
+    },
+    "access": {
+     "n": 1,
+     "unknown": 1
+    },
+    "hours": {
+     "n": 14,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821539193fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 35,
+     "unknown": 18
+    },
+    "kerb": {
+     "n": 7,
+     "unknown": 7
+    },
+    "hours": {
+     "n": 17,
+     "unknown": 9
+    }
+   }
+  },
+  {
+   "h3": "8821539197fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 41,
+     "unknown": 26
+    },
+    "kerb": {
+     "n": 6,
+     "unknown": 6
+    },
+    "crossing": {
+     "n": 2,
+     "unknown": 1
+    },
+    "access": {
+     "n": 22,
+     "unknown": 22
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "88215391b1fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 25,
+     "unknown": 19
+    },
+    "kerb": {
+     "n": 5,
+     "unknown": 5
+    },
+    "crossing": {
+     "n": 9,
+     "unknown": 6
+    },
+    "access": {
+     "n": 2,
+     "unknown": 2
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "88215391b3fffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 20,
+     "unknown": 16
+    },
+    "kerb": {
+     "n": 9,
+     "unknown": 7
+    },
+    "crossing": {
+     "n": 3,
+     "unknown": 1
+    },
+    "access": {
+     "n": 10,
+     "unknown": 8
+    },
+    "hours": {
+     "n": 32,
+     "unknown": 11
+    }
+   }
+  },
+  {
+   "h3": "88215391b5fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 49,
+     "unknown": 44
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 4
+    },
+    "access": {
+     "n": 12,
+     "unknown": 12
+    },
+    "hours": {
+     "n": 18,
+     "unknown": 14
+    }
+   }
+  },
+  {
+   "h3": "88215391b7fffff",
+   "district": "yesil",
+   "metrics": {
+    "lit": {
+     "n": 24,
+     "unknown": 14
+    },
+    "kerb": {
+     "n": 13,
+     "unknown": 10
+    },
+    "crossing": {
+     "n": 5,
+     "unknown": 2
+    },
+    "access": {
+     "n": 8,
+     "unknown": 6
+    },
+    "hours": {
+     "n": 15,
+     "unknown": 8
+    }
+   }
+  },
+  {
+   "h3": "88215391bbfffff",
+   "district": "baikonur",
+   "metrics": {
+    "lit": {
+     "n": 22,
+     "unknown": 16
+    },
+    "access": {
+     "n": 18,
+     "unknown": 18
+    },
+    "hours": {
+     "n": 8,
+     "unknown": 5
+    }
+   }
+  },
+  {
+   "h3": "8821539521fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 37,
+     "unknown": 25
+    },
+    "access": {
+     "n": 10,
+     "unknown": 10
+    },
+    "hours": {
+     "n": 15,
+     "unknown": 10
+    }
+   }
+  },
+  {
+   "h3": "8821539523fffff",
+   "district": "saryarka",
+   "metrics": {
+    "kerb": {
+     "n": 4,
+     "unknown": 3
+    }
+   }
+  },
+  {
+   "h3": "8821539525fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 54,
+     "unknown": 30
+    },
+    "kerb": {
+     "n": 1,
+     "unknown": 1
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "access": {
+     "n": 19,
+     "unknown": 15
+    }
+   }
+  },
+  {
+   "h3": "8821539527fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 21,
+     "unknown": 17
+    },
+    "kerb": {
+     "n": 2,
+     "unknown": 2
+    },
+    "crossing": {
+     "n": 13,
+     "unknown": 5
+    },
+    "access": {
+     "n": 17,
+     "unknown": 17
+    },
+    "hours": {
+     "n": 12,
+     "unknown": 6
+    }
+   }
+  },
+  {
+   "h3": "882153952dfffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 13,
+     "unknown": 11
+    },
+    "kerb": {
+     "n": 4,
+     "unknown": 4
+    },
+    "crossing": {
+     "n": 4,
+     "unknown": 2
+    },
+    "access": {
+     "n": 6,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 7,
+     "unknown": 4
+    }
+   }
+  },
+  {
+   "h3": "8821539535fffff",
+   "district": "saryarka",
+   "metrics": {
+    "lit": {
+     "n": 75,
+     "unknown": 64
+    },
+    "kerb": {
+     "n": 3,
+     "unknown": 3
+    },
+    "crossing": {
+     "n": 11,
+     "unknown": 5
+    },
+    "hours": {
+     "n": 4,
+     "unknown": 2
+    }
+   }
+  }
+ ]
+}

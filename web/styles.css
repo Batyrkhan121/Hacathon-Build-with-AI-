@@ -3063,3 +3063,253 @@ body:not(.v2) .submit-row .btn-primary {
   flex-basis: 100%;
   margin: 0;
 }
+
+/* ------------------------------------------------------------------ T143: карта пробелов данных (gaps.html) */
+/* Одна последовательная шкала: светлее — меньше пробелов, темнее — больше. «Мало данных» — штриховкой
+   (#gap-hatch в gaps.html), а не цветом; «нет объектов» — пунктирный контур. Цвет дублируется цифрами. */
+.gaps-body {
+  --gap-0: #e3ecf0;
+  --gap-1: #a9c3cf;
+  --gap-2: #6e95a8;
+  --gap-3: #3c6880;
+  --gap-4: #1b3d52;
+}
+
+.gaps-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.gaps-page .brand {
+  margin-bottom: 8px;
+}
+
+.brand-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.brand-name {
+  font-size: var(--v2-fs-l);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gaps-page .lang {
+  margin-left: auto;
+}
+
+.gaps-title {
+  margin: 8px 0 8px;
+  font-size: var(--v2-fs-xl);
+  line-height: 1.25;
+}
+
+.gaps-lead {
+  margin: 0 0 12px;
+  font-size: var(--v2-fs-m);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.gaps-metrics {
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.gaps-counted {
+  margin: 8px 0 12px;
+  font-size: var(--v2-fs-s);
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.gaps-map {
+  height: 340px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+@media (min-width: 900px) {
+  .gaps-map {
+    height: 460px;
+  }
+}
+
+/* Шестиугольники: класс шкалы — атрибут data-gap на SVG-пути (gaps.js), CSS сильнее атрибутов Leaflet */
+.gaps-map path.gap-cell {
+  stroke: #ffffff;
+  stroke-width: 1;
+  fill-opacity: 0.8;
+}
+
+.gaps-map path.gap-cell[data-gap="0"] { fill: var(--gap-0); }
+.gaps-map path.gap-cell[data-gap="1"] { fill: var(--gap-1); }
+.gaps-map path.gap-cell[data-gap="2"] { fill: var(--gap-2); }
+.gaps-map path.gap-cell[data-gap="3"] { fill: var(--gap-3); }
+.gaps-map path.gap-cell[data-gap="4"] { fill: var(--gap-4); }
+
+.gaps-map path.gap-cell[data-gap="low"] {
+  fill: url(#gap-hatch);
+  fill-opacity: 1;
+  stroke: var(--ink-2);
+}
+
+.gaps-map path.gap-cell[data-gap="none"] {
+  fill: transparent;
+  stroke: var(--line-strong);
+  stroke-dasharray: 2 3;
+}
+
+.gaps-map path.gap-cell[data-selected] {
+  stroke: var(--gold);
+  stroke-width: 4;
+}
+
+.gaps-legend {
+  margin: 12px 0 0;
+}
+
+.gaps-legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--v2-fs-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-legend-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gap-swatch {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 14px;
+  border: 1px solid rgba(21, 34, 44, 0.3);
+  border-radius: 3px;
+  vertical-align: -2px;
+}
+
+.gap-swatch[data-gap="0"] { background: var(--gap-0); }
+.gap-swatch[data-gap="1"] { background: var(--gap-1); }
+.gap-swatch[data-gap="2"] { background: var(--gap-2); }
+.gap-swatch[data-gap="3"] { background: var(--gap-3); }
+.gap-swatch[data-gap="4"] { background: var(--gap-4); }
+
+.gap-swatch[data-gap="low"] {
+  background: repeating-linear-gradient(45deg, var(--ink-2) 0 2px, #ffffff 2px 6px);
+}
+
+.gap-swatch[data-gap="none"] {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+}
+
+.gaps-cell {
+  min-height: 44px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--v2-fs-m);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-h2 {
+  margin: 24px 0 8px;
+  font-size: var(--v2-fs-l);
+}
+
+.gaps-h3 {
+  margin: 14px 0 4px;
+  font-size: var(--v2-fs-m);
+}
+
+.gaps-table-wrap {
+  overflow-x: auto;
+}
+
+.gaps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--v2-fs-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-table th,
+.gaps-table td {
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-weight: 400;
+}
+
+.gaps-table thead th {
+  font-size: var(--v2-fs-s);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.gaps-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gaps-table .is-total th,
+.gaps-table .is-total td {
+  font-weight: 700;
+  border-top: 2px solid var(--ink);
+}
+
+.gaps-help {
+  margin: 24px 0 0;
+  padding: 2px 16px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.gaps-help-item p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.gaps-foot {
+  margin: 24px 0 8px;
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+.gaps-foot p {
+  margin: 4px 0;
+}
+
+.gaps-foot a,
+.gaps-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-strong);
+}
+
+.gaps-link {
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-s);
+}
