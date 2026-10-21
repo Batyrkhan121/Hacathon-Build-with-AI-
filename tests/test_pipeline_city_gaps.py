@@ -157,13 +157,15 @@ def test_reconcile_with_the_coverage_of_the_same_graph() -> None:
     arrays = {k: getattr(graph, k) for k in NPZ_KEYS}
     g = build_city_gaps(arrays, POIS, META, BUILT)
     cov = measure(graph)
-    rows = reconcile(g.city.model_dump(), cov, len(POIS), 1)
-    assert rows and all(r["ok"] for r in rows), rows
+    rows = reconcile(g.city.model_dump(), cov, POIS)
+    assert len(rows) == 9 and all(r["ok"] for r in rows), rows
     cov["kerbs"]["unknown"]["nodes"] += 1
     cov["length_km"] += 0.6
-    bad = {r["what"] for r in reconcile(g.city.model_dump(), cov, len(POIS) + 1, 1)
+    # a poi.jsonl without the second place (blank hours, empty kk, wheelchair unknown)
+    bad = {r["what"] for r in reconcile(g.city.model_dump(), cov, [POIS[0], POIS[2]])
            if not r["ok"]}
-    assert bad == {"бордюр: нет данных", "длина путей, км", "мест (строк poi.jsonl)"}
+    assert bad == {"бордюр: нет данных", "длина путей, км", "мест (строк poi.jsonl)",
+                   "без часов работы", "wheelchair = unknown", "без названия на казахском"}
 
 
 def test_committed_city_gaps_file_matches_the_report() -> None:
@@ -172,12 +174,11 @@ def test_committed_city_gaps_file_matches_the_report() -> None:
     cov = json.loads((processed / "walk_coverage.json").read_text(encoding="utf-8"))
     pois = [POI.model_validate_json(line) for line in
             (processed / "poi.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
-    rows = reconcile(g.city.model_dump(), cov, len(pois),
-                     sum(1 for p in pois if p.wheelchair == "unknown"))
-    assert len(rows) == 7 and all(r["ok"] for r in rows), rows
+    rows = reconcile(g.city.model_dump(), cov, pois)
+    assert len(rows) == 9 and all(r["ok"] for r in rows), rows
     report = (processed / "REPORT.md").read_text(encoding="utf-8")
     section = report.split("## Карта пробелов", 1)[1].split("\n## ", 1)[0]
-    assert "**нет**" not in section and section.count("| да |") == 7
+    assert "**нет**" not in section and section.count("| да |") == 9
     assert re.search(rf"\| тип перехода \| {g.city.crossings} \| "
                      rf"{g.city.crossings_kind_unknown} \|", section)
 
@@ -247,7 +248,7 @@ def test_report_city_gaps_section() -> None:
     from tests.test_pipeline_report import LANDMARKS, PAYLOAD
 
     g = build_city_gaps(GRAPH, POIS, META, BUILT).model_dump(mode="json")
-    checks = reconcile(g["city"], None, 3, 1) + [
+    checks = reconcile(g["city"], None, POIS) + [
         {"what": "длина путей, км", "map": 3.0, "report": 3.6, "ok": False}]
     districts = ([A, B], tally(GRAPH, POIS, lambda la, lo: district_names(la, lo, [A, B])))
     pois = normalize_payload(PAYLOAD)
@@ -258,8 +259,14 @@ def test_report_city_gaps_section() -> None:
                   "| бордюр на переходе | 4 | 2 | 50.0% |", "Места на 2026-10-19",
                   "© OpenStreetMap contributors, ODbL-1.0", "а не оценка района",
                   "| мест (строк poi.jsonl) | 3 | 3 | да |", "| 3.0 | 3.6 | **нет** |",
-                  "| район A | 2.8 |", "| вне районов |", "мало данных"):
+                  "| район A | 2.8 | 100.0% |", "| вне районов |", "мало данных",
+                  "| без названия на казахском | 2 | 2 | да |"):
         assert piece in section, piece
+    # districts: only «нет данных» shares, no «освещено / светофор / часы известны»
+    districts_part = section.split("По районам", 1)[1]
+    assert "пробелы в открытых данных, а не оценка района" in districts_part
+    for word in ("освещено", "светофор", "известны", "занижен"):
+        assert word not in districts_part, word
     cells_only = build_report(pois, [PAYLOAD], LANDMARKS, city_gaps=g)
     assert "Районов нет: границ районов OSM на диске нет" in cells_only
     assert "| район A |" not in cells_only
@@ -312,3 +319,57 @@ def test_blank_hours_and_kk_name_are_missing(hours: str | None, kk: str | None,
     place = poi("osm:node/9", 51.1281, 71.4305, hours=hours, kk=kk)
     c = cells_by_id(build_city_gaps(GRAPH, [place], META, BUILT))[cell(51.1281, 71.4305)]
     assert (c.poi, c.poi_no_hours, c.poi_no_name_kk) == (1, no_hours, no_kk)
+
+
+def test_broken_or_incomplete_files_become_notes_in_the_report(tmp_data: Path) -> None:
+    from pipeline.report import write_report
+    from pipeline.run_all import run
+
+    run("astana", skip_fetch=True, skip_enrich=True)  # poi.jsonl and a first REPORT.md
+    processed = tmp_data / "processed"
+    pois = [POI.model_validate_json(line) for line in
+            (processed / "poi.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def section() -> str:
+        report = write_report("astana").read_text(encoding="utf-8")
+        return report.split("## Карта пробелов", 1)[1].split("\n## ", 1)[0]
+
+    (processed / "city_gaps.json").write_text('{"cells": [', encoding="utf-8")
+    assert "city_gaps.json не читается как JSON: раздел пропущен" in section()
+    (processed / "city_gaps.json").write_text('{"format_version": 1}', encoding="utf-8")
+    assert "city_gaps.json не проходит схему CityGaps" in section()
+
+    (processed / "city_gaps.json").write_text(
+        dump(build_city_gaps(GRAPH, pois, META, BUILT)), encoding="utf-8")
+    (processed / "walk_coverage.json").write_text('{"lit": {}, "length_km": 1}',
+                                                  encoding="utf-8")
+    text = write_report("astana").read_text(encoding="utf-8")
+    assert "Сверка не выполнена" in text  # no crossings / kerbs in walk_coverage.json
+    assert "## Покрытие тегов OSM по пешеходному графу\n- Раздел не собран" in text
+    (processed / "walk_coverage.json").write_text("not json", encoding="utf-8")
+    text = write_report("astana").read_text(encoding="utf-8")
+    assert "walk_coverage.json не читается (JSONDecodeError)" in text
+    assert "| мест (строк poi.jsonl) | 1 | 1 | да |" in text  # the places are still checked
+
+
+def test_the_map_file_is_written_whole(tmp_data: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import pipeline.city_gaps as gaps_module
+    from pipeline.run_all import run
+
+    run("astana", skip_fetch=True, skip_enrich=True)
+    processed = tmp_data / "processed"
+    np.savez_compressed(processed / "walk_graph.npz", **GRAPH)
+    (processed / "walk_graph_meta.json").write_text(json.dumps(META), encoding="utf-8")
+    gaps_module.run(built_at=BUILT)
+    out = processed / "city_gaps.json"
+    before = out.read_text(encoding="utf-8")
+    assert CityGaps.model_validate_json(before).city.walk_m == 150 + 2790 + 56
+    assert not list(processed.glob("*.tmp"))
+
+    def broken(gaps: CityGaps) -> str:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(gaps_module, "dump", broken)
+    with pytest.raises(RuntimeError):
+        gaps_module.run(built_at=BUILT)
+    assert out.read_text(encoding="utf-8") == before and not list(processed.glob("*.tmp"))

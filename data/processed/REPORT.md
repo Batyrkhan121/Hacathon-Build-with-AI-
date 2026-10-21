@@ -1,6 +1,6 @@
 # Данные Qadam: отчёт сборки
 
-Сформирован: 2026-10-22 04:14 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
+Сформирован: 2026-10-22 04:27 (UTC+5). Источник: OpenStreetMap (© участники OSM, лицензия ODbL), выгрузка через Overpass API. Файл генерирует `python -m pipeline.report`.
 
 ## Выгрузка
 - Кусков выгрузки: 15 (astana_tile_0, astana_tile_1, astana_tile_2, astana_tile_3, astana_tile_4, astana_tile_5, astana_tile_6, astana_tile_7, astana_tile_8, zone_airport_nqz, zone_akorda_pyramid_hazrat, zone_baiterek_khan_shatyr, zone_expo_mega, zone_opera_nurly_zhol, fixture).
@@ -44,9 +44,9 @@
 | cafe | 317 | 110 | 110 |
 | mall | 48 | 10 | 10 |
 | library | 10 | 6 | 6 |
-| theatre | 9 | 0 | 0 |
-| museum | 9 | 2 | 2 |
 | cinema | 9 | 7 | 7 |
+| museum | 9 | 2 | 2 |
+| theatre | 9 | 0 | 0 |
 
 ## Доступность (wheelchair у POI)
 | wheelchair | мест | % |
@@ -147,7 +147,9 @@
 | Что | карта | отчёт | сходится |
 |---|---:|---:|---|
 | мест (строк poi.jsonl) | 1222 | 1222 | да |
+| без часов работы | 884 | 884 | да |
 | wheelchair = unknown | 1155 | 1155 | да |
+| без названия на казахском | 1149 | 1149 | да |
 | переходов (crossings_total) | 4075 | 4075 | да |
 | тип перехода не указан | 1385 | 1385 | да |
 | бордюр: нет данных | 4004 | 4004 | да |

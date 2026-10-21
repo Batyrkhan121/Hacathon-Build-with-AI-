@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -200,7 +201,9 @@ def run(*, built_at: datetime | None = None, fetch_districts_too: bool = False) 
     gaps = build_city_gaps(graph, pois, meta,
                            built_at or datetime.now(ASTANA_TZ).replace(microsecond=0))
     out = settings.city_gaps_path or processed / "city_gaps.json"
-    out.write_text(dump(gaps), encoding="utf-8")
+    tmp = out.with_name(out.name + ".tmp")  # next to it: the reader never sees half a file
+    tmp.write_text(dump(gaps), encoding="utf-8")
+    os.replace(tmp, out)
     if fetch_districts_too:
         fetch_districts(raw_dir=settings.data_dir / "raw")
     return gaps
@@ -210,12 +213,17 @@ def run(*, built_at: datetime | None = None, fetch_districts_too: bool = False) 
 
 
 def reconcile(city: Mapping[str, int], coverage: Mapping | None,
-              poi_lines: int, wheelchair_unknown: int) -> list[dict]:
+              pois: Sequence[POI]) -> list[dict]:
     """city against walk_coverage.json (REPORT's tables) and poi.jsonl, with the tolerances
     of docs/ARCHITECTURE.md: counts exactly, length 0.5 km, shares 0.1 p.p."""
     rows = [
-        ("мест (строк poi.jsonl)", city["poi"], poi_lines, 0),
-        ("wheelchair = unknown", city["poi_wheelchair_unknown"], wheelchair_unknown, 0),
+        ("мест (строк poi.jsonl)", city["poi"], len(pois), 0),
+        ("без часов работы", city["poi_no_hours"],
+         sum(1 for p in pois if not (p.opening_hours or "").strip()), 0),
+        ("wheelchair = unknown", city["poi_wheelchair_unknown"],
+         sum(1 for p in pois if p.wheelchair == "unknown"), 0),
+        ("без названия на казахском", city["poi_no_name_kk"],
+         sum(1 for p in pois if not has_kk_name(p)), 0),
     ]
     if coverage:
         walk_km = city["walk_m"] / 1000

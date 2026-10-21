@@ -155,11 +155,14 @@ def run(
     if area == "astana":
         # «Карта пробелов» from the final poi.jsonl and the walk graph on disk (built by
         # pipeline.walk_graph); a failure (no graph yet, ...) is logged, the build goes on
+        gaps_path = settings.city_gaps_path or settings.poi_path.parent / "city_gaps.json"
+        had_map = gaps_path.exists()
         try:
             gaps = city_gaps.run()
         except Exception:  # noqa: BLE001 - the map is extra, the POI build is not
             log.exception("city gaps: not built")
-            notes.append("Карта пробелов не собрана (см. лог): city_gaps.json прежний.")
+            notes.append("Карта пробелов не собрана (см. лог): "
+                         + ("city_gaps.json прежний." if had_map else "city_gaps.json нет."))
         else:
             log.info("city gaps: %d cells", len(gaps.cells))
 
