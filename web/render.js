@@ -1,7 +1,7 @@
 // Отрисовка результатов. Все тексты с сервера вставляем через textContent: это данные, не разметка.
 import { t, formatNumber } from './i18n.js';
 import { dayOffsetOf } from './time.js';
-import { dayDiff, eventStatus, eventStopLabel, localParts } from './events.js';
+import { dayDiff, eventStatus, eventStopLabel, eventWhen, localParts } from './events.js';
 import { visitLabel } from './visit.js';
 
 // подпись из чистых модулей (events.js, visit.js): ключ i18n + параметры
@@ -328,16 +328,6 @@ function renderWarmOffer(answer, ctx) {
 // «Идёт до 21:00», «проходит до 30.11 18:00», «началось в 19:00» — events.js (правило ARCHITECTURE §5);
 // «сейчас» — context.local_time. Часы работы у события не показываем: вместо них — время события.
 
-function eventWhen(card, nowIso) {
-  const start = localParts(card.starts_at);
-  const end = card.ends_at ? localParts(card.ends_at) : null;
-  const span = end && end.date === start.date ? `${start.time}–${end.time}` : start.time;
-  const diff = nowIso ? dayDiff(start.date, localParts(nowIso).date) : null;
-  if (diff === 0) return t('event.today', { time: span });
-  if (diff === 1) return t('event.tomorrow', { time: span });
-  const [, m, d] = start.date.split('-');
-  return t('event.onDate', { date: `${d}.${m}`, time: span });
-}
 
 const LATER_MIN = 30; // до начала больше 30 мин — событие «позже», а не остановка «сейчас»
 
@@ -419,7 +409,7 @@ function renderEventBlock(card, ctx) {
       'p',
       { class: 'event-when' },
       h('span', { class: 'event-badge', text: t('event.badge') }),
-      h('span', { class: 'event-time', text: eventWhen(card, ctx.nowIso) }),
+      h('span', { class: 'event-time', text: eventLabel(eventWhen(card, ctx.nowIso)) }),
       renderEventStatus(card, ctx.nowIso),
     ),
     card.venue || card.address

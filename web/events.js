@@ -29,6 +29,30 @@ export function clockAt(iso, nowIso) {
   return `${d}.${m} ${at.time}`;
 }
 
+const ddmm = (date) => {
+  const [, m, d] = date.split('-');
+  return `${d}.${m}`;
+};
+
+// Строка времени на карточке. Многодневное событие (дольше 12 ч и конец в другой день) — диапазон дат
+// «01.10 10:00 – 30.11 18:00» (плашка «проходит до 30.11 18:00» — отдельно, eventStatus). Остальное —
+// «сегодня в 19:00–21:00», «завтра в …», «22.10 в …»; конец в другой день у сеанса — не пишем в строку.
+export function eventWhen(card, nowIso) {
+  const start = localParts(card.starts_at);
+  const end = card.ends_at ? localParts(card.ends_at) : null;
+  if (end && end.date !== start.date && Date.parse(card.ends_at) - Date.parse(card.starts_at) > SESSION_MAX_MS) {
+    return {
+      key: 'event.range',
+      vars: { from: `${ddmm(start.date)} ${start.time}`, to: `${ddmm(end.date)} ${end.time}` },
+    };
+  }
+  const time = end && end.date === start.date ? `${start.time}–${end.time}` : start.time;
+  const diff = nowIso ? dayDiff(start.date, localParts(nowIso).date) : null;
+  if (diff === 0) return { key: 'event.today', vars: { time } };
+  if (diff === 1) return { key: 'event.tomorrow', vars: { time } };
+  return { key: 'event.onDate', vars: { date: ddmm(start.date), time } };
+}
+
 // Подпись уже начавшегося события или null (ещё не началось, уже кончилось, нет данных).
 // live — сеанс идёт прямо сейчас (зелёная плашка); иначе — нейтральная.
 export function eventStatus(card, nowIso) {
