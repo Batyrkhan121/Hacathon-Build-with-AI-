@@ -900,6 +900,7 @@ def test_report_has_compat_line(tmp_path: Path) -> None:
     assert report["compat"]["id"] == "compat_no_bars"
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "Совместимость: likes no_bars" in md
+    assert "Карта пробелов: не выполнена (--mock)" in md
 
 
 

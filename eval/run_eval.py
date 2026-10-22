@@ -1124,6 +1124,7 @@ def privacy_summary(probes: list[dict[str, Any]]) -> str:
 def write_report(
     out_dir: Path, mode: str, results: list[Result], notes: list[str],
     privacy: list[dict[str, Any]] | None = None, compat: dict[str, Any] | None = None,
+    gaps: dict[str, Any] | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if privacy is not None:
@@ -1144,6 +1145,7 @@ def write_report(
         "routes": {k: sum(r.route_source == k for r in results) for k in ("graph", "straight")},
         "privacy": privacy or [],
         "compat": compat,
+        "city_gaps": gaps,
         "results": [asdict(r) for r in results],
     }
     (out_dir / "report.json").write_text(
@@ -1365,6 +1367,26 @@ def write_smoke_report(
 # ------------------------------------------------------------------------- main
 
 
+def run_city_gaps(url: str | None, local_data_check: bool,
+                  mock: bool = False) -> dict[str, Any] | None:
+    """Wave 9: the city gaps map checks (eval/city_gaps_check.py) as one report block.
+    Not run with --mock (the map is not part of the mock answer) or when the API is down."""
+    if mock:
+        return None
+    from eval import city_gaps_check as cg
+
+    try:
+        if url:
+            checks, gnotes = cg.run_checks(cg.url_get(url), None, reconcile=local_data_check)
+        else:
+            checks, gnotes = cg.run_inprocess()
+    except Exception as exc:  # noqa: BLE001 — the map must not break the scenario report
+        return {"summary": "не выполнена", "failed": [type(exc).__name__], "notes": [],
+                "checks": []}
+    return {"summary": cg.summary(checks), "failed": [c.id for c in checks if not c.passed],
+            "notes": gnotes, "checks": [asdict(c) for c in checks]}
+
+
 def use_eval_events() -> None:
     """In-process runs read eval's test events (E16): QADAM_EVENTS_PATH, settings re-read."""
     os.environ["QADAM_EVENTS_PATH"] = str(EVENTS_FIXTURE)
@@ -1453,9 +1475,17 @@ def main(argv: list[str] | None = None) -> int:
     notes.append(CORE_MEASURE_NOTE)
     privacy = run_privacy_probes(url_post(args.url) if args.url else None)
     compat = run_compat_probe(runner, no_llm=args.no_llm)
+    gaps = run_city_gaps(args.url, args.local_data_check, mock=args.mock or runner is None)
+    if gaps is None:
+        notes.append("Карта пробелов: не выполнена (" + (
+            "--mock" if args.mock else "API недоступен") + ")")
+    else:
+        notes += [f"Карта пробелов: {gaps['summary']}" + (
+            f" (не прошло: {', '.join(gaps['failed'])})" if gaps["failed"] else "")]
+        notes += [f"Карта пробелов: {n}" for n in gaps["notes"]]
     notes.append(f"Совместимость: {compat['title']} — {compat['got']}"
                  f" ({'pass' if compat['passed'] else 'FAIL'})")
-    write_report(args.out, mode, results, notes, privacy, compat)
+    write_report(args.out, mode, results, notes, privacy, compat, gaps)
     passed = sum(r.passed for r in results)
     for r in results:
         print(f"{r.id:<4} {'pass' if r.passed else 'FAIL'}  {'; '.join(r.failures)[:160]}")
@@ -1463,6 +1493,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"note: {n}")
     print(f"PRIVACY: {privacy_summary(privacy)}")
     print(f"COMPAT: {compat['got']} ({'pass' if compat['passed'] else 'FAIL'})")
+    if gaps is not None:
+        print(f"CITY GAPS: {gaps['summary']}"
+              + (f" (не прошло: {', '.join(gaps['failed'])})" if gaps["failed"] else ""))
     print(f"EVAL {mode}: {passed}/{len(results)} ({group_summary(results)}) "
           f"-> {args.out / 'report.md'}")
     return 0
