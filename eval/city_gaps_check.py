@@ -49,8 +49,11 @@ PROCESSED = ROOT / "data" / "processed"
 LENGTH_TOL_KM = 0.5
 SHARE_TOL_PP = 0.1
 # What a curious client might send: a cell, raw coordinates, a query, prefs. All must be ignored.
-PROBE_PARAMS = {"h3_cell": "8a2153806d1ffff", "lat": "51.0894", "lon": "71.4161",
-                "query": "кофе рядом с домом", "prefs": "quiet"}
+# Values that cannot occur in the map by chance: coordinates with 6 decimals (outline points
+# have 5, counters are integers), an r10 cell (the map has r8 cells only), a marked text.
+# check_privacy also makes sure none of them is in the plain answer before it sends them.
+PROBE_PARAMS = {"h3_cell": "8a2153806d1ffff", "lat": "51.089437", "lon": "71.416183",
+                "query": "проба-eval: кофе рядом с домом", "prefs": "quiet-eval-probe"}
 
 # (params, path) -> status, text, lowercased headers; path defaults to /api/city-gaps
 GetFn = Callable[..., tuple[int, str, dict[str, str]]]
@@ -172,13 +175,19 @@ def check_districts(gaps: CityGaps) -> list[Check]:
 
     ids = {d.id: d for d in blk.items}
     wrong: list[str] = []
+    overlap = 0
     for c in gaps.cells:
         lat, lon = h3.cell_to_latlng(c.h3_cell)
+        holders = sorted(d.id for d in blk.items if d.outline and _in_outline(lat, lon, d.outline))
+        overlap += len(holders) > 1
         if c.district is not None:
             d = ids.get(c.district)
-            if d is None or d.status == "missing" or not _in_outline(lat, lon, d.outline):
+            if d is None or d.status == "missing" or c.district not in holders:
                 wrong.append(f"{c.h3_cell}→{c.district}")
-        elif any(d.outline and _in_outline(lat, lon, d.outline) for d in blk.items):
+            elif len(holders) > 1 and c.district != holders[0]:
+                # on a shared line or in an overlap: the district with the smaller id
+                wrong.append(f"{c.h3_cell}→{c.district}, а не {holders[0]} (меньший id)")
+        elif holders:
             wrong.append(f"{c.h3_cell}→вне районов")
     per = {d.id: [c for c in gaps.cells if c.district == d.id] for d in blk.items}
     mism = [d.id for d in blk.items if d.status != "missing" and (
@@ -190,7 +199,7 @@ def check_districts(gaps: CityGaps) -> list[Check]:
     checks.append(Check("districts_cells_inside", "ячейка — в районе своего центра, числа "
                         "района — сумма его ячеек", not wrong and not mism,
                         f"не там: {wrong[:3]}; не сходятся: {mism}" if wrong or mism
-                        else f"{len(gaps.cells)} ячеек"))
+                        else f"{len(gaps.cells)} ячеек; центр в двух контурах: {overlap}"))
     return checks
 
 
@@ -303,12 +312,22 @@ def check_reconcile(gaps: CityGaps, local: LocalTotals) -> list[Check]:
 
 
 def check_privacy(get: GetFn, log_lines: Callable[[], list[str]] | None = None) -> list[Check]:
-    """Parameters with a cell, coordinates and a text change nothing and leak nowhere."""
+    """Parameters with a cell, coordinates and a text change nothing and leak nowhere.
+    Strict: any probe value (as sent or URL-encoded) in the answer is a failure, also when the
+    answer is the same with and without parameters (a server that shows earlier requests to
+    everyone, e.g. «recent searches», has them in both)."""
+    title = "параметры с ячейкой, координатами и текстом игнорируются"
+    values = probe_forms()
     status0, text0, headers0 = get({})
+    if status0 == 200 and any(v in text0 for v in values):
+        # before sending them: a probe that already sits in the plain answer proves nothing
+        found = sorted({v for v in values if v in text0})
+        return [Check("privacy_params", title, False,
+                      f"значение пробы уже есть в ответе без параметров ({found}): смените "
+                      "пробу или это утечка прошлого запроса")]
     with_log = log_lines is not None
     status1, text1, _ = get(dict(PROBE_PARAMS))
     lines = log_lines() if log_lines is not None else []
-    title = "параметры с ячейкой, координатами и текстом игнорируются"
     if status0 < 0 or status1 < 0:
         return [Check("privacy_params", title, False, "сервер не ответил")]
     if status0 == 503 or status1 == 503:
@@ -316,10 +335,7 @@ def check_privacy(get: GetFn, log_lines: Callable[[], list[str]] | None = None) 
     if status0 != 200 or status1 != 200:
         return [Check("privacy_params", title, False, f"HTTP {status0} / {status1}")]
     same = _json(text0) == _json(text1)
-    values = probe_forms()
-    # an echo is a value that the parameters brought in: one that is in the plain answer too
-    # (e.g. «51.0894» inside an outline point 51.08941) is part of the map, not of the request
-    in_answer = sorted({v for v in values if v in text1 and v not in text0})
+    in_answer = sorted({v for v in values if v in text1})
     checks = [
         Check("privacy_params", title, same and not in_answer,
               "ответ тот же, значений параметров в нём нет" if same and not in_answer else
