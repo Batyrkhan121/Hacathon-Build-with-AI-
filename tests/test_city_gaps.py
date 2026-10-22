@@ -60,3 +60,67 @@ def test_the_repo_file_loads() -> None:
     from app.config import get_settings
 
     assert city_gaps.load(get_settings().city_gaps_path) is not None
+
+
+# --------------------------- T152: only a file exactly as the schema writes it (strict check)
+
+
+def _mock() -> dict:
+    return json.loads(MOCK.read_text(encoding="utf-8"))
+
+
+def _edit_count(spell):  # type: ignore[no-untyped-def]
+    def edit(d: dict) -> None:  # the same number, only spelled otherwise: every sum still holds
+        d["cells"][0]["walk_m"] = spell(d["cells"][0]["walk_m"])
+    return edit
+
+
+HAND_EDITS = {
+    "count as a string": _edit_count(str),
+    "count as 120.0": _edit_count(float),
+    "built_at as a number": lambda d: d.__setitem__("built_at", 1761120000),
+    "built_at in another spelling": lambda d: d.__setitem__(
+        "built_at", d["built_at"].replace("+05:00", ".000+05:00")),
+    "no attribution": lambda d: d.pop("attribution"),
+    "no license_url": lambda d: d.pop("license_url"),
+    "no h3_res": lambda d: d.pop("h3_res"),
+    "no format_version": lambda d: d.pop("format_version"),
+    "no boundaries_source": lambda d: d["districts"].pop("boundaries_source"),
+}
+
+
+@pytest.mark.parametrize("edit", list(HAND_EDITS.values()), ids=list(HAND_EDITS))
+def test_a_hand_edited_file_that_only_the_lax_reading_takes_is_refused(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, edit
+) -> None:
+    from app.schemas import CityGaps
+
+    data = _mock()
+    edit(data)
+    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    CityGaps.model_validate_json(raw)  # the lax reading would take it…
+    path = tmp_path / "city_gaps.json"
+    path.write_bytes(raw)
+    with caplog.at_level(logging.DEBUG):
+        assert city_gaps.load(path) is None  # …but the served bytes must be the schema's
+    assert "answers 503" in caplog.text
+    assert data["cells"][0]["h3_cell"] not in caplog.text  # the kind only, no content
+
+
+@pytest.mark.parametrize("path", [MOCK, ROOT / "data" / "processed" / "city_gaps.json"],
+                         ids=["mock-with-districts", "real-data"])
+def test_the_files_as_the_schema_writes_them_are_kept(path: Path) -> None:
+    """The mock with three districts (ok, stale, missing: optional fields left out) and the
+    real data file (no districts block yet) pass all the checks."""
+    assert city_gaps.load(path) == path.read_bytes()
+
+
+def test_a_file_rewritten_from_its_own_dump_stays_good(tmp_path: Path) -> None:
+    from app.schemas import CityGaps
+
+    gaps = CityGaps.model_validate_json(MOCK.read_bytes())
+    path = tmp_path / "city_gaps.json"
+    path.write_text(gaps.model_dump_json(exclude_unset=True), encoding="utf-8")
+    assert city_gaps.load(path) is not None
+    path.write_text(gaps.model_dump_json(), encoding="utf-8")  # optional fields written out
+    assert city_gaps.load(path) is not None
