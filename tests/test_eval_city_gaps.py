@@ -142,11 +142,12 @@ def test_privacy_params_ignored(raw: dict) -> None:
 
 def test_privacy_log_counts_without_copying(raw: dict) -> None:
     text = json.dumps(raw, ensure_ascii=False)
-    lines = ["GET /api/city-gaps -> 200 in 2 ms", "query=кофе рядом с домом lat=51.0894"]
+    probe = cg.PROBE_PARAMS
+    lines = ["GET /api/city-gaps -> 200 in 2 ms", f"query={probe['query']} lat={probe['lat']}"]
     checks = {c.id: c for c in cg.check_privacy(_server(text), lambda: lines)}
     log = checks["privacy_log"]
     assert not log.passed and "с параметрами 1" in log.detail
-    assert "кофе" not in log.detail and "51.0894" not in log.detail
+    assert "кофе" not in log.detail and probe["lat"] not in log.detail
     clean = {c.id: c for c in cg.check_privacy(_server(text), lambda: lines[:1])}
     assert clean["privacy_log"].passed
 
@@ -220,14 +221,210 @@ def test_cli_file_only_writes_report(tmp_path: Path) -> None:
 
 
 def test_inprocess_app_does_not_warm_up_the_weather(monkeypatch, tmp_path: Path) -> None:
-    """In-process eval must not reach Open-Meteo: the lifespan warm-up is switched off."""
-    import app.weather
+    """In-process eval must not reach Open-Meteo: the lifespan warm-up thread is never made.
+    Threads are recorded when they are created (synchronously), so there is no race with a
+    background thread that may or may not have run yet."""
+    import threading
 
-    called: list[int] = []
-    monkeypatch.setattr(app.weather, "warm_up", lambda points: called.append(1) or 0)
+    import app.api
+
+    made: list[str] = []
+
+    class SpyThread(threading.Thread):
+        def __init__(self, *args, **kwargs) -> None:
+            made.append(kwargs.get("name") or "")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(app.api.threading, "Thread", SpyThread)
     get, logs, close = cg.inprocess_get(tmp_path / "no_city_gaps.json")
     try:
         status, _, _ = get({}, path=cg.HEALTH_PATH)
     finally:
         close()
-    assert status in (200, 503) and called == []
+    assert status in (200, 503)
+    assert "weather-warm-up" not in made
+
+
+def test_warm_up_spy_sees_the_thread_without_the_patch(monkeypatch, tmp_path: Path) -> None:
+    """Positive control for the test above: the same spy, an app started without eval's patch,
+    does see the «weather-warm-up» thread (its target stubbed out, so no network)."""
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    import app.api
+    import app.weather
+
+    made: list[str] = []
+
+    class SpyThread(threading.Thread):
+        def __init__(self, *args, **kwargs) -> None:
+            made.append(kwargs.get("name") or "")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(app.api.threading, "Thread", SpyThread)
+    monkeypatch.setattr(app.weather, "warm_up", lambda points: 0)
+    with cg.city_gaps_file(tmp_path / "no_city_gaps.json"), TestClient(app.api.create_app()):
+        pass
+    assert "weather-warm-up" in made
+
+
+def test_run_inprocess_closes_the_first_client_when_the_second_fails(monkeypatch) -> None:
+    closed: list[str] = []
+    calls: list[int] = []
+
+    def fake(map_path=None):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("second app failed to start")
+        return (lambda params, path=cg.CITY_GAPS_PATH: (200, "{}", {})), list, \
+            (lambda: closed.append("first"))
+
+    monkeypatch.setattr(cg, "inprocess_get", fake)
+    with pytest.raises(RuntimeError):
+        cg.run_inprocess()
+    assert closed == ["first"]
+
+
+# ------------------------------------------------------------ districts (1.4.1)
+
+REAL = cg.ROOT / "data" / "processed" / "city_gaps.json"
+
+
+def _sums_hold(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None and gaps.districts is not None
+    sums, cells = cg.district_sums(gaps)
+    assert sums == gaps.city.model_dump()  # all nine counters
+    assert cells == len(gaps.cells)
+
+
+def test_mock_districts_add_up_to_the_city(raw: dict) -> None:
+    _sums_hold(raw)
+
+
+def test_real_districts_add_up_to_the_city() -> None:
+    raw = json.loads(REAL.read_text(encoding="utf-8"))
+    if "districts" not in raw:
+        pytest.skip("city_gaps.json без районов (файл 1.4.0): районы — DATA T151")
+    _sums_hold(raw)
+
+
+def test_mock_district_checks_pass(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    checks = {c.id: c for c in cg.check_districts(gaps)}
+    assert all(c.passed for c in checks.values()), [c for c in checks.values() if not c.passed]
+    assert checks["districts_status"].detail == "ok 1, stale 1, missing 1"
+
+
+def test_district_checks_catch_errors(raw: dict) -> None:
+    import copy
+
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    # object.__setattr__: what the schema would refuse, to see that eval refuses it on its own
+    bad = copy.deepcopy(gaps)
+    items = bad.districts.items
+    missing = next(d for d in items if d.status == "missing")
+    ok = next(d for d in items if d.status == "ok")
+    object.__setattr__(missing, "counts", ok.counts)
+    ring = list(ok.outline[0][:-1])
+    object.__setattr__(ok, "outline", [ring])
+    object.__setattr__(bad.districts, "unassigned_cells", bad.districts.unassigned_cells + 1)
+    object.__setattr__(bad.districts, "official_list_checked", None)
+    failed = {c.id for c in cg.check_districts(bad) if not c.passed}
+    assert {"districts_status", "districts_outline", "districts_cells", "districts_official",
+            "districts_cells_inside"} <= failed
+
+
+def test_cell_in_the_wrong_district_is_caught(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    inside = next(c for c in gaps.cells if c.district is not None)
+    object.__setattr__(inside, "district", None)
+    checks = {c.id: c for c in cg.check_districts(gaps)}
+    assert not checks["districts_cells_inside"].passed
+
+
+def test_file_without_districts_is_reported(raw: dict) -> None:
+    raw.pop("districts")
+    for cell in raw["cells"]:
+        cell.pop("district", None)
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    [check] = cg.check_districts(gaps)
+    assert not check.passed and "T151" in check.detail
+
+
+def test_even_odd_with_a_hole() -> None:
+    outer = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+    hole = [[4, 4], [4, 6], [6, 6], [6, 4], [4, 4]]
+    assert cg._in_outline(2, 2, [outer, hole])
+    assert not cg._in_outline(5, 5, [outer, hole])
+    assert not cg._in_outline(12, 5, [outer])
+
+
+def test_strict_echo_and_probe_precheck(raw: dict) -> None:
+    """Strict rule: a probe value in the answer fails even when the answer did not change;
+    a probe already in the plain answer is a failure «смените пробу», not a silent skip."""
+    raw["districts"]["items"][0]["outline"][0][1] = [51.08944, 71.41618]  # 5 decimals: no match
+    text = json.dumps(raw, ensure_ascii=False)
+    checks = {c.id: c for c in cg.check_privacy(_server(text))}
+    assert checks["privacy_params"].passed, checks["privacy_params"].detail
+    stuck = text[:-1] + f', "note": "{cg.PROBE_PARAMS["lat"]}"}}'
+    [pre] = cg.check_privacy(_server(stuck))
+    assert not pre.passed and "смените пробу" in pre.detail
+
+
+def _leaky_server(answer: str):
+    """Shows everyone what was asked before («recent searches»): after the first request with
+    parameters, every answer carries the query — the plain one too, so both are the same."""
+    seen: list[str] = []
+
+    def get(params: dict[str, str], path: str = cg.CITY_GAPS_PATH):
+        if path == cg.HEALTH_PATH:
+            return 200, json.dumps({"status": "ok", "city_gaps": "ready"}), {}
+        if params.get("query"):
+            seen.append(params["query"])
+        recent = json.dumps(seen[-1:], ensure_ascii=False)
+        text = answer if not seen else answer[:-1] + f', "recent": {recent}}}'
+        return 200, text, {"cache-control": "public, max-age=3600"}
+    return get
+
+
+def test_persistent_leak_fails_on_every_run(raw: dict) -> None:
+    get = _leaky_server(json.dumps(raw, ensure_ascii=False))
+    first = {c.id: c for c in cg.check_privacy(get)}
+    assert not first["privacy_params"].passed  # the query came back
+    second = {c.id: c for c in cg.check_privacy(get)}
+    assert not second["privacy_params"].passed  # already in the plain answer: not a pass
+    assert "смените пробу" in second["privacy_params"].detail
+
+
+def test_probe_values_cannot_hide_in_the_map(raw: dict) -> None:
+    """6-decimal coordinates against 5-decimal outlines, an r10 cell against r8 cells."""
+    text = json.dumps(raw, ensure_ascii=False)
+    real = cg.ROOT / "data" / "processed" / "city_gaps.json"
+    for body in (text, real.read_text(encoding="utf-8")):
+        assert not [v for v in cg.probe_forms() if v in body]
+    assert len(cg.PROBE_PARAMS["lat"].split(".")[1]) == 6
+
+
+def test_district_line_rule_smaller_id(raw: dict) -> None:
+    """A centre inside two outlines (shared line / overlap) belongs to the smaller id."""
+    import copy
+
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    bad = copy.deepcopy(gaps)
+    a, b = sorted((d for d in bad.districts.items if d.status != "missing"), key=lambda d: d.id)
+    object.__setattr__(b, "outline", a.outline + b.outline)  # b now also covers a's cells
+    checks = {c.id: c for c in cg.check_districts(bad)}
+    assert checks["districts_cells_inside"].passed  # a's cells stay with a (smaller id)
+    assert "центр в двух контурах: " in checks["districts_cells_inside"].detail
+    cell = next(c for c in bad.cells if c.district == a.id)
+    object.__setattr__(cell, "district", b.id)  # in both outlines, but given to the larger id
+    wrong = {c.id: c for c in cg.check_districts(bad)}
+    assert not wrong["districts_cells_inside"].passed
+    assert "меньший id" in wrong["districts_cells_inside"].detail
