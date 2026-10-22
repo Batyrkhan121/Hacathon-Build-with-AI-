@@ -2685,3 +2685,70 @@ def test_no_cafe_chip_drops_cafe_events_too(deps: Deps, tmp_path: Path) -> None:
                       prefs={"avoids": ["cafes"]}), d)
     shown = {c.poi_id for c in a.cards}
     assert "event:cafe-night" not in shown and "event:test-soon" in shown
+
+
+# ----------------------------- T161: the daily Claude budget — an answer without AI, said once
+
+BUDGET_LINE = {"ru": "Дневной лимит ИИ исчерпан — ответ собран без ИИ.",
+               "kk": "ЖИ-дің күндік лимиті таусылды — жауап ЖИ-сіз құрастырылды.",
+               "en": "The daily AI limit is reached — this answer was built without AI."}
+
+
+class BudgetFakeLLM(FakeLLM):
+    def __init__(self, state: str, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.state = state
+
+    def budget_state(self) -> str:
+        return self.state
+
+
+@pytest.mark.parametrize("lang", ["ru", "kk", "en"])
+def test_a_spent_budget_gives_the_answer_without_ai(deps: Deps, lang: str) -> None:
+    llm = BudgetFakeLLM("reached")
+    d = Deps(store=deps.store, llm=llm, settings=deps.settings)
+    a = recommend(req("кофе", lang=lang), d)
+    assert llm.calls == []  # no Claude call at all
+    assert a.cards and a.data_used.generation == "template" and a.intent.parser == "rules"
+    assert BUDGET_LINE[lang] in a.warnings
+    assert a.warnings.count(BUDGET_LINE[lang]) == 1
+
+
+def test_a_budget_without_prices_never_calls_claude(deps: Deps) -> None:
+    llm = BudgetFakeLLM("misconfigured")
+    a = recommend(req("кофе"), Deps(store=deps.store, llm=llm, settings=deps.settings))
+    assert llm.calls == [] and a.data_used.generation == "template"
+    assert any("лимит расходов задан без цен" in w for w in a.warnings)
+
+
+def test_the_budget_spent_by_the_parse_stops_the_card_call(deps: Deps, tmp_path: Path) -> None:
+    """The middle of the day: the query parse (a real LLMClient, a fake Anthropic) spends the
+    rest of the budget, so the card call is not made and the answer is the template one."""
+    from app.llm import LLMClient
+
+    from .test_llm import FakeAnthropic, paid
+    from .test_llm import make_settings as llm_settings
+
+    settings = llm_settings(tmp_path, llm_daily_budget_usd=0.01, llm_price_in_per_mtok=3.0,
+                            llm_price_out_per_mtok=15.0)
+    llm = LLMClient(settings)
+    fake = FakeAnthropic({"claude-sonnet-5-5": [
+        paid(QueryIntent(raw_query="кофе", categories=["cafe"], parser="llm"))]})
+    llm._client = fake
+    llm._clock = lambda: datetime(2026, 10, 19, 15, 0, tzinfo=ASTANA_TZ)
+    a = recommend(req("кофе"), Deps(store=deps.store, llm=llm, settings=deps.settings))
+    assert [c["output_format"].__name__ for c in fake.calls] == ["QueryIntent"]
+    assert a.intent.parser == "llm"  # the parse got through before the budget ran out
+    assert a.cards and a.data_used.generation == "template"
+    assert BUDGET_LINE["ru"] in a.warnings
+    assert llm.budget_state() == "reached"
+
+
+def test_budget_spent_by_the_parse_but_cards_from_the_cache_is_not_without_ai(deps: Deps) -> None:
+    """Review remark: the parse hit the budget, the cards came from the disk cache (generation
+    llm): «ответ собран без ИИ» would be false; the parse line names the reason instead."""
+    llm = FakeLLM(parse_fail=LLMUnavailable("spent"), error_kind="budget")
+    a = recommend(req("кофе"), Deps(store=deps.store, llm=llm, settings=deps.settings))
+    assert a.data_used.generation == "llm" and a.intent.parser == "rules"
+    assert BUDGET_LINE["ru"] not in a.warnings
+    assert any("дневной лимит исчерпан" in w for w in a.warnings)

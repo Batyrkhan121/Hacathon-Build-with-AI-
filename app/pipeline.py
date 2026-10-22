@@ -152,6 +152,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Поиск дал сбой на нашей стороне — повтор не поможет. Попробуйте "
                         "другой запрос или точку.",
         "llm_down_r": "LLM недоступна ({reason}) — показаны карточки по данным.",
+        "llm_budget": "Дневной лимит ИИ исчерпан — ответ собран без ИИ.",
         "parse_fallback": "Запрос разобран по правилам: ИИ не ответил ({reason}).",
         "gen_check_failed": "Тексты ИИ не прошли проверку — показаны карточки по данным.",
         "route_failed": "Маршрут построить не удалось — карточки показаны без маршрута.",
@@ -245,6 +246,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Іздеу біздің тарапта ақауға ұшырады — қайталау көмектеспейді. Басқа "
                         "сұрау немесе нүкте таңдап көріңіз.",
         "llm_down_r": "LLM қолжетімсіз ({reason}) — деректер бойынша карточкалар көрсетілді.",
+        "llm_budget": "ЖИ-дің күндік лимиті таусылды — жауап ЖИ-сіз құрастырылды.",
         "parse_fallback": "Сұрау ережелер бойынша талданды: ЖИ жауап бермеді ({reason}).",
         "gen_check_failed": "ЖИ мәтіндері тексеруден өтпеді — деректер бойынша карточкалар "
                             "көрсетілді.",
@@ -336,6 +338,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "search_error": "Search failed on our side — retrying will not help. Try another "
                         "request or starting point.",
         "llm_down_r": "The LLM is unavailable ({reason}) — showing cards built from the data.",
+        "llm_budget": "The daily AI limit is reached — this answer was built without AI.",
         "parse_fallback": "The request was parsed by rules: the AI did not answer ({reason}).",
         "gen_check_failed": "The AI texts failed the check — showing cards built from the data.",
         "route_failed": "Could not build the route — showing the cards without it.",
@@ -480,18 +483,24 @@ PREF_NAMES: dict[str, dict[str, str]] = {
 # language: the warnings say it instead of a bare "unavailable".
 LLM_REASONS: dict[str, dict[str, str]] = {
     "ru": {"disabled": "отключено в настройках", "no_key": "нет ключа API",
+           "budget": "дневной лимит исчерпан",
+           "budget_misconfigured": "лимит расходов задан без цен",
            "no_credit": "закончились кредиты API", "auth": "ключ не принят",
            "bad_model": "модель недоступна", "quota": "лимит запросов", "timeout": "таймаут",
            "network": "нет связи", "server": "сбой сервиса", "refusal": "модель отказалась",
            "invalid_output": "некорректный ответ модели", "bad_request": "ошибка запроса",
            "bug": "внутренняя ошибка"},
     "kk": {"disabled": "баптауларда өшірілген", "no_key": "API кілті жоқ",
+           "budget": "күндік лимит таусылды",
+           "budget_misconfigured": "шығын лимиті бағасыз берілген",
            "no_credit": "API кредиттері таусылды", "auth": "кілт қабылданбады",
            "bad_model": "модель қолжетімсіз", "quota": "сұраулар лимиті",
            "timeout": "күту уақыты өтті", "network": "байланыс жоқ", "server": "қызмет ақауы",
            "refusal": "модель бас тартты", "invalid_output": "модельдің жауабы дұрыс емес",
            "bad_request": "сұрау қатесі", "bug": "ішкі қате"},
     "en": {"disabled": "disabled in settings", "no_key": "no API key",
+           "budget": "daily limit reached",
+           "budget_misconfigured": "spend limit set without prices",
            "no_credit": "API credits ran out", "auth": "key rejected",
            "bad_model": "model unavailable", "quota": "rate limit", "timeout": "timeout",
            "network": "no connection", "server": "service error", "refusal": "model refused",
@@ -558,6 +567,13 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     # The client is asked even while it cools down / has no key: its disk cache may answer
     # (preset scenarios), otherwise it fails fast. Only an explicit switch-off skips it.
     llm = deps.llm if (req.use_llm and deps.llm is not None and deps.llm.enabled) else None
+    # T161: the daily Claude budget spent (or set without prices) -> no Claude call at all, the
+    # same deterministic path as use_llm=false, said once; the client checks again before every
+    # call, so a budget spent in the middle of this request ends the same way
+    off_reason = "disabled" if deps.llm is not None else None
+    budget_now = _budget_state(llm)
+    if budget_now in ("reached", "misconfigured"):
+        llm, off_reason = None, ("budget" if budget_now == "reached" else "budget_misconfigured")
     warn: list[str] = []
 
     # 1. origin (invalid input is the only thing that may raise)
@@ -581,7 +597,7 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
     t = TEXTS[intent.lang]
     llm_down_said = False
     if req.use_llm and llm is None:
-        warn.append(_llm_down(t, intent.lang, "disabled" if deps.llm is not None else None))
+        warn.append(_llm_down(t, intent.lang, off_reason))
         llm_down_said = True
     if intent.landmark_mention and intent.landmark_mention != landmark_id:
         lm = store.landmarks.get(intent.landmark_mention)
@@ -853,7 +869,10 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 cards = []
     if generation == "llm":
         cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id, ev_kw)
-    if parse_reason is not None and not llm_down_said:
+    if parse_reason == "budget" and generation == "template" and not llm_down_said:
+        warn.append(t["llm_budget"])  # spent between the checks, the cards are templates
+    elif parse_reason is not None and not llm_down_said:
+        # (with cards from the disk cache the answer is not «without AI»: only the parse was)
         warn.append(t["parse_fallback"].format(
             reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
     if candidates and not cards:
@@ -987,7 +1006,18 @@ def _frames(exc: BaseException) -> str:
     return "".join(traceback.format_tb(exc.__traceback__)[-4:])
 
 
+def _budget_state(llm: object) -> str:
+    """LLMClient.budget_state() (T161) when the client has it; "none" otherwise (fakes)."""
+    fn = getattr(llm, "budget_state", None) if llm is not None else None
+    try:
+        return str(fn()) if fn is not None else "none"
+    except Exception:  # noqa: BLE001 - a broken check never blocks the answer
+        return "none"
+
+
 def _llm_down(t: dict[str, str], lang: Lang, reason: str | None) -> str:
+    if reason == "budget":  # «Дневной лимит ИИ исчерпан — ответ собран без ИИ»
+        return t["llm_budget"]
     text = LLM_REASONS[lang].get(reason or "")
     return t["llm_down_r"].format(reason=text) if text else t["llm_down"]
 

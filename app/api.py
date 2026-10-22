@@ -14,6 +14,13 @@ Endpoints (contract):
                           /api/health says "city_gaps": "ready" | "missing"
   /                    -> web/ (StaticFiles, html=True)
 Privacy: log only request_id, latency, h3 resolution and counts — never the cell + query together.
+Public demo (T161, ARCHITECTURE §5 «Публичное демо»): POST /api/recommend is limited per client IP
+(QADAM_RATE_PER_MIN, QADAM_RATE_PER_DAY by the Astana day; 0 = off) in ApiGuard: 429
+{"detail": "too many requests"} with Retry-After. The IP is client.host, or behind
+QADAM_TRUSTED_PROXY_HOPS proxies the X-Forwarded-For entry the last trusted one added (with 0
+the header is never read); it is never logged, the counters are keyed by a salted hash (a
+random salt per process), at most RATE_MAX_CLIENTS of them. /api/health also says llm_budget
+(none | ok | reached | misconfigured, no sums: app/llm.py).
 
 T34: turn this into a factory `create_app(deps: Deps | None = None) -> FastAPI` (tests inject a
 synthetic Store + fake LLM) and keep a module-level `app = create_app()` for
@@ -34,14 +41,20 @@ Notes:
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 import logging
+import math
+import secrets
 import threading
 import time
 import traceback
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -54,6 +67,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import city_gaps, generate, weather
 from app.config import ROOT, get_settings
+from app.hours import ASTANA_TZ
 from app.llm import LLMClient, load_prompt
 from app.pipeline import Deps, InvalidRequest, index_meta, index_problem, index_status, recommend
 from app.schemas import SCHEMA_VERSION, Answer, CityGaps, Landmark, RecommendRequest
@@ -104,12 +118,15 @@ def configure_logging(level: str) -> None:
 
 
 class ApiGuard:
-    """Pure ASGI middleware for /api/*: body-size cap (413) and one access-log line per call
-    (method, path, status, latency — never the body)."""
+    """Pure ASGI middleware for /api/*: body-size cap (413), the per-IP rate limit of
+    POST /api/recommend (429, T161) and one access-log line per call (method, path, status,
+    latency — never the body, the query string or the client address)."""
 
-    def __init__(self, app: ASGIApp, max_body: int = MAX_BODY_BYTES) -> None:
+    def __init__(self, app: ASGIApp, max_body: int = MAX_BODY_BYTES,
+                 limiter: RateLimiter | None = None) -> None:
         self.app = app
         self.max_body = max_body
+        self.limiter = limiter if limiter is not None and limiter.enabled else None
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] != "http" or not scope["path"].startswith("/api/"):
@@ -125,6 +142,13 @@ class ApiGuard:
             await send(message)
 
         try:
+            if (self.limiter is not None and scope["method"] == "POST"
+                    and scope["path"] == RATE_LIMITED_PATH):
+                retry = self.limiter.hit(scope)
+                if retry is not None:
+                    await _send_json(send_wrapper, 429, {"detail": TOO_MANY},
+                                     [(b"retry-after", str(retry).encode())])
+                    return
             if scope["method"] in ("POST", "PUT", "PATCH"):
                 body = await self._read_body(scope, receive)
                 if body is None:
@@ -171,12 +195,110 @@ def _replay(body: bytes, receive: Callable) -> Callable[[], Awaitable[dict]]:
     return replay
 
 
-async def _send_json(send: Callable, status_code: int, content: dict[str, Any]) -> None:
+async def _send_json(send: Callable, status_code: int, content: dict[str, Any],
+                     headers: list[tuple[bytes, bytes]] | None = None) -> None:
     payload = json.dumps(content, ensure_ascii=False).encode("utf-8")
     await send({"type": "http.response.start", "status": status_code,
                 "headers": [(b"content-type", b"application/json"),
-                            (b"content-length", str(len(payload)).encode())]})
+                            (b"content-length", str(len(payload)).encode()),
+                            *(headers or [])]})
     await send({"type": "http.response.body", "body": payload})
+
+
+RATE_MAX_CLIENTS = 10_000  # counters kept at most; the least recently seen go first
+TOO_MANY = "too many requests"  # the 429 detail: no echo of anything the client sent
+RATE_LIMITED_PATH = "/api/recommend"
+
+
+class RateLimiter:
+    """Per-client counters of POST /api/recommend: a minute window and the Astana day.
+
+    The client is client.host, or with `trusted_hops` = N proxies in front the N-th entry of
+    X-Forwarded-For from the right — the one the last trusted proxy added, so an entry the
+    client wrote itself does not help; with 0 the header is never read. An IPv6 client counts
+    by its /64 (one subscriber's network), an IPv4-mapped IPv6 by its IPv4. Counters are keyed
+    by sha256(salt + address): neither the log nor the memory holds an address, at most
+    `max_clients` keys (least recently seen dropped first). At the Astana midnight every
+    counter is dropped and the salt changes: nothing is kept longer than its day (the hashes of
+    an IPv4 address are pseudonymous personal data). The minute window runs on a monotonic
+    clock, so moving the wall clock cannot stretch it; the day follows the Astana calendar."""
+
+    def __init__(self, per_min: int, per_day: int, trusted_hops: int = 0, *,
+                 clock: Callable[[], datetime] | None = None,
+                 monotonic: Callable[[], float] | None = None,
+                 max_clients: int = RATE_MAX_CLIENTS) -> None:
+        self.per_min = max(0, per_min)
+        self.per_day = max(0, per_day)
+        self.trusted_hops = max(0, trusted_hops)
+        self.max_clients = max_clients
+        self._clock = clock or (lambda: datetime.now(ASTANA_TZ))
+        self._monotonic = monotonic or time.monotonic
+        self._salt = secrets.token_bytes(16)
+        self._day: date | None = None  # the Astana day the counters and the salt belong to
+        # key -> [minute window start (monotonic s), count in it, count that day]
+        self._clients: OrderedDict[str, list[Any]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.per_min > 0 or self.per_day > 0
+
+    def __len__(self) -> int:
+        return len(self._clients)
+
+    def client_ip(self, scope: dict) -> str:
+        host = str((scope.get("client") or ("-", 0))[0])
+        if self.trusted_hops <= 0:
+            return host  # no trusted proxy: X-Forwarded-For is whatever the client wrote
+        values = [v.decode("latin-1") for k, v in scope.get("headers", [])
+                  if k.lower() == b"x-forwarded-for"]
+        entries = [e.strip() for v in values for e in v.split(",") if e.strip()]
+        return entries[-self.trusted_hops] if len(entries) >= self.trusted_hops else host
+
+    @staticmethod
+    def bucket(ip: str) -> str:
+        """What one client is: an IPv4 address, an IPv6 /64, the IPv4 of an IPv4-mapped IPv6."""
+        try:
+            addr = ipaddress.ip_address(ip.strip("[]"))
+        except ValueError:
+            return ip
+        if isinstance(addr, ipaddress.IPv6Address):
+            if addr.ipv4_mapped is not None:
+                return str(addr.ipv4_mapped)
+            return str(ipaddress.IPv6Network((addr, 64), strict=False))
+        return str(addr)
+
+    def _key(self, ip: str) -> str:
+        bucket = self.bucket(ip).encode("utf-8", "replace")
+        return hashlib.sha256(self._salt + bucket).hexdigest()[:32]
+
+    def hit(self, scope: dict) -> int | None:
+        """Count this request: None when it may go on, else the Retry-After seconds."""
+        now = self._clock().astimezone(ASTANA_TZ)
+        mono, day = self._monotonic(), now.date()
+        ip = self.client_ip(scope)
+        with self._lock:
+            if day != self._day:  # a new Astana day: drop yesterday's hashes, new salt
+                self._clients.clear()
+                self._salt = secrets.token_bytes(16)
+                self._day = day
+            key = self._key(ip)
+            rec = self._clients.pop(key, None) or [mono, 0, 0]
+            if mono - rec[0] >= 60:
+                rec[0], rec[1] = mono, 0
+            retry: int | None = None
+            if self.per_day and rec[2] >= self.per_day:  # until the Astana midnight
+                midnight = datetime.combine(day + timedelta(days=1), dt_time(0), ASTANA_TZ)
+                retry = math.ceil((midnight - now).total_seconds())
+            elif self.per_min and rec[1] >= self.per_min:
+                retry = math.ceil(60 - (mono - rec[0]))
+            else:
+                rec[1] += 1
+                rec[2] += 1
+            self._clients[key] = rec  # the most recently seen at the end
+            while len(self._clients) > self.max_clients:
+                self._clients.popitem(last=False)
+        return None if retry is None else max(1, retry)
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -246,6 +368,15 @@ def _index_state(d: Deps) -> str:
         return {"index_mismatch": "lexical (index mismatch)",
                 "index_missing": "lexical (index missing)"}.get(problem or "", "lexical")
     return "ready" if d.settings.has_embeddings else "ready (no key)"
+
+
+def _llm_budget(d: Deps | None) -> str:
+    """The daily Claude budget (T161): none | ok | reached | misconfigured — never a sum."""
+    fn = getattr(d.llm, "budget_state", None) if d is not None and d.llm is not None else None
+    if fn is not None:
+        return str(fn())
+    state = (d.settings if d is not None else get_settings()).llm_budget_state
+    return {"set": "ok"}.get(state, state)
 
 
 def _llm_state(d: Deps) -> str:
@@ -325,14 +456,18 @@ def create_app(deps: Deps | None = None) -> FastAPI:
     app.state.city_gaps = None  # bytes of city_gaps.json once the lifespan loaded it
     app.state.prompt_problems = check_prompts()
     llm_slots = threading.BoundedSemaphore(MAX_CONCURRENT_LLM)
+    # ApiGuard first, CORS around it (the last added runs outermost): a 429 / 413 from ApiGuard
+    # carries the CORS headers, so the dev UI on :5500 sees the 429, not a CORS error
+    limits = deps.settings if deps is not None else get_settings()
+    limiter = RateLimiter(limits.rate_per_min, limits.rate_per_day, limits.trusted_proxy_hops)
+    app.state.rate_limiter = limiter
+    app.add_middleware(ApiGuard, limiter=limiter)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=DEV_ORIGINS,
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
-    app.add_middleware(ApiGuard)
-
     @app.exception_handler(RequestValidationError)
     async def request_invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
         # input/ctx may contain private data or NaN; even loc/msg can echo user input.
@@ -359,7 +494,8 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unavailable", "poi_count": 0, "index": "lexical",
-                         "llm": "off", "city_gaps": _city_gaps_state(request),
+                         "llm": "off", "llm_budget": _llm_budget(None),
+                         "city_gaps": _city_gaps_state(request),
                          "schema_version": SCHEMA_VERSION},
             )
         problems = [*_store_problems(d), *request.app.state.prompt_problems]
@@ -371,6 +507,7 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             "poi_count": len(d.store.pois),
             "index": _index_state(d),
             "llm": _llm_state(d),
+            "llm_budget": _llm_budget(d),  # none | ok | reached | misconfigured, no sums
             "warnings": [*problems, *d.store.warnings],
             "city_gaps": _city_gaps_state(request),  # does not change `status` (contract 1.4.0)
             "schema_version": SCHEMA_VERSION,

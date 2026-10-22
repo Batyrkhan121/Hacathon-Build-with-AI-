@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from datetime import datetime as _dt
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 
 from app import llm as llm_mod
 from app.config import Settings, get_settings
+from app.hours import ASTANA_TZ
 from app.llm import FALLBACK_BETA, LLMClient, LLMUnavailable, user_data_block
 
 
@@ -61,14 +63,38 @@ def validation_error() -> ValidationError:
     raise AssertionError("unreachable")
 
 
+class FakeRaw:
+    """The SDK's raw answer: json() is the HTTP body (with usage), parse() runs the SDK check
+    (a pydantic ValidationError is raised here, after the answer was paid)."""
+
+    def __init__(self, item: Any, usage: dict[str, int] | None) -> None:
+        self.item, self.usage = item, usage
+
+    def json(self) -> dict[str, Any]:
+        return {"usage": self.usage} if self.usage is not None else {}
+
+    def parse(self) -> Any:
+        if isinstance(self.item, BaseException):
+            raise self.item
+        return self.item
+
+
+class Unparsed:
+    """A paid answer whose text the SDK check refuses (ValidationError in parse())."""
+
+    def __init__(self, usage: dict[str, int] | None = None) -> None:
+        self.usage = usage
+
+
 class FakeAnthropic:
-    """Mimics client.with_options(...).beta.messages.parse(...)."""
+    """Mimics client.with_options(...).beta.messages.with_raw_response.parse(...)."""
 
     def __init__(self, outcomes: dict[str, list[Any]]) -> None:
         self.outcomes = outcomes  # model -> queue of responses / exceptions
         self.calls: list[dict[str, Any]] = []
         self.retries: list[int] = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self._parse))
+        raw = SimpleNamespace(parse=self._parse)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(with_raw_response=raw))
 
     def with_options(self, **kw: Any) -> FakeAnthropic:
         self.retries.append(kw.get("max_retries"))
@@ -78,9 +104,14 @@ class FakeAnthropic:
         self.calls.append(kw)
         queue = self.outcomes.get(kw["model"], [])
         item = queue.pop(0) if queue else AssertionError(f"unexpected call {kw['model']}")
-        if isinstance(item, BaseException):
+        if isinstance(item, Unparsed):  # paid, then refused by the SDK check
+            return FakeRaw(validation_error(), item.usage)
+        if isinstance(item, ValidationError):  # the same, without usage in the body
+            return FakeRaw(item, None)
+        if isinstance(item, BaseException):  # HTTP errors: nothing came back
             raise item
-        return item
+        usage = getattr(item, "usage", None)
+        return FakeRaw(item, vars(usage) if usage is not None else None)
 
 
 def make_client(tmp_path: Path, outcomes: dict[str, list[Any]], **over: Any):
@@ -758,3 +789,149 @@ def test_check_llm_raw_gemini_is_skipped_under_openrouter(tmp_path: Path, monkey
         tmp_path, embed_provider="openrouter", openrouter_api_key=OR_KEY))
     with pytest.raises(mod.Skip, match="check_client_embed"):
         mod.check_embed()
+
+
+# ------------------------------------------- T161: the daily Claude budget (by `usage`)
+
+PRICES = {"llm_price_in_per_mtok": 3.0, "llm_price_out_per_mtok": 15.0}
+
+
+def paid(obj: BaseModel, *, inp: int = 1000, out: int = 500, write: int = 0, read: int = 0,
+         model: str = "claude-sonnet-5-5", stop: str = "end_turn") -> Any:
+    usage = SimpleNamespace(input_tokens=inp, output_tokens=out,
+                            cache_creation_input_tokens=write, cache_read_input_tokens=read)
+    return SimpleNamespace(stop_reason=stop, parsed_output=obj, model=model, content=[],
+                           usage=usage)
+
+
+def at(day: int, hh: int, mm: int = 0) -> _dt:
+    return _dt(2026, 10, day, hh, mm, tzinfo=ASTANA_TZ)
+
+
+def test_usage_cost_counts_cache_writes_and_reads_at_the_input_price() -> None:
+    usage = SimpleNamespace(input_tokens=1000, cache_creation_input_tokens=200,
+                            cache_read_input_tokens=300, output_tokens=500)
+    assert llm_mod.usage_cost_usd(usage, 3.0, 15.0) == pytest.approx(
+        (1500 * 3.0 + 500 * 15.0) / 1e6)
+    assert llm_mod.usage_cost_usd(None, 3.0, 15.0) == 0.0
+    assert llm_mod.usage_cost_usd(SimpleNamespace(input_tokens=None), 3.0, 15.0) == 0.0
+
+
+def test_budget_spent_in_the_middle_of_the_day_stops_the_calls(tmp_path: Path) -> None:
+    # one answer: 1000 in + 500 out = 0.003 + 0.0075 = 0.0105 $
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [
+        paid(Capital(city="Астана")), paid(Capital(city="Алматы"))]},
+        llm_daily_budget_usd=0.02, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    assert llm.budget_state() == "ok"
+    call(llm, "один")
+    assert llm.budget_state() == "ok"  # 0.0105 < 0.02
+    call(llm, "два")
+    assert llm.budget_state() == "reached"  # 0.021 >= 0.02
+    with pytest.raises(LLMUnavailable):
+        call(llm, "три")
+    assert llm.last_error == "budget"
+    assert len(fake.calls) == 2  # no third call was made
+
+
+def test_the_fallback_model_is_not_called_once_the_budget_is_spent(tmp_path: Path) -> None:
+    """A refused answer still costs: the fallback model is checked before its call too."""
+    llm, fake = make_client(tmp_path, {
+        "claude-sonnet-5-5": [paid(Capital(city="x"), stop="refusal", inp=5000, out=2000)],
+        "claude-haiku-5-5": [paid(Capital(city="Астана"))]},
+        llm_daily_budget_usd=0.01, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "budget"
+    assert [c["model"] for c in fake.calls] == ["claude-sonnet-5-5"]
+
+
+def test_the_budget_starts_again_at_astana_midnight(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [
+        paid(Capital(city="a")), paid(Capital(city="b"))]},
+        llm_daily_budget_usd=0.01, **PRICES)
+    clock = {"now": at(22, 23, 59)}
+    llm._clock = lambda: clock["now"]
+    call(llm, "поздно")  # 0.0105 >= 0.01: spent for the 22nd
+    assert llm.budget_state() == "reached"
+    with pytest.raises(LLMUnavailable):
+        call(llm, "ещё")
+    clock["now"] = at(23, 0, 1)  # a new Astana day
+    assert llm.budget_state() == "ok"
+    assert call(llm, "утром").city == "b"
+    # 18:59 UTC on the 22nd is 23:59 in Astana: the day is Astana's, not UTC's
+    assert at(22, 23, 59).astimezone(llm_mod.UTC).hour == 18
+
+
+def test_a_budget_without_prices_never_calls_claude(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="a"))]},
+                            llm_daily_budget_usd=1.0, llm_price_in_per_mtok=3.0,
+                            llm_price_out_per_mtok=None)
+    assert llm.budget_state() == "misconfigured"
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "budget_misconfigured" and fake.calls == []
+
+
+def test_no_budget_means_no_cap_here(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="a"), inp=10**7)]})
+    assert llm.budget_state() == "none"
+    call(llm)  # 30 $ by the prices above, but no budget is set: the Console limit is the cap
+    assert llm.budget_state() == "none" and len(fake.calls) == 1
+
+
+def test_a_cached_answer_is_served_even_when_the_budget_is_spent(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="Астана"))]},
+                            llm_daily_budget_usd=0.005, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    call(llm)  # spends 0.0105 >= 0.005
+    assert llm.budget_state() == "reached"
+    assert call(llm).city == "Астана" and llm.last_model.endswith("(cache)")  # costs nothing
+    assert len(fake.calls) == 1
+
+
+# ---- review abca90d BLOCK 1: answers the SDK check refuses are paid and counted (raw usage)
+
+USAGE = {"input_tokens": 1000, "output_tokens": 500, "cache_creation_input_tokens": 0,
+         "cache_read_input_tokens": 0}  # 0.0105 $ at 3 / 15
+
+
+def test_answers_refused_by_the_sdk_check_are_counted_on_both_models(tmp_path: Path) -> None:
+    """A refused / truncated / schema-breaking text (e.g. 10 cards for max_length=3) raises
+    pydantic ValidationError inside parse(): the raw answer's usage is charged first."""
+    llm, fake = make_client(tmp_path, {
+        "claude-sonnet-5-5": [Unparsed(USAGE)], "claude-haiku-5-5": [Unparsed(USAGE)]},
+        llm_daily_budget_usd=1.0, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "invalid_output"
+    assert [c["model"] for c in fake.calls] == ["claude-sonnet-5-5", "claude-haiku-5-5"]
+    assert llm._spend.spent(at(22, 12)) == pytest.approx(2 * 0.0105)  # both calls paid
+
+
+def test_invalid_outputs_cannot_dodge_the_cap(tmp_path: Path) -> None:
+    """The reviewer's probe: before, 50 invalid answers cost 99 calls and counted 0 $."""
+    outcomes = {"claude-sonnet-5-5": [Unparsed(USAGE) for _ in range(50)],
+                "claude-haiku-5-5": [Unparsed(USAGE) for _ in range(50)]}
+    llm, fake = make_client(tmp_path, outcomes, llm_daily_budget_usd=0.05, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    llm._cool_down = lambda *a, **kw: None  # keep calling, as many requests in a day would
+    for i in range(50):
+        with pytest.raises(LLMUnavailable):
+            call(llm, f"запрос {i}")
+    assert llm.budget_state() == "reached"
+    assert len(fake.calls) <= 6  # 0.0105 each: the cap stops it after ~5 paid answers
+
+
+def test_a_paid_answer_without_usage_is_charged_a_cautious_estimate(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [Unparsed(None)],
+                                       "claude-haiku-5-5": [Unparsed(None)]},
+                            llm_daily_budget_usd=1.0, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    with pytest.raises(LLMUnavailable):
+        call(llm, "x" * 2000)
+    one = llm_mod.estimated_cost_usd("sys", "x" * 2000, 3.0, 15.0)
+    assert one >= llm_mod.MAX_TOKENS * 15.0 / 1e6  # at least a full-length output
+    assert llm._spend.spent(at(22, 12)) == pytest.approx(2 * one)

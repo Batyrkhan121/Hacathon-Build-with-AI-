@@ -34,6 +34,18 @@ Verified on anthropic 1.15.0 / google-genai 2.31.0 (scripts/check_llm.py):
 Failure policy: auth/permission errors or "every model failed on network/timeouts" put the
 client into a cooldown, so the demo answers instantly from the deterministic path instead of
 waiting for timeouts on every request.
+Daily budget (T161, ARCHITECTURE §5 «Публичное демо»): with LLM_DAILY_BUDGET_USD and both prices
+every answer's `usage` is costed — input tokens with cache writes and reads at
+LLM_PRICE_IN_PER_MTOK, output tokens at LLM_PRICE_OUT_PER_MTOK, per million — and summed per
+Astana day in memory (a restart resets it: the Console spend limit stays the backstop). The call
+goes through `with_raw_response`, so the usage is read from the raw answer BEFORE the SDK checks
+the text: a refused, truncated or schema-breaking answer (pydantic ValidationError inside
+parse) is paid and counted too; an answer without a usable `usage` is charged a cautious
+estimate (the prompt by its length, MAX_TOKENS of output). Before
+every call, the fallback model's too: spent >= budget -> no call, LLMUnavailable with
+last_error "budget" (the pipeline answers without AI and says so). A budget without usable
+prices ("misconfigured") -> Claude is never called (last_error "budget_misconfigured").
+budget_state(): none | ok | reached | misconfigured, for /api/health — never a sum.
 """
 
 from __future__ import annotations
@@ -46,15 +58,17 @@ import re
 import threading
 import time
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, TypeVar
 
 import numpy as np
 from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
+from app.hours import ASTANA_TZ
 
 log = logging.getLogger(__name__)
 
@@ -139,6 +153,65 @@ class _HardFailure(Exception):
     """Credentials are rejected: no other model will work either."""
 
 
+class _DaySpend:
+    """Dollars spent on Claude this Astana day (in memory; thread-safe)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._day: date | None = None
+        self._usd = 0.0
+
+    def spent(self, now: datetime) -> float:
+        with self._lock:
+            return self._usd if self._day == now.astimezone(ASTANA_TZ).date() else 0.0
+
+    def add(self, usd: float, now: datetime) -> None:
+        day = now.astimezone(ASTANA_TZ).date()
+        with self._lock:
+            if self._day != day:  # a new Astana day: the count starts again at midnight
+                self._day, self._usd = day, 0.0
+            self._usd += max(0.0, usd)
+
+
+CHARS_PER_TOKEN_CAUTIOUS = 2.0  # Cyrillic runs ~2–3 chars a token: fewer chars = more tokens
+
+
+def _raw_usage(raw: Any) -> Any:
+    """`usage` of the raw HTTP answer as an object (None when it cannot be read)."""
+    try:
+        body = raw.json()
+    except Exception:  # noqa: BLE001 - then the cautious estimate is charged
+        return None
+    usage = body.get("usage") if isinstance(body, dict) else None
+    return SimpleNamespace(**usage) if isinstance(usage, dict) else None
+
+
+def _has_usage(usage: Any) -> bool:
+    return usage is not None and any(
+        isinstance(getattr(usage, name, None), (int, float))
+        for name in ("input_tokens", "output_tokens"))
+
+
+def estimated_cost_usd(system: str, prompt: str, price_in_per_mtok: float,
+                       price_out_per_mtok: float) -> float:
+    """A cautious charge for a paid answer without `usage`: the input by its length (2 chars
+    a token), the output as MAX_TOKENS — more than any real answer here."""
+    tokens_in = (len(system) + len(prompt)) / CHARS_PER_TOKEN_CAUTIOUS
+    return (tokens_in * price_in_per_mtok + MAX_TOKENS * price_out_per_mtok) / 1e6
+
+
+def usage_cost_usd(usage: Any, price_in_per_mtok: float, price_out_per_mtok: float) -> float:
+    """The cost of one answer by its `usage`: input tokens with cache creation and cache reads
+    at the input price, output tokens at the output price, both per million tokens."""
+    def tokens(name: str) -> int:
+        value = getattr(usage, name, None) if usage is not None else None
+        return int(value) if isinstance(value, (int, float)) and value > 0 else 0
+
+    inputs = (tokens("input_tokens") + tokens("cache_creation_input_tokens")
+              + tokens("cache_read_input_tokens"))
+    return (inputs * price_in_per_mtok + tokens("output_tokens") * price_out_per_mtok) / 1e6
+
+
 class LLMClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -152,6 +225,35 @@ class LLMClient:
         self._cooldown_kind: str | None = None
         self._embed_cooldown_until = 0.0  # Gemini, separate from Claude
         self._embed_cooldown_kind = "error"
+        self._spend = _DaySpend()  # T161: Claude dollars this Astana day
+        self._clock = lambda: datetime.now(ASTANA_TZ)  # tests set a fake clock
+
+    # ------------------------------------------------------------- budget (T161)
+
+    def budget_state(self) -> str:
+        """none | ok | reached | misconfigured (for /api/health: never a sum)."""
+        state = self.settings.llm_budget_state
+        if state != "set":
+            return state  # "none" or "misconfigured"
+        return "reached" if self._budget_reached() else "ok"
+
+    def _budget_reached(self) -> bool:
+        budget = self.settings.llm_daily_budget_usd
+        if self.settings.llm_budget_state != "set" or budget is None:
+            return False
+        return self._spend.spent(self._clock()) >= budget
+
+    def _record_usage(self, usage: Any, system: str = "", prompt: str = "") -> None:
+        """Charge one paid answer: by its usage, or a cautious estimate without one."""
+        if self.settings.llm_budget_state != "set":
+            return
+        price_in = float(self.settings.llm_price_in_per_mtok or 0)
+        price_out = float(self.settings.llm_price_out_per_mtok or 0)
+        if _has_usage(usage):
+            cost = usage_cost_usd(usage, price_in, price_out)
+        else:
+            cost = estimated_cost_usd(system, prompt, price_in, price_out)
+        self._spend.add(cost, self._clock())
 
     # ------------------------------------------------------------------ state
 
@@ -236,6 +338,12 @@ class LLMClient:
         if not self.settings.anthropic_api_key:
             self._local.error = "no_key"
             raise LLMUnavailable("ANTHROPIC_API_KEY is empty")
+        if self.settings.llm_budget_state == "misconfigured":
+            self._local.error = "budget_misconfigured"  # a budget without prices: fail safe
+            raise LLMUnavailable("LLM_DAILY_BUDGET_USD is set without usable prices")
+        if self._budget_reached():
+            self._local.error = "budget"
+            raise LLMUnavailable("the daily LLM budget is spent")
         if time.monotonic() < self._cooldown_until:
             self._local.error = self._cooldown_kind or "network"
             raise LLMUnavailable("LLM is cooling down after a recent failure")
@@ -248,6 +356,9 @@ class LLMClient:
             if i > 0 and time.monotonic() - started > budget:
                 reasons.append(f"{model}: skipped, time budget spent")
                 break
+            if i > 0 and self._budget_reached():  # the first model's answer spent the rest
+                self._local.error = "budget"
+                raise LLMUnavailable("the daily LLM budget is spent")
             try:
                 obj, served = self._call(
                     model, system, prompt, schema, effort,
@@ -290,7 +401,7 @@ class LLMClient:
 
         client = self._get_client().with_options(max_retries=retries)
         try:
-            resp = client.beta.messages.parse(
+            raw = client.beta.messages.with_raw_response.parse(
                 model=model,
                 max_tokens=MAX_TOKENS,
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -300,6 +411,9 @@ class LLMClient:
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )
+            # an HTTP 200 answer is paid: count it before the SDK checks the text (T161)
+            self._record_usage(_raw_usage(raw), system, prompt)
+            resp = raw.parse()
         except ValidationError as exc:
             # The SDK validates inside parse(): refused or truncated text lands here.
             raise _ModelFailed(f"invalid structured output ({exc.error_count()} errors)",
