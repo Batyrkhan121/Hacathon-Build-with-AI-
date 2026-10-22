@@ -70,6 +70,16 @@
             <table class="gaps-table" id="gaps-table"></table>
           </div>
         </section>
+
+        <!-- 1.4.1: районы — только если в ответе есть блок districts -->
+        <section class="gaps-districts" id="gaps-districts" hidden aria-labelledby="gaps-districts-title">
+          <h2 class="gaps-h2" id="gaps-districts-title" data-i18n="gaps.districtsTitle">По районам</h2>
+          <p class="gaps-meaning" data-i18n="gaps.meaning">Это пробелы в открытых данных, а не оценка района.</p>
+          <div class="gaps-table-wrap">
+            <table class="gaps-table" id="gaps-districts-table"></table>
+          </div>
+          <p class="gaps-districts-note" id="gaps-districts-note"></p>
+        </section>
       </section>
 
       <section class="gaps-help" aria-labelledby="gaps-help-title">
@@ -79,7 +89,8 @@
           <p data-i18n="gaps.helpPeople">Поставьте приложение StreetComplete (Android).</p>
           <!-- ссылки по клику, как атрибуция: ни картинок, ни скриптов оттуда (решение интегратора, 22.10) -->
           <p class="gaps-help-links">
-            <a href="https://streetcomplete.app/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkStreetComplete">StreetComplete</a>
+            <a href="https://streetcomplete.app/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkStreetComplete">StreetComplete (Android)</a>
+            <a href="https://every-door.app/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkEveryDoor">Every Door (iPhone)</a>
             <a href="https://www.openstreetmap.org/" target="_blank" rel="noopener noreferrer" data-i18n="gaps.linkOsmEdit">Дополнить в OpenStreetMap</a>
           </p>
         </div>
