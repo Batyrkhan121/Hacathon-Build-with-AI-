@@ -951,3 +951,24 @@ def test_url_report_says_e16_needs_the_fixture(monkeypatch, tmp_path: Path) -> N
     assert "QADAM_EVENTS_PATH=eval/fixtures/events_e16.json" in md
     assert "на тестовом событии из фикстуры eval" in md
     run_eval.main(["--mock", "--out", str(tmp_path), "--only", "E18"])  # restore defaults
+
+
+def test_shift_events_moves_the_test_events_to_another_day(tmp_path: Path) -> None:
+    from datetime import date
+
+    from app import events
+    from eval import shift_events
+
+    out = tmp_path / "events_today.json"
+    assert shift_events.main(["--date", "2026-10-30", "--out", str(out)]) == 0
+    moved = json.loads(out.read_text(encoding="utf-8"))
+    src = json.loads(shift_events.FIXTURE.read_text(encoding="utf-8"))
+    assert [e["starts_at"] for e in moved] == [
+        "2026-10-30T17:20:00+05:00", "2026-10-30T19:30:00+05:00"]
+    assert moved[0]["ends_at"] == "2026-10-30T19:00:00+05:00"
+    for a, b in zip(moved, src, strict=True):  # only the dates change
+        assert {k: v for k, v in a.items() if k not in ("starts_at", "ends_at")} == {
+            k: v for k, v in b.items() if k not in ("starts_at", "ends_at")}
+        assert "(тест)" in a["title"]["ru"]
+    assert len(events.load_events(out)) == 2
+    assert shift_events.shift(src, date(2026, 10, 24)) == src  # the fixture's own day
