@@ -9,6 +9,7 @@ import {
   GAP_LAYERS,
   GAP_MIN,
   attributionUrl,
+  districtLabel,
   districtListChecked,
   districtNote,
   districtRows,
@@ -22,6 +23,7 @@ import {
   isCityGaps,
   layerById,
   legendRanges,
+  outlineHitWeight,
   noun,
   pct,
 } from '../gaps-core.js';
@@ -161,7 +163,10 @@ test('внешние ссылки страницы — только по кли�
     'https://www.openstreetmap.org/',
     'https://www.openstreetmap.org/copyright',
   ]);
-  for (const [, tag] of hrefs) assert.match(tag, /rel="noopener noreferrer"/);
+  for (const [, tag] of hrefs) {
+    assert.match(tag, /rel="noopener noreferrer"/);
+    assert.match(tag, /target="_blank"/);
+  }
   assert.doesNotMatch(html, /<(script|img|link)[^>]+(src|href)="https?:/);
   for (const lang of ['ru', 'kk', 'en']) {
     setLang(lang);
@@ -303,4 +308,40 @@ test('районы: сверка списка с сайтом акимата —
       assert.notEqual(t(k), k, `${lang}: ${k}`);
     }
   }
+});
+
+test('ревью 9.1: полоса нажатия у контура — от размера ячейки на экране, на мелком зуме её нет', () => {
+  assert.equal(outlineHitWeight(9), 0); // стартовый зум: ячейка 8–10 px — у границ нажимается ячейка
+  assert.equal(outlineHitWeight(23), 0);
+  assert.equal(outlineHitWeight(24), 2);
+  assert.equal(outlineHitWeight(40), 6); // полоса 6 + 2·2 = 10 px — четверть ячейки
+  assert.equal(outlineHitWeight(200), 12);
+  for (const px of [24, 32, 48, 64, 96]) assert.ok(outlineHitWeight(px) + 4 <= px / 4 + 2, String(px));
+});
+
+test('ревью 9.1: нажатие на ячейку в районе stale — с пометкой о границе; вне районов — null', () => {
+  const stale = districtLabel(mock, 'mock_b', 'ru');
+  assert.equal(stale.name, 'Мок-район Б');
+  assert.equal(say('ru', stale.note), 'граница в OSM устарела (01.04.2019)');
+  assert.deepEqual(districtLabel(mock, 'mock_a', 'kk'), { name: 'Мок-аудан А', note: null });
+  assert.equal(districtLabel(mock, null, 'ru'), null);
+});
+
+test('ревью 9.1: «нет объектов» — по слою; kk-строки районов; про Every Door — не «вопросы»', () => {
+  const want = {
+    ru: ['нет мест', 'нет дорожек', 'нет переходов'],
+    kk: ['орын жоқ', 'жол жоқ', 'өткел жоқ'],
+    en: ['no places', 'no footpaths', 'no crossings'],
+  };
+  for (const [lang, texts] of Object.entries(want)) {
+    setLang(lang);
+    assert.deepEqual(['poi', 'm', 'crossings'].map((u) => t(`gaps.noneShort.${u}`)), texts);
+    assert.match(t('gaps.helpPeople'), /StreetComplete/);
+    assert.match(t('gaps.helpPeople'), /Every Door/);
+  }
+  setLang('ru');
+  assert.match(t('gaps.helpPeople'), /Every Door: в нём удобно дописать/);
+  setLang('kk');
+  assert.equal(t('gaps.district.unassigned'), 'аудандар шекарасынан тыс');
+  assert.equal(t('gaps.districtsSource', { date: '18.10.2026' }), 'Аудан шекаралары — OpenStreetMap-тің 18.10.2026 күнгі деректері.');
 });
