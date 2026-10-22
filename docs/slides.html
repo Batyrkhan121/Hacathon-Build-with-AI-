@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>Qadam — питч</title>
-<!-- Источник docs/slides.pdf (T81). Тезисы и цифры только из docs/PITCH.md и итогов T80 (docs/SCENARIOS.md).
+<!-- Источник docs/slides.pdf (T81; слайды 6–7 — T163, 22.10). Тезисы и цифры только из docs/PITCH.md,
+     docs/SCENARIOS.md, data/processed/REPORT.md и data/processed/city_gaps.json.
      Сборка PDF: msedge --headless --no-pdf-header-footer --print-to-pdf=docs/slides.pdf docs/slides.html -->
 <style>
   @page { size: 1920px 1080px; margin: 0; }
@@ -102,6 +103,31 @@
   /* title strip on slide 1 */
   .brand { display: flex; align-items: center; gap: 18px; font-size: 30px; font-weight: 700; color: var(--teal); margin-bottom: 40px; }
   .brand .mark { width: 54px; height: 54px; flex: none; }
+  /* after the submission (slides 6, 7) */
+  .w8 { display: grid; grid-template-columns: 1.25fr .75fr; gap: 56px; }
+  .w8 ul.points { gap: 22px; }
+  .w8 ul.points li { font-size: 29px; }
+  .w8 ul.points li b { color: var(--teal); }
+  .w8 .stat { padding: 30px 36px; }
+  .w8 .stat .num { font-size: 104px; }
+  .w8 .stat .lbl { font-size: 26px; }
+  .note { margin-top: 24px; font-size: 24px; color: var(--muted); line-height: 1.35; }
+  .gaps { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; margin-top: 40px; }
+  .gaps .stats { gap: 20px; }
+  h1.h1-s { font-size: 60px; }
+  .gaps .stat { padding: 26px 34px; }
+  .gaps .stat .num { font-size: 80px; }
+  .gaps .stat .lbl { font-size: 25px; margin-top: 8px; }
+  table.dist { width: 100%; border-collapse: collapse; background: var(--card); border: 2px solid var(--line);
+    font-size: 27px; }
+  table.dist caption { text-align: left; font-size: 24px; color: var(--muted); padding: 0 0 12px; }
+  table.dist th, table.dist td { padding: 8px 26px; border-bottom: 2px solid var(--line); text-align: left; }
+  table.dist th { font-size: 22px; color: var(--muted); font-weight: 600; }
+  table.dist td.r, table.dist th.r { text-align: right; }
+  table.dist tr:last-child td { border-bottom: 0; }
+  .help { margin-top: 18px; background: var(--ink); color: #fff; border-radius: 22px; padding: 22px 30px;
+    font-size: 24px; line-height: 1.38; }
+  .help b { color: var(--sun); }
 </style>
 </head>
 <body>
@@ -124,7 +150,7 @@
       <div class="stat"><div class="num sun">5%</div><div class="lbl">мест с указанной доступностью для коляски</div></div>
     </div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · Build with AI · кейс НИЦ Smart City</span><span>Данные: OpenStreetMap, снимок 18.10.2026 · 1/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · Build with AI · кейс НИЦ Smart City</span><span>Данные: OpenStreetMap, снимок 18.10.2026 · 1/9</span></div>
 </section>
 
 <!-- 2 -->
@@ -156,7 +182,7 @@
       </div>
     </div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · фрагменты реальных ответов: карточка S1 (18.10), маршрут пресета «Ночью» (19.10)</span><span>2/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · фрагменты реальных ответов: карточка S1 (18.10), маршрут пресета «Ночью» (19.10)</span><span>2/9</span></div>
 </section>
 
 <!-- 3 -->
@@ -178,7 +204,7 @@
       <p>Описания от Claude — у <b>3%</b> мест, с пометкой «сгенерировано».</p>
     </div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · подробности: docs/RAG.md</span><span>3/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · подробности: docs/RAG.md</span><span>3/9</span></div>
 </section>
 
 <!-- 4 -->
@@ -198,7 +224,7 @@
       <li>16 сценариев: S1–S5 из кейса и 11 краевых (ночь, коляска, казахский, prompt-injection, аэропорт). Eval поймал две настоящие ошибки — обе исправлены.</li>
     </ul>
   </div>
-  <div class="footer"><span><b>Qadam</b> · итоги T94, 19.10.2026 · docs/SCENARIOS.md</span><span>4/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · итоги T94, 19.10.2026 · docs/SCENARIOS.md</span><span>4/9</span></div>
 </section>
 
 <!-- 5 -->
@@ -221,10 +247,59 @@
 <span class="c">// координат в запросе нет</span></pre>
     </div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · кому что уходит: docs/ETHICS.md</span><span>5/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · кому что уходит: docs/ETHICS.md</span><span>5/9</span></div>
 </section>
 
-<!-- 6 -->
+<!-- 6: after the submission (wave 8, branch wave-8 / wave-9, not main) -->
+<section class="slide">
+  <div class="kicker">После сдачи · ветка wave-9, не main</div>
+  <h1>Маршрут и подбор <span class="hl">под человека</span></h1>
+  <div class="body w8">
+    <ul class="points">
+      <li><b>Без ступенек.</b> Лестницы обходим, переходы с опущенным бордюром — в приоритете. «Без ступенек» пишем, только если весь путь посчитан по тротуарам.</li>
+      <li><b>Ночью — по крупным улицам.</b> Не «по освещённым»: освещение в OSM отмечено лишь у 2,9 % длины пути.</li>
+      <li><b>В тепле.</b> Места в помещении, на улице не дольше 10 минут подряд. Мороз на демо — только на моке.</li>
+      <li><b>Вечером рядом.</b> Событие: время, площадка, ссылка на источник. Живых событий пока нет — показываем тестовое.</li>
+      <li><b>Мои предпочтения.</b> «Нравится» и «Не хочу» — только в этом телефоне, кнопка «Очистить»; на сервер уходят одни метки.</li>
+    </ul>
+    <div class="stats">
+      <div class="stat"><div class="num">22/22</div><div class="lbl">сценариев с Claude и без: 16 сдачи + 6 новых</div></div>
+      <div class="stat"><div class="num">9/9</div><div class="lbl">проб приватности отклонены (422) без повтора ввода</div></div>
+      <p class="note">Живых событий пока нет; сценарий с событием проходит на тестовом файле eval.</p>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · волна 8: docs/SCENARIOS.md, освещённость — data/processed/REPORT.md</span><span>6/9</span></div>
+</section>
+
+<!-- 7: city gaps map (wave 9) -->
+<section class="slide">
+  <div class="kicker">Карта пробелов данных · OpenStreetMap</div>
+  <h1 class="h1-s">97 % пешеходного графа — <span class="hl">без сведений об освещении в OSM</span></h1>
+  <div class="body gaps">
+    <div class="stats">
+      <div class="stat"><div class="num">97,1 %</div><div class="lbl">5372,7 из 5532,5 км пешеходного графа — освещение не отмечено</div></div>
+      <div class="stat"><div class="num">4004</div><div class="lbl">из 4075 переходов — бордюр не отмечен</div></div>
+      <div class="stat"><div class="num">1155</div><div class="lbl">из 1222 мест — доступность для коляски не отмечена</div></div>
+    </div>
+    <div>
+      <table class="dist">
+        <caption>Освещение не отмечено, доля длины дорожек · районы по алфавиту — это не рейтинг</caption>
+        <tr><th>Район</th><th class="r">Нет данных</th></tr>
+        <tr><td>Алматы</td><td class="r">99,4 %</td></tr>
+        <tr><td>Байқоңыр</td><td class="r">94,7 %</td></tr>
+        <tr><td>Есиль</td><td class="r">98,9 %</td></tr>
+        <tr><td>Нұра</td><td class="r">98,4 %</td></tr>
+        <tr><td>Сарайшық</td><td class="r">96,9 %</td></tr>
+        <tr><td>Сарыарқа</td><td class="r">90,8 %</td></tr>
+      </table>
+      <div class="help"><b>Это пробелы в открытых данных, а не оценка района.</b><br>
+        Как помочь: жителям — StreetComplete (Android), Every Door (iPhone); городу — открыть данные об освещении и бордюрах.</div>
+    </div>
+  </div>
+  <div class="footer"><span><b>Qadam</b> · data/processed/city_gaps.json: сборка 22.10, OSM 18.10, список районов — сайт акимата · © участники OpenStreetMap, ODbL</span><span>7/9</span></div>
+</section>
+
+<!-- 8 -->
 <section class="slide">
   <div class="kicker">Бизнес · гипотеза, с заказчиками не проверена</div>
   <h1>Кому это <span class="hl">нужно</span></h1>
@@ -236,10 +311,10 @@
     </div>
     <div class="strip">Монетизация — партнёрские места только с меткой «партнёр». <b>Ранжирование по данным не продаётся.</b></div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · модель — гипотеза</span><span>6/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · модель — гипотеза</span><span>8/9</span></div>
 </section>
 
-<!-- 7 -->
+<!-- 9 -->
 <section class="slide">
   <div class="kicker">Ограничения, риски и план</div>
   <h1>Честно о границах — <span class="hl">и что дальше</span></h1>
@@ -260,7 +335,7 @@
     <div class="end" style="margin-top:28px;font-size:30px"><b>Уже готово:</b> маршрут по тротуарам OSM — переходы, светофоры, лестницы; считается на нашем сервере.</div>
     <div class="end" style="margin-top:18px">Qadam — шаг к городу, где на вопрос «куда пойти» отвечают честно.<br><b style="white-space:nowrap">github.com/Batyrkhan121/Hacathon-Build-with-AI-</b></div>
   </div>
-  <div class="footer"><span><b>Qadam</b> · демо-видео — по ссылке в README</span><span>7/7</span></div>
+  <div class="footer"><span><b>Qadam</b> · демо-видео — по ссылке в README</span><span>9/9</span></div>
 </section>
 
 </body>
