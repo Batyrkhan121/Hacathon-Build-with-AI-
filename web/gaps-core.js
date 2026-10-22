@@ -203,8 +203,22 @@ export function districtNote(row) {
   return null;
 }
 
-// Район ячейки (GapCell.district) → название на языке страницы; null — ячейка вне границ районов
-export function districtName(data, id, lang) {
+// Полоса нажатия у контура района: Leaflet canvas ловит линию на weight/2 + tolerance (2 px) с каждой стороны,
+// то есть всего weight + 4 px. Чтобы у границ нажималась ячейка, а не район, полоса — не больше четверти
+// ячейки на экране и не больше 12 px; если ячейка меньше 24 px, контур не ловит нажатие (0 — снять полосу).
+export const OUTLINE_TAP_TOLERANCE = 2;
+
+export function outlineHitWeight(cellPx) {
+  if (!(cellPx >= 24)) return 0;
+  return Math.max(2, Math.min(12, Math.floor(cellPx / 4) - OUTLINE_TAP_TOLERANCE * 2));
+}
+
+// Район ячейки для текста по нажатию: название и пометка stale (как при нажатии на контур); null — вне районов
+export function districtLabel(data, id, lang) {
   const it = id ? data?.districts?.items?.find((x) => x.id === id) : null;
-  return it ? it.name?.[lang] || it.name?.ru || it.id : null;
+  if (!it) return null;
+  return {
+    name: it.name?.[lang] || it.name?.ru || it.id,
+    note: districtNote({ status: it.status, boundaryDate: it.boundary_date }),
+  };
 }

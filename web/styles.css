@@ -3345,7 +3345,9 @@ body:not(.v2) .submit-row .btn-primary {
 .gaps-table .th-sort {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
+  min-width: 44px;
   min-height: 44px;
   padding: 0;
   border: 0;
@@ -3388,8 +3390,7 @@ body:not(.v2) .submit-row .btn-primary {
 
 /* контуры районов в легенде: сплошная линия — граница из OSM, пунктир — граница устарела */
 .gap-swatch[data-gap="outline"],
-.gap-swatch[data-gap="outline-stale"],
-.gap-swatch[data-gap="missing"] {
+.gap-swatch[data-gap="outline-stale"] {
   height: 0;
   border: 0;
   border-radius: 0;

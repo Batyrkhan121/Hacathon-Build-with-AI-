@@ -7,9 +7,10 @@ import { TILES, applyAttribution } from './map.js';
 import {
   GAP_LAYERS,
   GAP_MIN,
+  OUTLINE_TAP_TOLERANCE,
   attributionUrl,
+  districtLabel,
   districtListChecked,
-  districtName,
   districtNote,
   districtRows,
   formatBuiltAt,
@@ -23,6 +24,7 @@ import {
   layerById,
   layerCounts,
   legendRanges,
+  outlineHitWeight,
   pct,
 } from './gaps-core.js';
 
@@ -132,7 +134,7 @@ function initMap() {
   const map = L.map($('gaps-map'), { zoomControl: false, scrollWheelZoom: false, preferCanvas: true }).setView(ASTANA, 11);
   L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer(TILES, { maxZoom: 19 }).addTo(map); // атрибуция — applyAttribution (язык страницы, rel)
-  const renderer = L.canvas({ padding: 0.3, tolerance: 2 });
+  const renderer = L.canvas({ padding: 0.3, tolerance: OUTLINE_TAP_TOLERANCE });
   const group = L.featureGroup().addTo(map);
   for (const cell of state.data.cells) {
     let ring;
@@ -152,20 +154,44 @@ function initMap() {
 }
 
 // 1.4.1: районы — тонкие контуры без заливки поверх ячеек (stale — пунктиром). Рисуем линиями, а не
-// полигонами: на canvas полигон ловит нажатие всей площадью и закрыл бы ячейки. Для пальца у каждой линии
-// невидимая полоса 12 px — нажатие рядом с границей называет район, внутри района нажимаются ячейки.
+// полигонами: на canvas полигон ловит нажатие всей площадью и закрыл бы ячейки. Для пальца у линии
+// невидимая полоса; её ширина — от размера ячейки на экране (outlineHitWeight): у границ нажимается ячейка,
+// а на мелком зуме (ячейка меньше 24 px) контур нажатие не ловит вовсе. Кольца в контракте уже замкнуты.
 function drawOutlines(map, renderer) {
   if (!hasDistricts(state.data)) return;
   for (const item of state.data.districts.items) {
     if (item.status === 'missing' || !item.outline?.length) continue;
-    const rings = item.outline.map((ring) => [...ring, ring[0]]);
-    const lines = rings.map((r) => L.polyline(r, { renderer, interactive: false, ...outlineStyle(item, false) }).addTo(map));
-    const hits = rings.map((r) =>
-      L.polyline(r, { renderer, weight: 12, opacity: 0, interactive: true })
-        .on('click', () => selectDistrict(item.id))
-        .addTo(map),
+    const lines = item.outline.map((r) => L.polyline(r, { renderer, interactive: false, ...outlineStyle(item, false) }).addTo(map));
+    const hits = item.outline.map((r) =>
+      L.polyline(r, { renderer, weight: 0, opacity: 0, interactive: true }).on('click', () => selectDistrict(item.id)),
     );
     state.outlines.set(item.id, { lines, hits, item });
+  }
+  if (!state.outlines.size) return;
+  map.on('zoomend', () => updateOutlineHits(map));
+  updateOutlineHits(map);
+}
+
+// Ширина ячейки r8 на экране сейчас: расстояние между противоположными вершинами первой ячейки
+function cellPixels(map) {
+  const first = state.cells.values().next().value;
+  if (!first) return 0;
+  const ring = first.poly.getLatLngs()[0];
+  if (!ring || ring.length < 4) return 0;
+  return map.latLngToContainerPoint(ring[0]).distanceTo(map.latLngToContainerPoint(ring[3]));
+}
+
+function updateOutlineHits(map) {
+  const weight = outlineHitWeight(cellPixels(map));
+  for (const o of state.outlines.values()) {
+    for (const hit of o.hits) {
+      if (!weight) {
+        if (map.hasLayer(hit)) map.removeLayer(hit);
+        continue;
+      }
+      hit.setStyle({ weight });
+      if (!map.hasLayer(hit)) hit.addTo(map).bringToFront();
+    }
   }
 }
 
@@ -181,10 +207,10 @@ function outlineStyle(item, selected) {
 function paintMap() {
   for (const { poly, cell } of state.cells.values()) poly.setStyle(cellStyle(cell));
   state.cells.get(state.selected)?.poly.bringToFront();
-  // контуры районов и их полосы для нажатия — всегда над ячейками
+  // контуры районов и их полосы для нажатия — всегда над ячейками (полосы — только те, что на карте)
   for (const [id, o] of state.outlines) {
     o.lines.forEach((l) => l.setStyle(outlineStyle(o.item, id === state.selectedDistrict)).bringToFront());
-    o.hits.forEach((l) => l.bringToFront());
+    o.hits.forEach((l) => state.map?.hasLayer(l) && l.bringToFront());
   }
 }
 
@@ -209,9 +235,8 @@ function renderCellText() {
   const o = state.outlines.get(state.selectedDistrict);
   if (o) {
     // нажали на контур — название района (и пометка, если граница в OSM устарела)
-    const note = districtNote({ status: o.item.status, boundaryDate: o.item.boundary_date });
-    const name = districtName(state.data, o.item.id, lang);
-    $('gaps-cell').textContent = note ? `${name} — ${say(note)}` : name;
+    const d = districtLabel(state.data, o.item.id, lang);
+    $('gaps-cell').textContent = d.note ? `${d.name} — ${say(d.note)}` : d.name;
     return;
   }
   const item = state.cells.get(state.selected);
@@ -225,7 +250,9 @@ function renderCellText() {
     $('gaps-cell').textContent = cap(text);
     return;
   }
-  const where = districtName(state.data, item.cell.district, lang) || cap(t('gaps.district.unassigned'));
+  // район ячейки; у района со stale-границей — та же пометка, что при нажатии на контур
+  const d = districtLabel(state.data, item.cell.district, lang);
+  const where = !d ? cap(t('gaps.district.unassigned')) : d.note ? `${d.name}, ${say(d.note)}` : d.name;
   $('gaps-cell').textContent = `${where}: ${text}`;
 }
 
@@ -262,10 +289,11 @@ function renderLegend() {
     ),
     el('li', {}, swatch('low'), el('span', { text: t(`gaps.legendLow.${l.unit}`, { min }) })),
     el('li', {}, swatch('none'), el('span', { text: t('gaps.legendNone') })),
-    ...(hasDistricts(state.data)
+    // контуры — в легенде, только если они нарисованы (не все районы missing и карта загрузилась)
+    ...(state.outlines.size
       ? [
           el('li', {}, swatch('outline'), el('span', { text: t('gaps.legendOutline') })),
-          state.data.districts.items.some((d) => d.status === 'stale')
+          [...state.outlines.values()].some((o) => o.item.status === 'stale')
             ? el('li', {}, swatch('outline-stale'), el('span', { text: t('gaps.legendOutlineStale') }))
             : null,
         ]
@@ -297,7 +325,8 @@ function renderTotals() {
       GAP_LAYERS.map((l) => {
         const { total, part } = layerCounts(city, l);
         const cls = gapClass(city, l);
-        const share = typeof cls === 'number' ? `${pct(part, total)} %` : t('gaps.lowShort');
+        const share =
+          typeof cls === 'number' ? `${pct(part, total)} %` : cls === 'low' ? t('gaps.lowShort') : t(`gaps.noneShort.${l.unit}`);
         return el(
           'tr',
           { class: l.id === state.layer ? 'is-current' : null },
@@ -346,7 +375,7 @@ function renderDistricts() {
     ),
   );
   const shareCell = (r) => {
-    const text = typeof r.cls === 'number' ? `${r.pct} %` : r.cls === 'low' ? t('gaps.lowShort') : t('gaps.noneShort');
+    const text = typeof r.cls === 'number' ? `${r.pct} %` : r.cls === 'low' ? t('gaps.lowShort') : t(`gaps.noneShort.${l.unit}`);
     return el('td', { class: 'num' }, el('span', { class: 'gap-swatch', 'data-gap': String(r.cls), 'aria-hidden': 'true' }), ` ${text}`);
   };
   const rows = districtRows(state.data, l, lang, state.sort).map((r) => {
