@@ -678,6 +678,8 @@ def test_city_gaps_ignores_parameters_and_never_logs_them(
     assert with_params.content == plain.content  # one answer for everyone
     for secret in (cell, "51.1283", "71.4305", "тайное слово"):
         assert secret not in with_params.text and secret not in caplog.text
+    for name in ("h3_cell", "lat=", "lon=", "q=", "?"):  # nor the query string itself
+        assert name not in caplog.text
     assert "GET /api/city-gaps -> 200" in caplog.text  # path, code and time only
 
 
