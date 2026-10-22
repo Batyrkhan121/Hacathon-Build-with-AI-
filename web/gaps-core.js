@@ -222,3 +222,35 @@ export function districtLabel(data, id, lang) {
     note: districtNote({ status: it.status, boundaryDate: it.boundary_date }),
   };
 }
+
+// Границы города для первого кадра карты: по контурам районов, если они есть (ok и stale), иначе по вершинам
+// ячеек. cellToBoundary — h3.cellToBoundary (передаётся снаружи: в node h3-js нет). [[юг, запад], [север, восток]]
+// или null, если считать не из чего.
+export function cityBounds(data, cellToBoundary) {
+  let south = Infinity;
+  let west = Infinity;
+  let north = -Infinity;
+  let east = -Infinity;
+  const add = ([lat, lon]) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
+    west = Math.min(west, lon);
+    east = Math.max(east, lon);
+  };
+  const outlines = hasDistricts(data)
+    ? data.districts.items.filter((d) => d.status !== 'missing' && d.outline?.length)
+    : [];
+  if (outlines.length) {
+    for (const d of outlines) for (const ring of d.outline) ring.forEach(add);
+  } else {
+    for (const c of data?.cells || []) {
+      try {
+        cellToBoundary(c.h3_cell).forEach(add);
+      } catch {
+        // битый индекс — пропускаем
+      }
+    }
+  }
+  return south <= north && west <= east ? [[south, west], [north, east]] : null;
+}

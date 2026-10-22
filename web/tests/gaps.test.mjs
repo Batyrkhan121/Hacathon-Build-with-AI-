@@ -9,6 +9,7 @@ import {
   GAP_LAYERS,
   GAP_MIN,
   attributionUrl,
+  cityBounds,
   districtLabel,
   districtListChecked,
   districtNote,
@@ -344,4 +345,40 @@ test('ревью 9.1: «нет объектов» — по слою; kk-стро
   setLang('kk');
   assert.equal(t('gaps.district.unassigned'), 'аудандар шекарасынан тыс');
   assert.equal(t('gaps.districtsSource', { date: '18.10.2026' }), 'Аудан шекаралары — OpenStreetMap-тің 18.10.2026 күнгі деректері.');
+});
+
+test('9.2: первый кадр — по контурам районов, если есть, иначе по ячейкам; пусто — null', () => {
+  // мок интегратора: районы есть — границы по их контурам (missing без контура не участвует)
+  const fromOutlines = cityBounds(mock, () => {
+    throw new Error('ячейки не нужны, если есть контуры');
+  });
+  const pts = mock.districts.items.filter((d) => d.outline?.length).flatMap((d) => d.outline.flat());
+  assert.deepEqual(fromOutlines, [
+    [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1]))],
+    [Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))],
+  ]);
+  // без блока districts — по вершинам ячеек (h3 подменён: вершины вокруг «центра» ячейки)
+  const fake = { 'a': [[51.1, 71.4], [51.2, 71.5]], 'b': [[51.0, 71.3], [51.05, 71.35]] };
+  const data = { cells: [{ h3_cell: 'a' }, { h3_cell: 'b' }, { h3_cell: 'broken' }] };
+  const viaCells = cityBounds(data, (id) => {
+    if (!fake[id]) throw new Error('bad cell');
+    return fake[id];
+  });
+  assert.deepEqual(viaCells, [[51.0, 71.3], [51.2, 71.5]]);
+  // все районы missing — тоже по ячейкам
+  const allMissing = { ...data, districts: { items: [{ id: 'x', status: 'missing', outline: [] }] } };
+  assert.deepEqual(cityBounds(allMissing, (id) => fake[id] || []), [[51.0, 71.3], [51.2, 71.5]]);
+  assert.equal(cityBounds({ cells: [] }, () => []), null);
+});
+
+test('9.2: 429 от /api/recommend — своя строка на ru/kk/en', () => {
+  const want = {
+    ru: 'Слишком много запросов, попробуйте через минуту.',
+    kk: 'Сұраулар тым көп, бір минуттан кейін қайталап көріңіз.',
+    en: 'Too many requests, please try again in a minute.',
+  };
+  for (const [lang, text] of Object.entries(want)) {
+    setLang(lang);
+    assert.equal(t('error.rateLimited'), text);
+  }
 });
