@@ -298,19 +298,29 @@ def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] | None = (),
         lines += ["", "Районов нет: `data/processed/districts.json` нет "
                   "(`python -m pipeline.city_gaps --fetch-districts`) — только ячейки."]
         return lines
-    file_by_id = {e["id"]: e for e in (districts_file or {}).get("districts", [])}
+    file_by_id = {e["id"]: e for e in (districts_file or {}).get("districts", [])
+                  if isinstance(e, Mapping) and "id" in e}
     changes = (districts_file or {}).get("composition_changes") or []
     checked = (f"сверен с официальным списком акимата {block['official_list_url']} "
                f"({block['official_list_checked']})" if block.get("official_list_url")
                else "**не сверен** с официальным списком")
 
+    def why(d: Mapping) -> str:
+        """The reason from districts.json; an incomplete file (or one that no longer gives the
+        map's status) gives no reason, not a crash or a wrong one."""
+        try:
+            status, reason = district_status(file_by_id[d["id"]], changes)
+        except (KeyError, TypeError, ValueError):
+            return ""
+        return reason if status == d["status"] else ""
+
     def note(d: Mapping) -> str:
         if d["status"] == "ok":
             return "ok"
         if d["status"] == "missing":
-            return "границы нет в OSM"
-        why = district_status(file_by_id[d["id"]], changes)[1] if d["id"] in file_by_id else ""
-        return f"граница в OSM устарела ({d['boundary_date']})" + (f": {why}" if why else "")
+            return why(d) or "границы нет в OSM"
+        reason = why(d)
+        return f"граница в OSM устарела ({d['boundary_date']})" + (f": {reason}" if reason else "")
 
     adds_up = districts_add_up(gaps)
     lines += [
@@ -332,8 +342,9 @@ def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] | None = (),
         + ("да." if adds_up else "**нет**."),
     ]
     aside = (districts_file or {}).get("osm_not_in_list") or []
-    lines += [f"- В OSM есть район вне официального списка: {a['name'].get('name')} "
-              f"(relation {a['osm_relation']}, {a['why']}) — в карту не вошёл." for a in aside]
+    lines += [f"- Граница из OSM не вошла в карту: {(a.get('name') or {}).get('name', '?')} "
+              f"(relation {a.get('osm_relation', '?')}) — {a.get('why', 'причина не записана')}."
+              for a in aside if isinstance(a, Mapping)]
     return lines
 
 
