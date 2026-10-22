@@ -25,7 +25,7 @@ import re
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,7 @@ from pydantic import ValidationError
 
 from app.schemas import (
     GAP_H3_RES,
+    GAP_MAX_OUTLINE_POINTS,
     ODBL_URL,
     OSM_ATTRIBUTION,
     OSM_COPYRIGHT_URL,
@@ -92,6 +93,105 @@ def check_shape(raw: Any) -> tuple[CityGaps | None, list[Check]]:
     checks.append(Check("city_sum", "итоги city — сумма по ячейкам", not off,
                         f"не сходится: {off}" if off else "все 9 счётчиков"))
     return gaps, checks
+
+
+# ------------------------------------------------------------ districts (1.4.1)
+
+
+def _sum_counts(items: list[GapCounts]) -> dict[str, int]:
+    return {name: sum(getattr(c, name) for c in items) for name in GapCounts.model_fields}
+
+
+def district_sums(gaps: CityGaps) -> tuple[dict[str, int], int]:
+    """Districts plus «вне районов»: the nine counters and the number of cells."""
+    blk = gaps.districts
+    assert blk is not None
+    parts = [d.counts for d in blk.items if d.counts is not None] + [blk.unassigned]
+    return _sum_counts(parts), sum(d.cell_count for d in blk.items) + blk.unassigned_cells
+
+
+def _in_ring(lat: float, lon: float, ring: list[Any]) -> bool:
+    """Even-odd ray casting over one closed ring of (lat, lon)."""
+    inside = False
+    for (a_lat, a_lon), (b_lat, b_lon) in zip(ring, ring[1:], strict=False):
+        if (a_lat > lat) != (b_lat > lat):
+            cross = a_lon + (lat - a_lat) * (b_lon - a_lon) / (b_lat - a_lat)
+            if lon < cross:
+                inside = not inside
+    return inside
+
+
+def _in_outline(lat: float, lon: float, outline: list[Any]) -> bool:
+    return sum(_in_ring(lat, lon, ring) for ring in outline) % 2 == 1
+
+
+def check_districts(gaps: CityGaps) -> list[Check]:
+    """1.4.1: statuses, outlines, the official list, sums (districts + unassigned = city), and
+    every cell where its centre is (an independent even-odd test, not the pipeline's)."""
+    blk = gaps.districts
+    if blk is None:
+        return [Check("districts", "блок районов есть (1.4.1)", False,
+                      "файл 1.4.0 без районов (районы — DATA T151)")]
+    checks: list[Check] = []
+    city = gaps.city.model_dump()
+    sums, cells = district_sums(gaps)
+    off = [k for k in city if sums[k] != city[k]]
+    checks.append(Check("districts_sum", "районы + «вне районов» = город (9 счётчиков)", not off,
+                        f"не сходится: {off}" if off else f"районов {len(blk.items)}"))
+    checks.append(Check("districts_cells", "ячейки районов + «вне районов» = все ячейки",
+                        cells == len(gaps.cells), f"{cells} из {len(gaps.cells)}"))
+    bad_status: list[str] = []
+    for d in blk.items:
+        has = (d.osm_relation is not None, d.boundary_date is not None,
+               d.counts is not None, bool(d.outline))
+        if d.status == "missing" and (any(has) or d.cell_count):
+            bad_status.append(f"{d.id}: missing с числами или контуром")
+        if d.status != "missing" and not all(has):
+            bad_status.append(f"{d.id}: {d.status} без границы, даты, чисел или контура")
+    by_status = {s: sum(d.status == s for d in blk.items) for s in ("ok", "stale", "missing")}
+    checks.append(Check("districts_status", "у missing нет чисел и контура, у ok/stale есть",
+                        not bad_status, "; ".join(bad_status) or
+                        f"ok {by_status['ok']}, stale {by_status['stale']}, "
+                        f"missing {by_status['missing']}"))
+    open_rings = [d.id for d in blk.items for ring in d.outline
+                  if len(ring) < 4 or list(ring[0]) != list(ring[-1])]
+    too_many = [d.id for d in blk.items
+                if sum(len(r) for r in d.outline) > GAP_MAX_OUTLINE_POINTS]
+    checks.append(Check("districts_outline", "контуры замкнуты, точек не больше предела",
+                        not open_rings and not too_many,
+                        f"незамкнутые: {open_rings}; сверх предела: {too_many}"
+                        if open_rings or too_many else
+                        f"точек всего {sum(len(r) for d in blk.items for r in d.outline)}"))
+    listed = blk.official_list_url, blk.official_list_checked
+    list_ok = (listed == (None, None)) or (
+        bool(listed[0]) and str(listed[0]).startswith("https://") and listed[1] is not None)
+    checks.append(Check("districts_official", "официальный список: https и дата или оба пусто",
+                        list_ok, "список не сверен (оба пусто)" if listed == (None, None)
+                        else f"{listed[0]} от {listed[1]}"))
+    import h3
+
+    ids = {d.id: d for d in blk.items}
+    wrong: list[str] = []
+    for c in gaps.cells:
+        lat, lon = h3.cell_to_latlng(c.h3_cell)
+        if c.district is not None:
+            d = ids.get(c.district)
+            if d is None or d.status == "missing" or not _in_outline(lat, lon, d.outline):
+                wrong.append(f"{c.h3_cell}→{c.district}")
+        elif any(d.outline and _in_outline(lat, lon, d.outline) for d in blk.items):
+            wrong.append(f"{c.h3_cell}→вне районов")
+    per = {d.id: [c for c in gaps.cells if c.district == d.id] for d in blk.items}
+    mism = [d.id for d in blk.items if d.status != "missing" and (
+        len(per[d.id]) != d.cell_count
+        or _sum_counts(per[d.id]) != (d.counts.model_dump() if d.counts else None))]
+    free = [c for c in gaps.cells if c.district is None]
+    if len(free) != blk.unassigned_cells or _sum_counts(free) != blk.unassigned.model_dump():
+        mism.append("вне районов")
+    checks.append(Check("districts_cells_inside", "ячейка — в районе своего центра, числа "
+                        "района — сумма его ячеек", not wrong and not mism,
+                        f"не там: {wrong[:3]}; не сходятся: {mism}" if wrong or mism
+                        else f"{len(gaps.cells)} ячеек"))
+    return checks
 
 
 # --------------------------------------------------------- reconciliation (DATA)
@@ -393,6 +493,8 @@ def run_checks(get: GetFn, log_lines: Callable[[], list[str]] | None, reconcile:
                                f"HTTP {status}: файла карты нет или он не прошёл схему")], notes
     gaps, shape = check_shape(_json(text))
     checks += shape
+    if gaps is not None:
+        checks += check_districts(gaps)
     if gaps is not None and reconcile:
         try:
             checks += check_reconcile(gaps, local_totals(processed))
@@ -409,14 +511,13 @@ def run_checks(get: GetFn, log_lines: Callable[[], list[str]] | None, reconcile:
 
 def run_inprocess(map_path: Path | None = None) -> tuple[list[Check], list[str]]:
     """The app with its map file, and once more with no map file (a path that does not exist)."""
-    get, logs, close = inprocess_get(map_path)
-    with tempfile.TemporaryDirectory() as tmp:
+    with ExitStack() as stack:
+        get, logs, close = inprocess_get(map_path)
+        stack.callback(close)
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
         get_without, _, close_without = inprocess_get(Path(tmp) / "no_city_gaps.json")
-        try:
-            return run_checks(get, logs, reconcile=True, get_without_file=get_without)
-        finally:
-            close_without()
-            close()
+        stack.callback(close_without)
+        return run_checks(get, logs, reconcile=True, get_without_file=get_without)
 
 
 def summary(checks: list[Check]) -> str:

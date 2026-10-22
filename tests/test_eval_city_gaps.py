@@ -220,14 +220,124 @@ def test_cli_file_only_writes_report(tmp_path: Path) -> None:
 
 
 def test_inprocess_app_does_not_warm_up_the_weather(monkeypatch, tmp_path: Path) -> None:
-    """In-process eval must not reach Open-Meteo: the lifespan warm-up is switched off."""
-    import app.weather
+    """In-process eval must not reach Open-Meteo: the lifespan warm-up thread is never made.
+    Threads are recorded when they are created (synchronously), so there is no race with a
+    background thread that may or may not have run yet."""
+    import threading
 
-    called: list[int] = []
-    monkeypatch.setattr(app.weather, "warm_up", lambda points: called.append(1) or 0)
+    import app.api
+
+    made: list[str] = []
+
+    class SpyThread(threading.Thread):
+        def __init__(self, *args, **kwargs) -> None:
+            made.append(kwargs.get("name") or "")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(app.api.threading, "Thread", SpyThread)
     get, logs, close = cg.inprocess_get(tmp_path / "no_city_gaps.json")
     try:
         status, _, _ = get({}, path=cg.HEALTH_PATH)
     finally:
         close()
-    assert status in (200, 503) and called == []
+    assert status in (200, 503)
+    assert "weather-warm-up" not in made
+
+
+def test_run_inprocess_closes_the_first_client_when_the_second_fails(monkeypatch) -> None:
+    closed: list[str] = []
+    calls: list[int] = []
+
+    def fake(map_path=None):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("second app failed to start")
+        return (lambda params, path=cg.CITY_GAPS_PATH: (200, "{}", {})), list, \
+            (lambda: closed.append("first"))
+
+    monkeypatch.setattr(cg, "inprocess_get", fake)
+    with pytest.raises(RuntimeError):
+        cg.run_inprocess()
+    assert closed == ["first"]
+
+
+# ------------------------------------------------------------ districts (1.4.1)
+
+REAL = cg.ROOT / "data" / "processed" / "city_gaps.json"
+
+
+def _sums_hold(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None and gaps.districts is not None
+    sums, cells = cg.district_sums(gaps)
+    assert sums == gaps.city.model_dump()  # all nine counters
+    assert cells == len(gaps.cells)
+
+
+def test_mock_districts_add_up_to_the_city(raw: dict) -> None:
+    _sums_hold(raw)
+
+
+def test_real_districts_add_up_to_the_city() -> None:
+    raw = json.loads(REAL.read_text(encoding="utf-8"))
+    if "districts" not in raw:
+        pytest.skip("city_gaps.json без районов (файл 1.4.0): районы — DATA T151")
+    _sums_hold(raw)
+
+
+def test_mock_district_checks_pass(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    checks = {c.id: c for c in cg.check_districts(gaps)}
+    assert all(c.passed for c in checks.values()), [c for c in checks.values() if not c.passed]
+    assert checks["districts_status"].detail == "ok 1, stale 1, missing 1"
+
+
+def test_district_checks_catch_errors(raw: dict) -> None:
+    import copy
+
+    from app.schemas import CityGaps
+
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    # model_construct: what the schema would refuse, to see that eval refuses it on its own
+    bad = copy.deepcopy(gaps)
+    items = bad.districts.items
+    missing = next(d for d in items if d.status == "missing")
+    ok = next(d for d in items if d.status == "ok")
+    object.__setattr__(missing, "counts", ok.counts)
+    ring = list(ok.outline[0][:-1])
+    object.__setattr__(ok, "outline", [ring])
+    object.__setattr__(bad.districts, "unassigned_cells", bad.districts.unassigned_cells + 1)
+    object.__setattr__(bad.districts, "official_list_checked", None)
+    failed = {c.id for c in cg.check_districts(bad) if not c.passed}
+    assert {"districts_status", "districts_outline", "districts_cells", "districts_official",
+            "districts_cells_inside"} <= failed
+    assert CityGaps  # the schema is the first line; eval is the second
+
+
+def test_cell_in_the_wrong_district_is_caught(raw: dict) -> None:
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    inside = next(c for c in gaps.cells if c.district is not None)
+    object.__setattr__(inside, "district", None)
+    checks = {c.id: c for c in cg.check_districts(gaps)}
+    assert not checks["districts_cells_inside"].passed
+
+
+def test_file_without_districts_is_reported(raw: dict) -> None:
+    raw.pop("districts")
+    for cell in raw["cells"]:
+        cell.pop("district", None)
+    gaps, _ = cg.check_shape(raw)
+    assert gaps is not None
+    [check] = cg.check_districts(gaps)
+    assert not check.passed and "T151" in check.detail
+
+
+def test_even_odd_with_a_hole() -> None:
+    outer = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+    hole = [[4, 4], [4, 6], [6, 6], [6, 4], [4, 4]]
+    assert cg._in_outline(2, 2, [outer, hole])
+    assert not cg._in_outline(5, 5, [outer, hole])
+    assert not cg._in_outline(12, 5, [outer])
