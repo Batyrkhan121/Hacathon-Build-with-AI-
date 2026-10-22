@@ -706,3 +706,28 @@ def test_city_gaps_is_documented_with_the_contract_model(client: TestClient) -> 
     assert op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/CityGaps")
     assert "503" in op["responses"] and not op.get("parameters")
+
+
+@pytest.mark.parametrize(("good", "state"), [(True, "ready"), (False, "missing")])
+def test_city_gaps_in_health_without_a_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                             good: bool, state: str) -> None:
+    """T152: the 503 branch of /api/health (no store) also says city_gaps."""
+    path = tmp_path / "city_gaps.json"
+    if good:
+        path.write_bytes(GAPS_MOCK.read_bytes())
+    monkeypatch.setenv("QADAM_CITY_GAPS_PATH", str(path))
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    def broken() -> Deps:
+        raise FileNotFoundError("data/processed/poi.jsonl")
+
+    monkeypatch.setattr(api, "build_default_deps", broken)
+    monkeypatch.setattr(api.weather, "warm_up", lambda points: 0)
+    with TestClient(api.create_app()) as c:
+        h = c.get("/api/health")
+        gaps = c.get("/api/city-gaps")
+    assert h.status_code == 503 and h.json()["status"] == "unavailable"
+    assert h.json()["city_gaps"] == state
+    assert gaps.status_code == (200 if good else 503)  # the map does not need the store
