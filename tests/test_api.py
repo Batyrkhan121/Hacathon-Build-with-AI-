@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Iterator
+from datetime import datetime as _dt
 from pathlib import Path
 
 import h3
@@ -14,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import api
+from app.hours import ASTANA_TZ
 from app.llm import LLMUnavailable
 from app.pipeline import Deps
 from app.schemas import POI, Answer, Landmark, RecommendRequest
@@ -731,3 +733,156 @@ def test_city_gaps_in_health_without_a_store(monkeypatch: pytest.MonkeyPatch, tm
     assert h.status_code == 503 and h.json()["status"] == "unavailable"
     assert h.json()["city_gaps"] == state
     assert gaps.status_code == (200 if good else 503)  # the map does not need the store
+
+
+# ------------------------------- T161: the public demo — per-IP rate limit, the Claude budget
+
+
+
+
+def _scope(host: str = "198.51.100.9", xff: list[str] | None = None) -> dict:
+    headers = [(b"x-forwarded-for", v.encode()) for v in (xff or [])]
+    return {"type": "http", "client": (host, 50000), "headers": headers}
+
+
+class _Clock:
+    def __init__(self, now: _dt) -> None:
+        self.now = now
+
+    def __call__(self) -> _dt:
+        return self.now
+
+    def tick(self, seconds: float) -> None:
+        from datetime import timedelta
+
+        self.now = self.now + timedelta(seconds=seconds)
+
+
+def test_minute_window_counts_and_resets() -> None:
+    clock = _Clock(_dt(2026, 10, 22, 12, 0, 0, tzinfo=ASTANA_TZ))
+    rl = api.RateLimiter(per_min=3, per_day=0, clock=clock)
+    assert [rl.hit(_scope()) for _ in range(3)] == [None, None, None]
+    clock.tick(20)
+    assert rl.hit(_scope()) == 40  # Retry-After: the rest of the minute
+    assert rl.hit(_scope("203.0.113.5")) is None  # another address has its own count
+    clock.tick(40)
+    assert rl.hit(_scope()) is None  # a new minute
+
+
+def test_day_window_resets_at_astana_midnight() -> None:
+    clock = _Clock(_dt(2026, 10, 22, 23, 59, 0, tzinfo=ASTANA_TZ))
+    rl = api.RateLimiter(per_min=0, per_day=2, clock=clock)
+    assert rl.hit(_scope()) is None and rl.hit(_scope()) is None
+    assert rl.hit(_scope()) == 60  # until 00:00 in Astana
+    clock.tick(61)  # 00:00:01 on the 23rd (18:59 UTC: the day is Astana's)
+    assert rl.hit(_scope()) is None
+    later = api.RateLimiter(per_min=0, per_day=1, clock=_Clock(
+        _dt(2026, 10, 22, 10, 0, tzinfo=ASTANA_TZ)))
+    later.hit(_scope())
+    assert later.hit(_scope()) == 14 * 3600  # 10:00 -> midnight
+
+
+def test_the_day_limit_wins_over_the_minute_for_retry_after() -> None:
+    clock = _Clock(_dt(2026, 10, 22, 23, 0, 0, tzinfo=ASTANA_TZ))
+    rl = api.RateLimiter(per_min=1, per_day=1, clock=clock)
+    rl.hit(_scope())
+    assert rl.hit(_scope()) == 3600
+
+
+@pytest.mark.parametrize(("hops", "host", "xff", "who"), [
+    (0, "198.51.100.9", ["203.0.113.7"], "198.51.100.9"),  # no trusted proxy: header ignored
+    (1, "10.0.0.2", ["203.0.113.7"], "203.0.113.7"),  # the proxy added the client
+    (1, "10.0.0.2", ["1.2.3.4, 203.0.113.7"], "203.0.113.7"),  # the client's own entry: no use
+    (1, "10.0.0.2", ["1.2.3.4", "203.0.113.7"], "203.0.113.7"),  # two header lines
+    (1, "10.0.0.2", [], "10.0.0.2"),  # no header at all: the connection's address
+    (2, "10.0.0.3", ["1.2.3.4, 203.0.113.7, 10.0.0.2"], "203.0.113.7"),
+])
+def test_the_client_ip_with_and_without_trusted_proxies(hops: int, host: str, xff: list[str],
+                                                        who: str) -> None:
+    assert api.RateLimiter(1, 0, hops).client_ip(_scope(host, xff)) == who
+
+
+def test_a_spoofed_header_does_not_dodge_the_limit() -> None:
+    rl = api.RateLimiter(per_min=1, per_day=0, trusted_hops=1)
+    assert rl.hit(_scope("10.0.0.2", ["203.0.113.7"])) is None
+    assert rl.hit(_scope("10.0.0.2", ["9.9.9.9, 203.0.113.7"])) is not None  # still limited
+
+
+def test_counters_are_salted_hashes_and_bounded() -> None:
+    a, b = api.RateLimiter(5, 0), api.RateLimiter(5, 0)
+    assert a._key("203.0.113.7") != b._key("203.0.113.7")  # a random salt per process
+    a.hit(_scope("203.0.113.7"))
+    assert not any("203.0.113.7" in k for k in a._clients)
+    small = api.RateLimiter(5, 0, max_clients=3)
+    for i in range(5):
+        small.hit(_scope(f"192.0.2.{i}"))
+    assert len(small) == 3  # the least recently seen went first
+    assert small._key("192.0.2.4") in small._clients
+    assert small._key("192.0.2.0") not in small._clients
+
+
+def _limited_client(deps: Deps, monkeypatch: pytest.MonkeyPatch, **limits: int) -> TestClient:
+    import dataclasses as dc
+
+    install_core_fakes(monkeypatch)
+    settings = dc.replace(deps.settings, **limits)
+    return TestClient(api.create_app(Deps(store=deps.store, llm=deps.llm, settings=settings)))
+
+
+def test_429_with_retry_after_and_no_echo(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                          caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO), _limited_client(
+            deps, monkeypatch, rate_per_min=2, rate_per_day=0, trusted_proxy_hops=1) as c:
+        hdr = {"X-Forwarded-For": "203.0.113.7"}
+        got = [c.post("/api/recommend", json=body(query="тайный запрос"), headers=hdr)
+               for _ in range(3)]
+        health = c.get("/api/health")
+        other = c.post("/api/recommend", json=body(), headers={"X-Forwarded-For": "192.0.2.1"})
+    assert [r.status_code for r in got] == [200, 200, 429]
+    assert got[2].json() == {"detail": "too many requests"}
+    assert 1 <= int(got[2].headers["retry-after"]) <= 60
+    assert "тайный" not in got[2].text
+    assert health.status_code == 200 and other.status_code == 200  # GET and others: not limited
+    assert "POST /api/recommend -> 429" in caplog.text
+    for secret in ("203.0.113.7", "192.0.2.1", "testclient"):
+        assert secret not in caplog.text  # no address in the log
+
+
+def test_no_limit_by_default(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    with _limited_client(deps, monkeypatch, rate_per_min=0, rate_per_day=0) as c:
+        assert all(c.post("/api/recommend", json=body()).status_code == 200 for _ in range(5))
+
+
+@pytest.mark.parametrize(("over", "state"), [
+    ({}, "none"),
+    ({"llm_daily_budget_usd": 1.0, "llm_price_in_per_mtok": 3.0,
+      "llm_price_out_per_mtok": 15.0}, "ok"),
+    ({"llm_daily_budget_usd": 1.0, "llm_price_in_per_mtok": None}, "misconfigured"),
+])
+def test_health_says_llm_budget_without_sums(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                             over: dict, state: str) -> None:
+    import dataclasses as dc
+
+    from app.llm import LLMClient
+
+    settings = dc.replace(deps.settings, **over)
+    install_core_fakes(monkeypatch)
+    with TestClient(api.create_app(Deps(store=deps.store, llm=LLMClient(settings),
+                                        settings=settings))) as c:
+        h = c.get("/api/health").json()
+    assert h["llm_budget"] == state
+    assert not any(isinstance(v, float) for v in h.values())  # no dollar sums anywhere
+
+
+def test_health_says_reached_when_the_budget_is_spent(deps: Deps,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses as dc
+
+    from app.llm import LLMClient
+
+    settings = dc.replace(deps.settings, llm_daily_budget_usd=0.0, llm_price_in_per_mtok=3.0,
+                          llm_price_out_per_mtok=15.0)  # a zero budget: spent from the start
+    install_core_fakes(monkeypatch)
+    with TestClient(api.create_app(Deps(store=deps.store, llm=LLMClient(settings),
+                                        settings=settings))) as c:
+        assert c.get("/api/health").json()["llm_budget"] == "reached"

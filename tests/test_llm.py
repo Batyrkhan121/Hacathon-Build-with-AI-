@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from datetime import datetime as _dt
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 
 from app import llm as llm_mod
 from app.config import Settings, get_settings
+from app.hours import ASTANA_TZ
 from app.llm import FALLBACK_BETA, LLMClient, LLMUnavailable, user_data_block
 
 
@@ -758,3 +760,103 @@ def test_check_llm_raw_gemini_is_skipped_under_openrouter(tmp_path: Path, monkey
         tmp_path, embed_provider="openrouter", openrouter_api_key=OR_KEY))
     with pytest.raises(mod.Skip, match="check_client_embed"):
         mod.check_embed()
+
+
+# ------------------------------------------- T161: the daily Claude budget (by `usage`)
+
+PRICES = {"llm_price_in_per_mtok": 3.0, "llm_price_out_per_mtok": 15.0}
+
+
+def paid(obj: BaseModel, *, inp: int = 1000, out: int = 500, write: int = 0, read: int = 0,
+         model: str = "claude-sonnet-5-5", stop: str = "end_turn") -> Any:
+    usage = SimpleNamespace(input_tokens=inp, output_tokens=out,
+                            cache_creation_input_tokens=write, cache_read_input_tokens=read)
+    return SimpleNamespace(stop_reason=stop, parsed_output=obj, model=model, content=[],
+                           usage=usage)
+
+
+def at(day: int, hh: int, mm: int = 0) -> _dt:
+    return _dt(2026, 10, day, hh, mm, tzinfo=ASTANA_TZ)
+
+
+def test_usage_cost_counts_cache_writes_and_reads_at_the_input_price() -> None:
+    usage = SimpleNamespace(input_tokens=1000, cache_creation_input_tokens=200,
+                            cache_read_input_tokens=300, output_tokens=500)
+    assert llm_mod.usage_cost_usd(usage, 3.0, 15.0) == pytest.approx(
+        (1500 * 3.0 + 500 * 15.0) / 1e6)
+    assert llm_mod.usage_cost_usd(None, 3.0, 15.0) == 0.0
+    assert llm_mod.usage_cost_usd(SimpleNamespace(input_tokens=None), 3.0, 15.0) == 0.0
+
+
+def test_budget_spent_in_the_middle_of_the_day_stops_the_calls(tmp_path: Path) -> None:
+    # one answer: 1000 in + 500 out = 0.003 + 0.0075 = 0.0105 $
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [
+        paid(Capital(city="Астана")), paid(Capital(city="Алматы"))]},
+        llm_daily_budget_usd=0.02, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    assert llm.budget_state() == "ok"
+    call(llm, "один")
+    assert llm.budget_state() == "ok"  # 0.0105 < 0.02
+    call(llm, "два")
+    assert llm.budget_state() == "reached"  # 0.021 >= 0.02
+    with pytest.raises(LLMUnavailable):
+        call(llm, "три")
+    assert llm.last_error == "budget"
+    assert len(fake.calls) == 2  # no third call was made
+
+
+def test_the_fallback_model_is_not_called_once_the_budget_is_spent(tmp_path: Path) -> None:
+    """A refused answer still costs: the fallback model is checked before its call too."""
+    llm, fake = make_client(tmp_path, {
+        "claude-sonnet-5-5": [paid(Capital(city="x"), stop="refusal", inp=5000, out=2000)],
+        "claude-haiku-5-5": [paid(Capital(city="Астана"))]},
+        llm_daily_budget_usd=0.01, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "budget"
+    assert [c["model"] for c in fake.calls] == ["claude-sonnet-5-5"]
+
+
+def test_the_budget_starts_again_at_astana_midnight(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [
+        paid(Capital(city="a")), paid(Capital(city="b"))]},
+        llm_daily_budget_usd=0.01, **PRICES)
+    clock = {"now": at(22, 23, 59)}
+    llm._clock = lambda: clock["now"]
+    call(llm, "поздно")  # 0.0105 >= 0.01: spent for the 22nd
+    assert llm.budget_state() == "reached"
+    with pytest.raises(LLMUnavailable):
+        call(llm, "ещё")
+    clock["now"] = at(23, 0, 1)  # a new Astana day
+    assert llm.budget_state() == "ok"
+    assert call(llm, "утром").city == "b"
+    # 18:59 UTC on the 22nd is 23:59 in Astana: the day is Astana's, not UTC's
+    assert at(22, 23, 59).astimezone(llm_mod.UTC).hour == 18
+
+
+def test_a_budget_without_prices_never_calls_claude(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="a"))]},
+                            llm_daily_budget_usd=1.0, llm_price_in_per_mtok=3.0,
+                            llm_price_out_per_mtok=None)
+    assert llm.budget_state() == "misconfigured"
+    with pytest.raises(LLMUnavailable):
+        call(llm)
+    assert llm.last_error == "budget_misconfigured" and fake.calls == []
+
+
+def test_no_budget_means_no_cap_here(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="a"), inp=10**7)]})
+    assert llm.budget_state() == "none"
+    call(llm)  # 30 $ by the prices above, but no budget is set: the Console limit is the cap
+    assert llm.budget_state() == "none" and len(fake.calls) == 1
+
+
+def test_a_cached_answer_is_served_even_when_the_budget_is_spent(tmp_path: Path) -> None:
+    llm, fake = make_client(tmp_path, {"claude-sonnet-5-5": [paid(Capital(city="Астана"))]},
+                            llm_daily_budget_usd=0.005, **PRICES)
+    llm._clock = lambda: at(22, 12)
+    call(llm)  # spends 0.0105 >= 0.005
+    assert llm.budget_state() == "reached"
+    assert call(llm).city == "Астана" and llm.last_model.endswith("(cache)")  # costs nothing
+    assert len(fake.calls) == 1
