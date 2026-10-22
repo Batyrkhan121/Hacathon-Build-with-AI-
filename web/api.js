@@ -108,6 +108,7 @@ function looksLikeAnswer(a) {
 async function mockRecommend(body, signal) {
   await sleep(MOCK === 'slow' ? 3000 : 650, signal);
   if (MOCK === 'error' && body.use_llm) throw new ApiError('mock');
+  if (MOCK === '429') throw new ApiError('rate_limited', { status: 429 }); // ?mock=429 — экран лимита
   // ?mock=w8 — волна 8 (контракт 1.3.0): мороз, профиль маршрута, событие, тёплые остановки
   const file = MOCK === 'route' ? 'mock/answer_route.json' : MOCK === 'w8' ? 'mock/answer_w8.json' : 'mock/answer_sample.json';
   const answer = await getJson(file, signal);
@@ -140,6 +141,8 @@ export async function recommend(body, outerSignal) {
       if (res.status === 413) throw new ApiError('too_large', { status: 413 });
       // 503: сервер жив, но данные ещё не загружены.
       if (res.status === 503) throw new ApiError('unavailable', { status: 503 });
+      // 429: лимит запросов с одного адреса (публичное демо, ARCHITECTURE §5) — подождать минуту
+      if (res.status === 429) throw new ApiError('rate_limited', { status: 429 });
       if (!res.ok) throw new ApiError('server', { status: res.status });
       answer = await res.json().catch(() => {
         throw new ApiError('format');
