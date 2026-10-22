@@ -592,3 +592,115 @@ def test_a_weather_warm_up_that_cannot_start_never_stops_the_server(
     monkeypatch.setattr(api, "start_weather_warm_up", no_thread)
     with TestClient(api.create_app()) as c:
         assert c.get("/api/health").json()["poi_count"] == 14  # rule 5: the demo still runs
+
+
+# ------------------------------------- T142: GET /api/city-gaps (contract 1.4.0, wave 9)
+
+GAPS_MOCK = Path(__file__).resolve().parent.parent / "web" / "mock" / "city_gaps.json"
+
+
+def _gaps_client(deps: Deps, monkeypatch: pytest.MonkeyPatch, path: Path) -> TestClient:
+    """An app whose settings take QADAM_CITY_GAPS_PATH from the environment."""
+    monkeypatch.setenv("QADAM_CITY_GAPS_PATH", str(path))
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    settings = make_settings(path.parent)
+    assert settings.city_gaps_path == path
+    install_core_fakes(monkeypatch)
+    return TestClient(api.create_app(Deps(store=deps.store, llm=deps.llm, settings=settings)))
+
+
+def test_city_gaps_serves_its_own_file_as_is(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                             tmp_path: Path) -> None:
+    path = tmp_path / "gaps" / "city_gaps.json"
+    path.parent.mkdir()
+    path.write_bytes(GAPS_MOCK.read_bytes())
+    with _gaps_client(deps, monkeypatch, path) as c:
+        r = c.get("/api/city-gaps")
+        health = c.get("/api/health").json()
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "public, max-age=3600"
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.json() == json.loads(GAPS_MOCK.read_text(encoding="utf-8"))  # the file, as is
+    assert health["city_gaps"] == "ready"
+
+
+@pytest.mark.parametrize("content", [None, b"{broken", b'{"format_version": 1}'],
+                         ids=["no-file", "bad-json", "bad-schema"])
+def test_city_gaps_without_a_good_file_is_503_and_the_rest_works(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    caplog: pytest.LogCaptureFixture, content: bytes | None
+) -> None:
+    path = tmp_path / "gaps" / "city_gaps.json"
+    path.parent.mkdir()
+    if content is not None:
+        path.write_bytes(content)
+    with caplog.at_level(logging.INFO), _gaps_client(deps, monkeypatch, path) as c:
+        r = c.get("/api/city-gaps")
+        health = c.get("/api/health")
+        rec = c.post("/api/recommend", json=body())
+        lms = c.get("/api/landmarks")
+    assert r.status_code == 503 and r.json() == {"detail": "city gaps unavailable"}
+    assert "traceback" not in r.text.lower() and str(tmp_path) not in r.text
+    assert health.status_code == 200 and health.json()["city_gaps"] == "missing"
+    assert rec.status_code == 200 and lms.status_code == 200  # the rest of the API works
+    assert not any(record.exc_info for record in caplog.records)  # no traceback in the log
+
+
+def test_city_gaps_does_not_change_the_health_status(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                                     tmp_path: Path) -> None:
+    good, bad = tmp_path / "good" / "city_gaps.json", tmp_path / "bad" / "city_gaps.json"
+    good.parent.mkdir()
+    bad.parent.mkdir()
+    good.write_bytes(GAPS_MOCK.read_bytes())
+    with _gaps_client(deps, monkeypatch, good) as c:
+        ready = c.get("/api/health").json()
+    with _gaps_client(deps, monkeypatch, bad) as c:
+        missing = c.get("/api/health").json()
+    assert (ready["city_gaps"], missing["city_gaps"]) == ("ready", "missing")
+    assert ready["status"] == missing["status"]
+
+
+def test_city_gaps_ignores_parameters_and_never_logs_them(
+    deps: Deps, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "gaps" / "city_gaps.json"
+    path.parent.mkdir()
+    path.write_bytes(GAPS_MOCK.read_bytes())
+    cell = h3.latlng_to_cell(51.1283, 71.4305, 10)
+    params = {"h3_cell": cell, "lat": "51.1283", "lon": "71.4305", "q": "тайное слово"}
+    with caplog.at_level(logging.DEBUG), _gaps_client(deps, monkeypatch, path) as c:
+        plain = c.get("/api/city-gaps")
+        with_params = c.get("/api/city-gaps", params=params)
+    assert with_params.status_code == 200  # not a 422
+    assert with_params.content == plain.content  # one answer for everyone
+    for secret in (cell, "51.1283", "71.4305", "тайное слово"):
+        assert secret not in with_params.text and secret not in caplog.text
+    assert "GET /api/city-gaps -> 200" in caplog.text  # path, code and time only
+
+
+def test_city_gaps_file_is_read_once_at_start(deps: Deps, monkeypatch: pytest.MonkeyPatch,
+                                              tmp_path: Path) -> None:
+    path = tmp_path / "gaps" / "city_gaps.json"
+    path.parent.mkdir()
+    path.write_bytes(GAPS_MOCK.read_bytes())
+    reads: list[Path | None] = []
+    real = api.city_gaps.load
+    monkeypatch.setattr(api.city_gaps, "load", lambda p: reads.append(p) or real(p))
+    with _gaps_client(deps, monkeypatch, path) as c:
+        first = c.get("/api/city-gaps").content
+        path.write_text("{now broken", encoding="utf-8")  # changed on disk after the start
+        second = c.get("/api/city-gaps")
+        c.get("/api/city-gaps")
+    assert reads == [path]  # once, at start
+    assert second.status_code == 200 and second.content == first  # not recomputed or re-read
+
+
+def test_city_gaps_is_documented_with_the_contract_model(client: TestClient) -> None:
+    spec = client.get("/openapi.json").json()
+    op = spec["paths"]["/api/city-gaps"]["get"]
+    assert op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/CityGaps")
+    assert "503" in op["responses"] and not op.get("parameters")

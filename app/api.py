@@ -37,6 +37,7 @@ import traceback
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -46,11 +47,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app import generate, weather
+from app import city_gaps, generate, weather
 from app.config import ROOT, get_settings
 from app.llm import LLMClient, load_prompt
 from app.pipeline import Deps, InvalidRequest, index_meta, index_problem, index_status, recommend
-from app.schemas import SCHEMA_VERSION, Answer, Landmark, RecommendRequest
+from app.schemas import SCHEMA_VERSION, Answer, CityGaps, Landmark, RecommendRequest
 from app.store import load_store
 
 log = logging.getLogger("qadam.api")
@@ -273,6 +274,17 @@ async def get_deps(request: Request) -> Deps:
 DepsDep = Annotated[Deps, Depends(get_deps)]
 
 
+def _city_gaps_path(app: FastAPI) -> Path | None:
+    """settings.city_gaps_path (QADAM_CITY_GAPS_PATH) of the app's deps, else of the env."""
+    deps: Deps | None = app.state.deps
+    settings = deps.settings if deps is not None else get_settings()
+    return getattr(settings, "city_gaps_path", None)
+
+
+def _city_gaps_state(request: Request) -> str:
+    return "ready" if request.app.state.city_gaps is not None else "missing"
+
+
 def start_weather_warm_up(deps: Deps) -> threading.Thread:
     """T133: today's weather for the landmark areas, loaded in the background at start, so
     requests rarely wait for Open-Meteo (they never wait longer than weather.TIMEOUT_S).
@@ -299,10 +311,13 @@ def create_app(deps: Deps | None = None) -> FastAPI:
                     start_weather_warm_up(app.state.deps)
                 except Exception:  # noqa: BLE001 - the weather is optional (rule 5)
                     log.exception("weather warm-up did not start; requests ask on their own")
+        # T142: the city gaps map is read and checked once, whatever the store did
+        app.state.city_gaps = await run_in_threadpool(city_gaps.load, _city_gaps_path(app))
         yield
 
     app = FastAPI(title="Qadam API", version=SCHEMA_VERSION, lifespan=lifespan)
     app.state.deps = deps
+    app.state.city_gaps = None  # bytes of city_gaps.json once the lifespan loaded it
     app.state.prompt_problems = check_prompts()
     llm_slots = threading.BoundedSemaphore(MAX_CONCURRENT_LLM)
     app.add_middleware(
@@ -339,7 +354,8 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unavailable", "poi_count": 0, "index": "lexical",
-                         "llm": "off", "schema_version": SCHEMA_VERSION},
+                         "llm": "off", "city_gaps": _city_gaps_state(request),
+                         "schema_version": SCHEMA_VERSION},
             )
         problems = [*_store_problems(d), *request.app.state.prompt_problems]
         # no POI = every recommendation is 503: a hosting platform's HTTP check sees only the
@@ -351,8 +367,24 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             "index": _index_state(d),
             "llm": _llm_state(d),
             "warnings": [*problems, *d.store.warnings],
+            "city_gaps": _city_gaps_state(request),  # does not change `status` (contract 1.4.0)
             "schema_version": SCHEMA_VERSION,
         })
+
+    @app.get("/api/city-gaps", response_model=CityGaps, tags=["api"],
+             summary="Карта пробелов данных: агрегаты открытых данных по ячейкам H3 r8",
+             responses={503: {"description": "Файл карты не собран или не проходит схему",
+                              "content": {"application/json": {"example": {
+                                  "detail": city_gaps.UNAVAILABLE}}}}})
+    async def city_gaps_map(request: Request) -> Response:
+        """The file as is, the same for everyone: no parameters (extra ones are ignored and
+        never reach the answer or the log line, which has only the path, code and time)."""
+        body: bytes | None = request.app.state.city_gaps
+        if body is None:
+            return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                content={"detail": city_gaps.UNAVAILABLE})
+        return Response(content=body, media_type="application/json",
+                        headers={"Cache-Control": city_gaps.CACHE_CONTROL})
 
     @app.get("/api/landmarks", response_model=list[Landmark], tags=["api"],
              summary="Ориентиры для выбора точки старта")
