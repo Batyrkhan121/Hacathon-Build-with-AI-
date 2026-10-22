@@ -23,7 +23,9 @@ from app.config import get_settings
 from app.hours import ASTANA_TZ, evaluate_hours
 from app.schemas import GAP_MIN_CROSSINGS, GAP_MIN_POI, GAP_MIN_WALK_M, POI, CityGaps
 from pipeline import city_gaps as gaps_map
-from pipeline.city_gaps import OUTSIDE, Tally
+from pipeline import districts as district_data
+from pipeline.city_gaps import districts_add_up
+from pipeline.districts import district_status
 from pipeline.fetch_osm import area_chunks, is_partial
 from pipeline.landmark_refs import LANDMARK_OSM
 from pipeline.normalize import (
@@ -222,29 +224,30 @@ def _share(part: float, whole: float, enough: bool) -> str:
     return f"{100 * part / whole:.1f}%" if enough and whole else "мало данных"
 
 
-def _district_row(name: str, t: Tally) -> str:
-    """One district: totals and «нет данных» shares, as GapCounts (no «есть» split: the
-    table shows gaps in open data, it does not rate districts)."""
-    walk = sum(t.lit_m.values())
-    crossings = sum(t.crossings.values())
-    places = sum(t.wheelchair.values())
+def _district_row(name: str, counts: Mapping[str, int] | None, cells: int, note: str) -> str:
+    """One district (GapCounts): totals and «нет данных» shares only, no «есть» split: the
+    table shows gaps in open data, it does not rate districts."""
+    if counts is None:
+        return f"| {name} | {note} |" + " — |" * 10
+    walk, crossings, places = counts["walk_m"], counts["crossings"], counts["poi"]
     lit_ok, cross_ok, poi_ok = (walk >= GAP_MIN_WALK_M, crossings >= GAP_MIN_CROSSINGS,
                                 places >= GAP_MIN_POI)
     return (
-        f"| {name} | {walk / 1000:.1f} | {_share(t.lit_m['unknown'], walk, lit_ok)} | "
-        f"{crossings} | {_share(t.crossings['unknown'], crossings, cross_ok)} | "
-        f"{_share(t.kerbs['unknown'], crossings, cross_ok)} | {places} | "
-        f"{_share(t.hours['unknown'], places, poi_ok)} | "
-        f"{_share(t.wheelchair['unknown'], places, poi_ok)} | "
-        f"{_share(t.name_kk['no'], places, poi_ok)} |"
+        f"| {name} | {note or 'ok'} | {cells} | {walk / 1000:.1f} | "
+        f"{_share(counts['walk_lit_unknown_m'], walk, lit_ok)} | "
+        f"{crossings} | {_share(counts['crossings_kind_unknown'], crossings, cross_ok)} | "
+        f"{_share(counts['crossings_kerb_unknown'], crossings, cross_ok)} | {places} | "
+        f"{_share(counts['poi_no_hours'], places, poi_ok)} | "
+        f"{_share(counts['poi_wheelchair_unknown'], places, poi_ok)} | "
+        f"{_share(counts['poi_no_name_kk'], places, poi_ok)} |"
     )
 
 
 def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] | None = (),
-                    districts: tuple | None = None) -> list[str]:
+                    districts_file: Mapping | None = None) -> list[str]:
     """«Карта пробелов»: city totals of data/processed/city_gaps.json, the check against
-    walk_coverage.json and poi.jsonl (None: it could not run), and (boundaries on disk) the
-    districts."""
+    walk_coverage.json and poi.jsonl (None: it could not run), and its districts block with
+    the reasons and the OSM districts off the list from data/processed/districts.json."""
     city, cells = gaps["city"], gaps.get("cells") or []
 
     def row(layer: str, whole: float, part: float, unit: str = "") -> str:
@@ -254,7 +257,7 @@ def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] | None = (),
     lines = [
         "",
         "## Карта пробелов",
-        "`data/processed/city_gaps.json` (контракт 1.4.0, `CityGaps`) собирает "
+        "`data/processed/city_gaps.json` (контракт 1.4.1, `CityGaps`) собирает "
         "`python -m pipeline.city_gaps` из `poi.jsonl` и пешеходного графа: где в открытых "
         f"данных OSM нет сведений, по {len(cells)} ячейкам H3 r{gaps.get('h3_res', 8)} и по "
         f"городу. Места на {gaps.get('poi_date')}, граф на {gaps.get('walk_graph_date')}; "
@@ -290,24 +293,47 @@ def city_gaps_lines(gaps: Mapping, checks: Sequence[Mapping] | None = (),
             *(f"| {c['what']} | {c['map']} | {c['report']} | {'да' if c['ok'] else '**нет**'} |"
               for c in checks),
         ]
-    if districts is None:
-        lines += ["", "Районов нет: границ районов OSM на диске нет (`python -m pipeline."
-                  "city_gaps --fetch-districts`, нужен Overpass) — только ячейки."]
+    block = gaps.get("districts")
+    if not block:
+        lines += ["", "Районов нет: `data/processed/districts.json` нет "
+                  "(`python -m pipeline.city_gaps --fetch-districts`) — только ячейки."]
         return lines
-    found, tallies = districts
+    file_by_id = {e["id"]: e for e in (districts_file or {}).get("districts", [])}
+    changes = (districts_file or {}).get("composition_changes") or []
+    checked = (f"сверен с официальным списком акимата {block['official_list_url']} "
+               f"({block['official_list_checked']})" if block.get("official_list_url")
+               else "**не сверен** с официальным списком")
+
+    def note(d: Mapping) -> str:
+        if d["status"] == "ok":
+            return "ok"
+        if d["status"] == "missing":
+            return "границы нет в OSM"
+        why = district_status(file_by_id[d["id"]], changes)[1] if d["id"] in file_by_id else ""
+        return f"граница в OSM устарела ({d['boundary_date']})" + (f": {why}" if why else "")
+
+    adds_up = districts_add_up(gaps)
     lines += [
         "",
-        "По районам — доли «нет данных», это пробелы в открытых данных, а не оценка района "
-        "(границы OSM; ребро — по середине, переход и место — по точке; доля при "
-        f"{GAP_MIN_POI}+ местах, {GAP_MIN_WALK_M}+ м путей, {GAP_MIN_CROSSINGS}+ переходах):",
+        f"По районам ({len(block['items'])}; список районов {checked}; границы OSM на "
+        f"{block['boundaries_date']}). Ячейка — к району, в контуре которого её центр. Это "
+        "пробелы в открытых данных, а не оценка района; доля — при "
+        f"{GAP_MIN_POI}+ местах, {GAP_MIN_WALK_M}+ м путей, {GAP_MIN_CROSSINGS}+ переходах:",
         "",
-        "| Район | км путей | освещённость: нет данных | переходов | тип перехода: нет данных | "
-        "бордюр: нет данных | мест | часы: нет данных | коляска: нет данных | "
-        "название kk: нет |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-        *(_district_row(d.name, tallies.get(d.name, Tally())) for d in found),
-        _district_row(OUTSIDE, tallies.get(OUTSIDE, Tally())),
+        "| Район | граница | ячеек | км путей | освещённость: нет данных | переходов | "
+        "тип перехода: нет данных | бордюр: нет данных | мест | часы: нет данных | "
+        "коляска: нет данных | название kk: нет |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        *(_district_row(d["name"]["ru"], d.get("counts"), d["cell_count"], note(d))
+          for d in sorted(block["items"], key=lambda d: d["name"]["ru"])),
+        _district_row("вне границ районов", block["unassigned"], block["unassigned_cells"], "—"),
+        "",
+        "Сверка: районы + вне границ районов = город по всем девяти счётчикам — "
+        + ("да." if adds_up else "**нет**."),
     ]
+    aside = (districts_file or {}).get("osm_not_in_list") or []
+    lines += [f"- В OSM есть район вне официального списка: {a['name'].get('name')} "
+              f"(relation {a['osm_relation']}, {a['why']}) — в карту не вошёл." for a in aside]
     return lines
 
 
@@ -380,7 +406,7 @@ def build_report(
     events: Mapping | None = None,
     city_gaps: Mapping | None = None,
     city_gaps_checks: Sequence[Mapping] | None = (),
-    city_gaps_districts: tuple | None = None,
+    city_gaps_districts: Mapping | None = None,
     city_gaps_error: str | None = None,
 ) -> str:
     """`missing_chunks`: city tiles not on disk; None when the build is not the whole city.
@@ -388,7 +414,7 @@ def build_report(
     `walk_meta`, `walk_coverage`: data/processed/walk_graph_meta.json, walk_coverage.json.
     `events`: the summary of pipeline.events (data/manual/events.json), if checked.
     `city_gaps`: data/processed/city_gaps.json; `city_gaps_checks`: pipeline.city_gaps.reconcile;
-    `city_gaps_districts`: pipeline.city_gaps.district_tallies (None: no boundaries);
+    `city_gaps_districts`: data/processed/districts.json (reasons, OSM districts off the list);
     `city_gaps_error`: why city_gaps.json is not used (unreadable, fails the schema)."""
     n = len(pois)
     tags_by_id = raw_tags_by_id(payloads)
@@ -637,9 +663,9 @@ def write_report(area: str, notes: Sequence[str] = (), out: Path | None = None) 
             log.exception("city gaps check skipped: walk_coverage.json is incomplete")
             checks = None
         try:
-            districts = gaps_map.district_tallies(raw_dir)
-        except Exception:  # noqa: BLE001 - the district table is extra, the report is not
-            log.exception("district table skipped")
+            districts = district_data.load()
+        except (OSError, ValueError):  # the reasons are extra, the report is not
+            log.exception("districts.json not readable")
     text = build_report(
         pois, payloads, landmarks, missing_chunks=missing, notes=all_notes,
         outlines_meta=(outlines or {}).get("qadam"), walk_meta=processed("walk_graph_meta.json"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 from datetime import UTC, datetime, timedelta
@@ -14,19 +15,18 @@ import pytest
 
 from app.hours import ASTANA_TZ
 from app.schemas import POI, CityGaps, GapCounts
+from pipeline import districts
 from pipeline.city_gaps import (
-    OUTSIDE,
-    District,
+    assign_cells,
     build_city_gaps,
-    district_names,
-    districts_from,
-    districts_query,
+    districts_add_up,
     dump,
     inside_mask,
     newest_snapshot,
+    on_line_mask,
     reconcile,
-    tally,
 )
+from pipeline.districts import district_status
 from pipeline.normalize import inside
 from pipeline.walk_coverage import measure
 from pipeline.walk_graph import (
@@ -186,60 +186,233 @@ def test_committed_city_gaps_file_matches_the_report() -> None:
 # ---------------------------------------------------------------------- districts
 
 
-def square(s: float, w: float, n: float, e: float) -> list:
-    ring = [(s, w), (s, e), (n, e), (n, w), (s, w)]
-    return list(zip(ring, ring[1:], strict=False))
+def square(s: float, w: float, n: float, e: float) -> list[list[float]]:
+    return [[s, w], [s, e], [n, e], [n, w], [s, w]]
 
 
-A = District("район A", "osm:relation/1", square(51.10, 71.40, 51.12, 71.43))
-B = District("район B", "osm:relation/2",
-             square(51.12, 71.40, 51.14, 71.43) + square(51.135, 71.425, 51.139, 71.429))
+def entry(did: str, outline: list, *, relation: int | None = 1, edited: str = "2026-10-01",
+          exact: bool = True, kk: str | None = None) -> dict:
+    name = {"ru": did, "kk": kk or did, "en": did}
+    out = {"id": did, "name": name, "osm_relation": relation, "outline": outline}
+    if relation:
+        out.update(osm_name={"name": f"{name['kk']} ауданы"}, name_matches=exact,
+                   boundary_date=edited)
+    return out
+
+
+# A and B share the line through the centre of the cell near Baiterek; C: no OSM boundary;
+# D: a boundary older than the change of the district set that touched it
+CENTRE = h3.cell_to_latlng(cell(51.1281, 71.4305))
+LINE = CENTRE[1]
+DISTRICTS = {
+    "format_version": 1,
+    "boundaries_date": "2026-10-22",
+    "official_list_url": "https://www.gov.kz/org/astana/about/structure/484/1?lang=ru",
+    "official_list_checked": "2026-10-22",
+    "composition_changes": [{"date": "2024-08", "districts": ["d_old"], "what": "t",
+                             "sources": ["https://example.org/act"]}],
+    "districts": [
+        # A starts at 71.41: the crossing cell at the west end of the long edge is outside
+        entry("a_west", [square(51.05, 71.41, 51.15, LINE)]),
+        entry("b_east", [square(51.05, LINE, 51.15, 71.45)]),
+        entry("c_none", [], relation=None),
+        entry("d_old", [square(51.19, 71.49, 51.21, 71.51)], edited="2024-08-20"),
+    ],
+    "osm_not_in_list": [],
+}
 
 
 def test_inside_mask_is_the_even_odd_rule_of_normalize_inside() -> None:
     rng = random.Random(7)
-    lats = np.array([rng.uniform(51.11, 51.15) for _ in range(400)] + [51.12, 51.135])
+    ring = [(51.12, 71.40), (51.12, 71.43), (51.14, 71.43), (51.14, 71.40), (51.12, 71.40)]
+    hole = [(51.135, 71.425), (51.135, 71.429), (51.139, 71.429), (51.139, 71.425),
+            (51.135, 71.425)]
+    edges = districts.edges_of([ring, hole])
+    lats = np.array([rng.uniform(51.11, 51.15) for _ in range(400)] + [51.12, 51.137])
     lons = np.array([rng.uniform(71.39, 71.44) for _ in range(400)] + [71.41, 71.427])
-    mask = inside_mask(lats, lons, B.edges)
-    assert mask.tolist() == [inside(a, b, B.edges) for a, b in zip(lats, lons, strict=True)]
-    assert 50 < mask.sum() < 350  # both sides are exercised
+    mask = inside_mask(lats, lons, edges)
+    assert mask.tolist() == [inside(a, b, edges) for a, b in zip(lats, lons, strict=True)]
+    assert 50 < mask.sum() < 350 and not mask[-1]  # both sides; the hole is outside
 
 
-def test_district_names_and_tallies() -> None:
-    names = district_names(np.array([51.105, 51.13, 51.137, 51.2]),
-                           np.array([71.41, 71.41, 71.427, 71.5]), [A, B])
-    assert names == ["район A", "район B", OUTSIDE, OUTSIDE]  # 51.137: in B's hole
-    by = tally(GRAPH, POIS, lambda la, lo: district_names(la, lo, [A, B]))
-    assert by["район A"].lit_m["unknown"] == pytest.approx(2790.2, abs=0.1)  # midpoint in A
-    assert sum(sum(t.crossings.values()) for t in by.values()) == 4
+def test_district_status_rules() -> None:
+    changes = [{"date": "2023-01-19", "districts": ["x"]}, {"date": "2024-08", "districts": ["x"]}]
+    ring = [square(51.0, 71.0, 51.1, 71.1)]
+    assert district_status(entry("x", [], relation=None), changes)[0] == "missing"
+    assert district_status(entry("x", ring, exact=False), changes)[0] == "stale"
+    # a change dated by month counts until the month ends
+    assert district_status(entry("x", ring, edited="2024-08-31"), changes)[0] == "stale"
+    assert district_status(entry("x", ring, edited="2023-01-18"), changes)[0] == "stale"
+    assert district_status(entry("x", ring, edited="2024-09-01"), changes) == (
+        "ok", "граница в OSM совпадает со списком")
+    assert district_status(entry("y", ring, edited="2020-01-01"), changes)[0] == "ok"
 
 
-def test_districts_from_keeps_the_city_districts_only() -> None:
-    def rel(rid: int, name: str | None, ring: list[tuple[float, float]],
-            level: str = "6") -> dict:
-        tags = {"boundary": "administrative", "admin_level": level} | (
-            {"name": name} if name else {})
-        return {"type": "relation", "id": rid, "tags": tags, "members": [
-            {"type": "way", "role": "outer",
-             "geometry": [{"lat": a, "lon": b} for a, b in ring]}]}
-
-    city = [(51.10, 71.40), (51.10, 71.45), (51.15, 71.45), (51.10, 71.40)]
-    small = [(51.11, 71.41), (51.11, 71.42), (51.12, 71.42), (51.11, 71.41)]
-    region = [(50.50, 70.50), (50.50, 72.50), (52.00, 72.50), (51.10, 71.40)]  # Akmola-sized
-    payload = {"elements": [
-        rel(1, "Есильский район", city),
-        rel(2, "Целиноградский район", region),  # around the city, not a district of it
-        rel(3, None, city),  # no name
-        rel(4, "Астана", city, level="4"),  # the city itself
-        rel(5, "микрорайон", small, level="9"),  # smaller units than the districts
-    ]}
-    [d] = districts_from(payload)
-    assert d.name == "Есильский район" and d.osm_id == "osm:relation/1" and len(d.edges) == 3
-    assert d.admin_level == 6 and districts_from({"elements": []}) == []
-    assert '["admin_level"~"^(5|6|7|8|9)$"]' in districts_query()
+def test_a_cell_goes_to_the_outline_holding_its_centre() -> None:
+    west, east, far = cell(51.1, 71.40), cell(51.1, 71.44), cell(51.30, 71.9)
+    two = {"b_east": [square(51.05, LINE, 51.15, 71.45)],
+           "a_west": [square(51.05, 71.35, 51.15, LINE)]}
+    assert assign_cells([west, east, far], two) == {west: "a_west", east: "b_east", far: None}
+    # the centre on the shared line: the smaller id; in two outlines: the smaller id too
+    on_line = cell(51.1281, 71.4305)
+    assert on_line_mask(np.array([CENTRE[0]]), np.array([LINE]),
+                        districts.edges_of(two["b_east"]))[0]
+    assert assign_cells([on_line], two) == {on_line: "a_west"}
+    nested = {"z_big": [square(51.0, 71.3, 51.2, 71.5)],
+              "m_small": [square(51.09, 71.39, 51.11, 71.41)]}
+    assert assign_cells([west], nested) == {west: "m_small"}
 
 
-# ---------------------------------------------------------- REPORT and run_all
+def test_districts_block_sums_statuses_and_unassigned() -> None:
+    g = build_city_gaps(GRAPH, POIS, META, BUILT, DISTRICTS)  # the schema checks every sum
+    block = g.districts
+    assert block is not None and block.official_list_checked == "2026-10-22"
+    by = {d.id: d for d in block.items}
+    assert {k: v.status for k, v in by.items()} == {
+        "a_west": "ok", "b_east": "ok", "c_none": "missing", "d_old": "stale"}
+    assert by["c_none"].counts is None and by["c_none"].outline == []
+    assert by["c_none"].cell_count == 0 and by["c_none"].osm_relation is None
+    assert by["d_old"].boundary_date == "2024-08-20" and by["d_old"].cell_count == 1  # the stub
+    assert {c.h3_cell: c.district for c in g.cells}[cell(51.1281, 71.4305)] == "a_west"
+    parts = [d.counts for d in block.items if d.counts] + [block.unassigned]
+    for name in GapCounts.model_fields:
+        assert sum(getattr(p, name) for p in parts) == getattr(g.city, name), name
+    assert block.unassigned_cells == sum(1 for c in g.cells if c.district is None) > 0
+    assert districts_add_up(g.model_dump(mode="json"))
+    assert build_city_gaps(GRAPH, POIS, META, BUILT).districts is None  # no file: as 1.4.0
+    text = dump(g)
+    assert CityGaps.model_validate(json.loads(text)) == g
+    assert '"outline": [\n' in text and "[[51.05, " in text  # a ring on one line
+
+
+def test_simplify_keeps_within_10_m_and_closes_rings() -> None:
+    # a 1 km circle with a point every ~3 m
+    ring = [(51.1 + 0.009 * math.sin(t / 1000 * 2 * math.pi),
+             71.4 + 0.0143 * math.cos(t / 1000 * 2 * math.pi)) for t in range(1000)]
+    ring.append(ring[0])
+    out = districts.simplify(ring)
+    assert out[0] == out[-1] and 4 <= len(out) < len(ring) / 5
+    assert all(round(x, 5) == x for p in out for x in p)
+    k = 111_320 * math.cos(math.radians(51.1))
+
+    def dist_m(p: tuple, a: tuple, b: tuple) -> float:
+        px, py, ax, ay = p[1] * k, p[0] * 110_574, a[1] * k, a[0] * 110_574
+        dx, dy = b[1] * k - ax, b[0] * 110_574 - ay
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy or 1)))
+        return math.hypot(px - ax - t * dx, py - ay - t * dy)
+
+    edges = list(zip(out, out[1:], strict=False))
+    assert max(min(dist_m(p, a, b) for a, b in edges) for p in ring) <= 10.0
+
+
+def test_an_outline_too_detailed_at_10_m_is_refused() -> None:
+    # a zigzag of 30 m teeth: Douglas-Peucker at 8 m keeps every tooth
+    zig = [(51.1 + 0.0003 * (i % 2), 71.4 + 0.0001 * i) for i in range(4200)]
+    ring = [*zig, (51.09, zig[-1][1]), (51.09, zig[0][1]), zig[0]]
+    with pytest.raises(ValueError, match="points"):
+        districts.outline_of([ring])
+
+
+def osm_xml(nodes: dict, ways: dict, relations: dict) -> bytes:
+    parts = ['<osm version="0.6">']
+    parts += [f'<node id="{n}" lat="{la}" lon="{lo}" timestamp="{ts}"/>'
+              for n, (la, lo, ts) in nodes.items()]
+    for w, (refs, ts) in ways.items():
+        parts.append(f'<way id="{w}" timestamp="{ts}">'
+                     + "".join(f'<nd ref="{r}"/>' for r in refs) + "</way>")
+    for r, (tags, members, ts) in relations.items():
+        parts.append(f'<relation id="{r}" timestamp="{ts}">'
+                     + "".join(f'<member type="way" ref="{m}" role="{role}"/>'
+                               for m, role in members)
+                     + "".join(f'<tag k="{k}" v="{v}"/>' for k, v in tags.items())
+                     + "</relation>")
+    return ("".join(parts) + "</osm>").encode("utf-8")
+
+
+def test_rings_join_ways_in_any_order_and_direction() -> None:
+    nodes = {1: (51.0, 71.0, "2026-01-01T00:00:00Z"), 2: (51.0, 71.1, "2026-03-05T00:00:00Z"),
+             3: (51.1, 71.1, "2026-01-01T00:00:00Z"), 4: (51.1, 71.0, "2026-01-01T00:00:00Z")}
+    ways = {10: ([2, 3], "2026-01-01T00:00:00Z"), 11: ([1, 2], "2026-01-01T00:00:00Z"),
+            12: ([1, 4, 3], "2026-02-01T00:00:00Z")}  # 12 runs against the others
+    full = districts.parse_full(osm_xml(nodes, ways, {
+        7: ({"boundary": "administrative", "admin_level": "6"},
+            [(10, "outer"), (11, "outer"), (12, "outer")], "2025-12-01T00:00:00Z")}))
+    [ring] = districts.rings_of(full, 7)
+    assert ring[0] == ring[-1] and len(ring) == 5 and set(ring) == {
+        (51.0, 71.0), (51.0, 71.1), (51.1, 71.1), (51.1, 71.0)}
+    assert districts.last_edit(full, 7) == "2026-03-05"  # a node edited later than the rest
+    del full["relations"][7]["members"][2]
+    assert districts.rings_of(full, 7) is None  # an open boundary is not used
+
+
+def test_names_match_the_official_list() -> None:
+    assert districts.match_official({"name": "Есіл ауданы", "name:ru": "район Есиль"}) == (
+        "yesil", True)
+    assert districts.match_official({"name": "Байқоңыр ауданы"}) == ("baikonyr", True)
+    # found only through the Russian or English name: the Kazakh name does not agree
+    assert districts.match_official({"name": "Байконыр ауданы", "name:en": "Baikonyr"}) == (
+        "baikonyr", False)
+    assert districts.match_official({"name": "Целиноград ауданы"}) == (None, False)
+
+
+def test_fetch_from_a_fake_osm_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """City 900, seed 901 (Есіл), its neighbour 902 found through a shared way (not on the
+    list), 903 a district of the region around the city."""
+    monkeypatch.setattr(districts, "CITY_RELATION", 900)
+    monkeypatch.setattr(districts, "SEED_RELATIONS", (901,))
+    ts = "2026-09-01T00:00:00Z"
+    coords = [(51.0, 71.0), (51.0, 71.4), (51.3, 71.4), (51.3, 71.0),  # the city: 0-3
+              (51.1, 71.1), (51.1, 71.2), (51.2, 71.2), (51.2, 71.1),  # 901: 4-7
+              (51.1, 71.3), (51.2, 71.3),  # 902: 5-8-9-6
+              (50.0, 70.0), (50.0, 72.0), (52.0, 72.0)]  # 903 around the city: 10-12 (+0)
+    nodes = {i: (lat, lon, ts) for i, (lat, lon) in enumerate(coords)}
+    ways = {100: ([0, 1, 2, 3, 0], ts), 101: ([4, 5], ts), 102: ([5, 6], ts),
+            103: ([6, 7, 4], ts), 104: ([5, 8, 9, 6], ts), 105: ([0, 10, 11, 12, 0], ts)}
+    adm = {"boundary": "administrative"}
+    rels = {900: ({**adm, "admin_level": "4", "name": "Астана"}, [(100, "outer")], ts),
+            901: ({**adm, "admin_level": "6", "name": "Есіл ауданы"},
+                  [(101, "outer"), (102, "outer"), (103, "outer")], ts),
+            902: ({**adm, "admin_level": "6", "name": "Жаңа ауданы"},
+                  [(102, "outer"), (104, "outer")], ts),
+            903: ({**adm, "admin_level": "6", "name": "Целиноград ауданы"},
+                  [(105, "outer")], ts)}
+
+    def full(rid: int) -> bytes:
+        rel = rels[rid]
+        wids = [m for m, _ in rel[1]]
+        nids = {n for w in wids for n in ways[w][0]}
+        return osm_xml({n: nodes[n] for n in nids}, {w: ways[w] for w in wids}, {rid: rel})
+
+    def get(path: str) -> bytes:
+        kind, ident = path.strip("/").split("/")[:2]
+        if kind == "relation":
+            return full(int(ident))
+        users = {r: rel for r, rel in rels.items() if any(m == int(ident) for m, _ in rel[1])}
+        if int(ident) == 100:
+            users[903] = rels[903]  # the region touches the city border
+        return osm_xml({}, {}, users)
+
+    data = districts.fetch(get=get)
+    by = {d["id"]: d for d in data["districts"]}
+    assert by["yesil"]["osm_relation"] == 901 and by["yesil"]["name_matches"] is True
+    assert by["yesil"]["boundary_date"] == "2026-09-01" and by["yesil"]["outline"]
+    assert by["nura"]["osm_relation"] is None and by["nura"]["outline"] == []
+    assert [a["osm_relation"] for a in data["osm_not_in_list"]] == [902]
+    assert data["official_list_url"].startswith("https://") and len(data["districts"]) == 6
+    assert json.loads(districts.dump(data)) == json.loads(json.dumps(data))
+
+
+def test_committed_districts_and_the_map() -> None:
+    processed = ROOT / "data" / "processed"
+    data = json.loads((processed / "districts.json").read_text(encoding="utf-8"))
+    g = CityGaps.model_validate_json((processed / "city_gaps.json").read_text(encoding="utf-8"))
+    assert g.districts is not None and len(g.districts.items) == len(data["districts"]) == 6
+    assert g.districts.official_list_url == data["official_list_url"]
+    assert districts_add_up(g.model_dump(mode="json"))
+    report = (processed / "REPORT.md").read_text(encoding="utf-8")
+    assert "Сверка: районы + вне границ районов = город по всем девяти счётчикам — да." in report
+    for d in g.districts.items:
+        assert f"| {d.name['ru']} |" in report
 
 
 def test_report_city_gaps_section() -> None:
@@ -247,29 +420,33 @@ def test_report_city_gaps_section() -> None:
     from pipeline.report import build_report
     from tests.test_pipeline_report import LANDMARKS, PAYLOAD
 
-    g = build_city_gaps(GRAPH, POIS, META, BUILT).model_dump(mode="json")
+    g = build_city_gaps(GRAPH, POIS, META, BUILT, DISTRICTS).model_dump(mode="json")
     checks = reconcile(g["city"], None, POIS) + [
         {"what": "длина путей, км", "map": 3.0, "report": 3.6, "ok": False}]
-    districts = ([A, B], tally(GRAPH, POIS, lambda la, lo: district_names(la, lo, [A, B])))
     pois = normalize_payload(PAYLOAD)
     text = build_report(pois, [PAYLOAD], LANDMARKS, city_gaps=g, city_gaps_checks=checks,
-                        city_gaps_districts=districts)
+                        city_gaps_districts=DISTRICTS)
     section = text.split("## Карта пробелов", 1)[1]
     for piece in ("| часы работы | 3 | 2 | 66.7% |", "| тип перехода | 4 | 1 | 25.0% |",
                   "| бордюр на переходе | 4 | 2 | 50.0% |", "Места на 2026-10-19",
                   "© OpenStreetMap contributors, ODbL-1.0", "а не оценка района",
                   "| мест (строк poi.jsonl) | 3 | 3 | да |", "| 3.0 | 3.6 | **нет** |",
-                  "| район A | 2.8 | 100.0% |", "| вне районов |", "мало данных",
-                  "| без названия на казахском | 2 | 2 | да |"):
+                  "| без названия на казахском | 2 | 2 | да |", "сверен с официальным списком",
+                  "| c_none | границы нет в OSM | — |",
+                  "| d_old | граница в OSM устарела (2024-08-20): граница в OSM (2024-08-20) "
+                  "старше изменения состава районов (2024-08) | 1 |",
+                  "| вне границ районов | — |", "по всем девяти счётчикам — да.", "мало данных"):
         assert piece in section, piece
     # districts: only «нет данных» shares, no «освещено / светофор / часы известны»
     districts_part = section.split("По районам", 1)[1]
-    assert "пробелы в открытых данных, а не оценка района" in districts_part
     for word in ("освещено", "светофор", "известны", "занижен"):
         assert word not in districts_part, word
-    cells_only = build_report(pois, [PAYLOAD], LANDMARKS, city_gaps=g)
-    assert "Районов нет: границ районов OSM на диске нет" in cells_only
-    assert "| район A |" not in cells_only
+    no_file = build_report(pois, [PAYLOAD], LANDMARKS, city_gaps=build_city_gaps(
+        GRAPH, POIS, META, BUILT).model_dump(mode="json"))
+    assert "Районов нет: `data/processed/districts.json` нет" in no_file
+
+
+# ---------------------------------------------------------- REPORT and run_all
 
 
 @pytest.fixture
