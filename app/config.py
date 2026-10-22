@@ -25,6 +25,7 @@ Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -53,7 +54,12 @@ def _int(name: str, default: int) -> int:
 
 def _float(name: str) -> float | None:
     raw = (os.getenv(name) or "").strip()
-    return float(raw) if raw else None
+    if not raw:
+        return None
+    value = float(raw)
+    if not math.isfinite(value):  # nan / inf would make a budget that is never reached
+        raise ValueError(f"{name} must be a finite number")
+    return value
 
 
 @dataclass(frozen=True)
