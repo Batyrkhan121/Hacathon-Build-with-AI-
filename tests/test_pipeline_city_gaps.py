@@ -434,7 +434,7 @@ def test_report_city_gaps_section() -> None:
                   "| без названия на казахском | 2 | 2 | да |", "сверен с официальным списком",
                   "| c_none | границы нет в OSM | — |",
                   "| d_old | граница в OSM устарела (2024-08-20): граница в OSM (2024-08-20) "
-                  "старше изменения состава районов (2024-08) | 1 |",
+                  "старше изменения состава или границ районов (2024-08) | 1 |",
                   "| вне границ районов | — |", "по всем девяти счётчикам — да.", "мало данных"):
         assert piece in section, piece
     # districts: only «нет данных» shares, no «освещено / светофор / часы известны»
@@ -444,6 +444,109 @@ def test_report_city_gaps_section() -> None:
     no_file = build_report(pois, [PAYLOAD], LANDMARKS, city_gaps=build_city_gaps(
         GRAPH, POIS, META, BUILT).model_dump(mode="json"))
     assert "Районов нет: `data/processed/districts.json` нет" in no_file
+
+
+def test_simplify_measures_to_the_segment_not_the_line() -> None:
+    # a spike that runs back along its own line: 500 m out, back to 100 m. Measured to the
+    # line, its tip is 0 m off and would be dropped; measured to the segment it is 400 m
+    m = 1 / 110_574  # one metre of latitude
+    ring = [(51.1, 71.4), (51.1 + 500 * m, 71.4), (51.1 + 100 * m, 71.4),
+            (51.1 + 100 * m, 71.401), (51.1, 71.401), (51.1, 71.4)]
+    out = districts.simplify(ring)
+    assert (round(51.1 + 500 * m, 5), 71.4) in out
+    assert districts.max_deviation_m(ring, out) <= 10.0
+
+
+def test_outline_check_small_rings_and_the_deviation_limit(
+        caplog: pytest.LogCaptureFixture) -> None:
+    tiny = [(51.10000, 71.40000), (51.10002, 71.40000), (51.10002, 71.40003),
+            (51.10000, 71.40003), (51.10000, 71.40000)]  # a 2 m exclave: kept as it is
+    assert districts.simplify(tiny) == tiny
+    flat = [(51.1, 71.4), (51.1, 71.400001), (51.1, 71.4)]  # fewer than 4 points even unrounded
+    big = [(51.0, 71.0), (51.0, 71.1), (51.1, 71.1), (51.1, 71.0), (51.0, 71.0)]
+    with caplog.at_level("WARNING", logger="pipeline.districts"):
+        assert districts.outline_of([big, flat]) == [big]
+    assert "too small to keep" in caplog.text
+    circle = [(51.1 + 0.009 * math.sin(t / 200 * 2 * math.pi),
+               71.4 + 0.0143 * math.cos(t / 200 * 2 * math.pi)) for t in range(200)]
+    circle.append(circle[0])
+    with pytest.raises(ValueError, match="off the OSM line"):
+        districts.outline_of([circle], max_m=0.5)
+
+
+def test_api_get_retries_busy_answers_but_not_refusals() -> None:
+    import httpx
+
+    answers = iter([httpx.Response(429), httpx.Response(503), httpx.Response(200, text="ok")])
+    slept: list[float] = []
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: next(answers)))
+    assert districts.api_get(client, "/x", pause_s=1.0, sleep=slept.append) == b"ok"
+    assert slept == [5.0, 15.0, 1.0]  # two retries, then the steady pace
+
+    refused = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(403)))
+    slept.clear()
+    with pytest.raises(httpx.HTTPStatusError):
+        districts.api_get(refused, "/x", sleep=slept.append)
+    assert slept == []  # a refusal is not retried
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    with pytest.raises(RuntimeError, match="ConnectError after 4 tries"):
+        districts.api_get(httpx.Client(transport=httpx.MockTransport(down)), "/x",
+                          sleep=slept.append)
+
+
+def _relation_full(rid: int, name: str, ring: list[tuple[float, float]], *, level: str = "6",
+                   close: bool = True) -> dict:
+    ts = "2026-09-01T00:00:00Z"
+    nodes = {rid * 100 + i: (lat, lon, ts) for i, (lat, lon) in enumerate(ring[:-1])}
+    refs = list(nodes) + ([rid * 100] if close else [])
+    return districts.parse_full(osm_xml(nodes, {rid * 10: (refs, ts)}, {
+        rid: ({"boundary": "administrative", "admin_level": level, "name": name},
+              [(rid * 10, "outer")], ts)}))
+
+
+def test_broken_and_duplicate_boundaries_are_said_not_dropped(
+        caplog: pytest.LogCaptureFixture) -> None:
+    city = [[(51.0, 71.0), (51.0, 71.6), (51.3, 71.6), (51.3, 71.0), (51.0, 71.0)]]
+
+    def box(s: float, w: float) -> list[tuple[float, float]]:
+        return [(s, w), (s, w + 0.05), (s + 0.05, w + 0.05), (s + 0.05, w), (s, w)]
+
+    fulls = {
+        1: _relation_full(1, "Нұра ауданы", box(51.05, 71.05), close=False),  # does not close
+        2: _relation_full(2, "Есіл ауданы", box(51.05, 71.15)),
+        3: _relation_full(3, "Есіл ауданы", box(51.05, 71.25)),  # a tie with 2
+        4: _relation_full(4, "Алматы ауданы", box(51.15, 71.05), level="8"),
+        5: _relation_full(5, "Алматы ауданы", box(51.15, 71.15)),  # level 6 wins over 8
+        6: _relation_full(6, "Алмата ауданы", box(51.15, 71.25)),  # not on the list
+    }
+    with caplog.at_level("WARNING", logger="pipeline.districts"):
+        data = districts.build_districts_file(city, fulls)
+    assert "relation 1" in caplog.text and "не замыкается" in caplog.text
+    by = {d["id"]: d for d in data["districts"]}
+    assert by["nura"]["osm_relation"] is None and by["nura"]["unusable"]["osm_relation"] == 1
+    assert district_status(by["nura"], [])[0] == "missing"
+    assert "relation 1" in district_status(by["nura"], [])[1]
+    assert by["yesil"]["osm_relation"] == 2 and by["yesil"]["ambiguous_with"] == [3]
+    assert district_status(by["yesil"], [])[0] == "stale"
+    assert by["almaty"]["osm_relation"] == 5 and "ambiguous_with" not in by["almaty"]
+    assert district_status(by["almaty"], [])[0] == "ok"
+    reasons = {a["osm_relation"]: a["why"] for a in data["osm_not_in_list"]}
+    assert reasons[1] == "граница не замыкается" and reasons[6] == "нет в официальном списке"
+    assert "взята 2" in reasons[3] and "взята 5" in reasons[4]
+
+
+def test_report_survives_an_incomplete_districts_file() -> None:
+    from pipeline.report import city_gaps_lines
+
+    g = build_city_gaps(GRAPH, POIS, META, BUILT, DISTRICTS).model_dump(mode="json")
+    broken = {"districts": [{"id": "d_old"}, "junk"], "osm_not_in_list": [{"why": "x"}, 7]}
+    text = "\n".join(city_gaps_lines(g, [], broken))
+    assert "| d_old | граница в OSM устарела (2024-08-20) | 1 |" in text
+    assert "| c_none | границы нет в OSM |" in text
+    assert "Граница из OSM не вошла в карту: ? (relation ?) — x." in text
 
 
 # ---------------------------------------------------------- REPORT and run_all
