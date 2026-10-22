@@ -9,15 +9,21 @@ import {
   GAP_LAYERS,
   GAP_MIN,
   attributionUrl,
+  districtLabel,
+  districtListChecked,
+  districtNote,
+  districtRows,
   formatBuiltAt,
   formatDate,
   formatLength,
   formatNumber,
   gapClass,
   gapText,
+  hasDistricts,
   isCityGaps,
   layerById,
   legendRanges,
+  outlineHitWeight,
   noun,
   pct,
 } from '../gaps-core.js';
@@ -151,12 +157,16 @@ test('внешние ссылки страницы — только по кли�
   const html = read('../gaps.html');
   const hrefs = [...html.matchAll(/<a [^>]*href="(https:[^"]+)"[^>]*>/g)].map((m) => [m[1], m[0]]);
   assert.deepEqual(hrefs.map(([h]) => h).sort(), [
+    'https://every-door.app/',
     'https://opendatacommons.org/licenses/odbl/1-0/',
     'https://streetcomplete.app/',
     'https://www.openstreetmap.org/',
     'https://www.openstreetmap.org/copyright',
   ]);
-  for (const [, tag] of hrefs) assert.match(tag, /rel="noopener noreferrer"/);
+  for (const [, tag] of hrefs) {
+    assert.match(tag, /rel="noopener noreferrer"/);
+    assert.match(tag, /target="_blank"/);
+  }
   assert.doesNotMatch(html, /<(script|img|link)[^>]+(src|href)="https?:/);
   for (const lang of ['ru', 'kk', 'en']) {
     setLang(lang);
@@ -215,4 +225,123 @@ test('ревью: атрибуция Leaflet — на языке страниц�
 
 test('ревью: проверка формы не падает на null-ячейке', () => {
   assert.equal(isCityGaps({ format_version: 1, h3_res: 8, city: {}, cells: [null] }), false);
+});
+
+// ------------------------------------------------------------------ районы (1.4.1)
+
+const C = (poi, no) => ({ poi, poi_no_hours: no, poi_wheelchair_unknown: 0, poi_no_name_kk: 0, walk_m: 0,
+  walk_lit_unknown_m: 0, crossings: 0, crossings_kind_unknown: 0, crossings_kerb_unknown: 0 });
+const district = (id, ru, kk, en, status, counts) => ({
+  id, name: { ru, kk, en }, status, cell_count: counts ? 1 : 0, counts: counts || null,
+  boundary_date: status === 'missing' ? null : status === 'stale' ? '2019-04-01' : '2026-09-30',
+});
+const withDistricts = (items, unassignedCells = 2) => ({
+  districts: {
+    boundaries_date: '2026-10-18', official_list_url: null, official_list_checked: null,
+    items, unassigned: C(10, 9), unassigned_cells: unassignedCells,
+  },
+});
+const sample = withDistricts([
+  district('yesil', 'Есиль', 'Есіл', 'Yesil', 'ok', C(100, 30)),
+  district('almaty', 'Алматы', 'Алматы', 'Almaty', 'stale', C(100, 70)),
+  district('baikonur', 'Байконур', 'Байқоңыр', 'Baikonur', 'ok', C(100, 50)),
+  district('nura', 'Нура', 'Нұра', 'Nura', 'missing', null),
+  district('saryarka', 'Сарыарка', 'Сарыарқа', 'Saryarka', 'ok', C(3, 3)),
+]);
+const names = (rows) => rows.map((r) => (r.unassigned ? '·вне' : r.name));
+
+test('районы: по умолчанию по алфавиту на языке страницы, «вне границ» — последней', () => {
+  assert.deepEqual(names(districtRows(sample, L('hours'), 'ru')), ['Алматы', 'Байконур', 'Есиль', 'Нура', 'Сарыарка', '·вне']);
+  assert.deepEqual(names(districtRows(sample, L('hours'), 'kk')), ['Алматы', 'Байқоңыр', 'Есіл', 'Нұра', 'Сарыарқа', '·вне']);
+  assert.deepEqual(names(districtRows(sample, L('hours'), 'en')), ['Almaty', 'Baikonur', 'Nura', 'Saryarka', 'Yesil', '·вне']);
+});
+
+test('районы: по доле «нет данных» в обе стороны; без доли (мало данных, нет границы) — после, по алфавиту', () => {
+  assert.deepEqual(names(districtRows(sample, L('hours'), 'ru', 'share-desc')), ['Алматы', 'Байконур', 'Есиль', 'Нура', 'Сарыарка', '·вне']);
+  assert.deepEqual(names(districtRows(sample, L('hours'), 'ru', 'share-asc')), ['Есиль', 'Байконур', 'Алматы', 'Нура', 'Сарыарка', '·вне']);
+  const rows = districtRows(sample, L('hours'), 'ru', 'share-desc');
+  assert.deepEqual(rows.map((r) => r.pct), [70, 50, 30, null, null, 90]);
+  // пороги «мало данных» те же, что у ячеек: 3 места < 5
+  assert.equal(rows.find((r) => r.id === 'saryarka').cls, 'low');
+});
+
+test('районы: пометки stale и missing на ru/kk/en; у missing нет чисел', () => {
+  const rows = districtRows(sample, L('hours'), 'ru');
+  const stale = rows.find((r) => r.id === 'almaty');
+  const missing = rows.find((r) => r.id === 'nura');
+  assert.equal(say('ru', districtNote(stale)), 'граница в OSM устарела (01.04.2019)');
+  assert.equal(say('kk', districtNote(stale)), 'OSM-дегі шекара ескірген (01.04.2019)');
+  assert.equal(say('en', districtNote(stale)), 'OSM boundary is outdated (01.04.2019)');
+  assert.equal(say('ru', districtNote(missing)), 'границы нет в OSM');
+  assert.equal(say('kk', districtNote(missing)), 'OSM-де шекара жоқ');
+  assert.equal(say('en', districtNote(missing)), 'no boundary in OSM');
+  assert.deepEqual([missing.part, missing.total, missing.pct, missing.cls], [null, null, null, 'missing']);
+  assert.equal(districtNote(rows.find((r) => r.id === 'yesil')), null);
+});
+
+test('районы: строки (районы + «вне границ») в сумме дают город — на моке интегратора', () => {
+  assert.equal(hasDistricts(mock), true);
+  for (const l of GAP_LAYERS) {
+    const rows = districtRows(mock, l, 'ru');
+    const sum = (k) => rows.reduce((acc, r) => acc + (r.counts ? r.counts[k] : 0), 0);
+    assert.equal(sum(l.part), mock.city[l.part], l.id);
+    assert.equal(sum(l.total), mock.city[l.total], l.id);
+  }
+  // ячейки: у каждой district — id из списка или null
+  const ids = new Set(mock.districts.items.map((d) => d.id));
+  assert.ok(mock.cells.every((c) => c.district === null || ids.has(c.district)));
+});
+
+test('районы: «вне границ» только при unassigned_cells > 0; без блока — таблицы нет', () => {
+  const none = withDistricts([district('yesil', 'Есиль', 'Есіл', 'Yesil', 'ok', C(10, 1))], 0);
+  assert.deepEqual(names(districtRows(none, L('hours'), 'ru')), ['Есиль']);
+  assert.equal(hasDistricts(large), false);
+  assert.deepEqual(districtRows(large, L('hours'), 'ru'), []);
+});
+
+test('районы: сверка списка с сайтом акимата — «не сверен», если поля null', () => {
+  assert.equal(districtListChecked(mock), true);
+  assert.equal(districtListChecked(sample), false);
+  for (const lang of ['ru', 'kk', 'en']) {
+    setLang(lang);
+    for (const k of ['gaps.listUnchecked', 'gaps.listChecked', 'gaps.districtsSource', 'gaps.district.unassigned', 'gaps.districtsTitle', 'gaps.linkEveryDoor']) {
+      assert.notEqual(t(k), k, `${lang}: ${k}`);
+    }
+  }
+});
+
+test('ревью 9.1: полоса нажатия у контура — от размера ячейки на экране, на мелком зуме её нет', () => {
+  assert.equal(outlineHitWeight(9), 0); // стартовый зум: ячейка 8–10 px — у границ нажимается ячейка
+  assert.equal(outlineHitWeight(23), 0);
+  assert.equal(outlineHitWeight(24), 2);
+  assert.equal(outlineHitWeight(40), 6); // полоса 6 + 2·2 = 10 px — четверть ячейки
+  assert.equal(outlineHitWeight(200), 12);
+  for (const px of [24, 32, 48, 64, 96]) assert.ok(outlineHitWeight(px) + 4 <= px / 4 + 2, String(px));
+});
+
+test('ревью 9.1: нажатие на ячейку в районе stale — с пометкой о границе; вне районов — null', () => {
+  const stale = districtLabel(mock, 'mock_b', 'ru');
+  assert.equal(stale.name, 'Мок-район Б');
+  assert.equal(say('ru', stale.note), 'граница в OSM устарела (01.04.2019)');
+  assert.deepEqual(districtLabel(mock, 'mock_a', 'kk'), { name: 'Мок-аудан А', note: null });
+  assert.equal(districtLabel(mock, null, 'ru'), null);
+});
+
+test('ревью 9.1: «нет объектов» — по слою; kk-строки районов; про Every Door — не «вопросы»', () => {
+  const want = {
+    ru: ['нет мест', 'нет дорожек', 'нет переходов'],
+    kk: ['орын жоқ', 'жол жоқ', 'өткел жоқ'],
+    en: ['no places', 'no footpaths', 'no crossings'],
+  };
+  for (const [lang, texts] of Object.entries(want)) {
+    setLang(lang);
+    assert.deepEqual(['poi', 'm', 'crossings'].map((u) => t(`gaps.noneShort.${u}`)), texts);
+    assert.match(t('gaps.helpPeople'), /StreetComplete/);
+    assert.match(t('gaps.helpPeople'), /Every Door/);
+  }
+  setLang('ru');
+  assert.match(t('gaps.helpPeople'), /Every Door: в нём удобно дописать/);
+  setLang('kk');
+  assert.equal(t('gaps.district.unassigned'), 'аудандар шекарасынан тыс');
+  assert.equal(t('gaps.districtsSource', { date: '18.10.2026' }), 'Аудан шекаралары — OpenStreetMap-тің 18.10.2026 күнгі деректері.');
 });

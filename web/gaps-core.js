@@ -138,3 +138,87 @@ export function attributionUrl(kind, url) {
   }
   return ATTR_DEFAULTS[kind];
 }
+
+// ------------------------------------------------------------------ районы (контракт 1.4.1, CityGaps.districts)
+// Блок необязателен: без него таблицы районов нет. Район — те же шесть пар «всего / нет данных», без оценок.
+// status: ok — граница из OSM; stale — граница в OSM устарела (считаем по ней и пишем об этом);
+// missing — границы в OSM нет: ни контура, ни чисел, его территория — в unassigned («вне границ районов»).
+
+export const hasDistricts = (data) => Array.isArray(data?.districts?.items) && data.districts.items.length > 0;
+
+// Список районов сверен с сайтом акимата? Если нет — интерфейс пишет «список районов не сверен»
+export const districtListChecked = (data) =>
+  Boolean(data?.districts?.official_list_url && data?.districts?.official_list_checked);
+
+export const DISTRICT_SORTS = ['name', 'share-desc', 'share-asc'];
+
+// Строки таблицы районов для слоя. sort: 'name' — по алфавиту языка страницы (localeCompare),
+// 'share-desc' / 'share-asc' — по доле «нет данных»; строки без доли («мало данных», «нечего считать», missing)
+// при сортировке по доле идут после строк с долей, по алфавиту. «Вне границ районов» — всегда последней,
+// и только если там есть ячейки. Пороги «мало данных» — те же, что у ячеек (gapClass).
+export function districtRows(data, layer, lang, sort = 'name') {
+  const d = data?.districts;
+  if (!hasDistricts(data)) return [];
+  const rows = d.items.map((it) => {
+    const missing = it.status === 'missing' || !it.counts;
+    const counts = missing ? null : it.counts;
+    const cls = missing ? 'missing' : gapClass(counts, layer);
+    const { total, part } = missing ? { total: null, part: null } : layerCounts(counts, layer);
+    return {
+      id: it.id,
+      name: it.name?.[lang] || it.name?.ru || it.id,
+      status: it.status,
+      boundaryDate: it.boundary_date || null,
+      counts,
+      part,
+      total,
+      cls,
+      pct: typeof cls === 'number' ? pct(part, total) : null,
+    };
+  });
+  const byName = (a, b) => a.name.localeCompare(b.name, lang);
+  if (sort === 'name') {
+    rows.sort(byName);
+  } else {
+    const dir = sort === 'share-asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      if ((a.pct === null) !== (b.pct === null)) return a.pct === null ? 1 : -1;
+      if (a.pct === null) return byName(a, b);
+      return dir * (a.pct - b.pct) || byName(a, b);
+    });
+  }
+  if (d.unassigned_cells > 0) {
+    const counts = d.unassigned;
+    const cls = gapClass(counts, layer);
+    const { total, part } = layerCounts(counts, layer);
+    rows.push({ id: null, name: null, unassigned: true, counts, part, total, cls, pct: typeof cls === 'number' ? pct(part, total) : null });
+  }
+  return rows;
+}
+
+// Пометка строки: stale — «граница в OSM устарела (01.04.2019)», missing — «границы нет в OSM»; иначе null
+export function districtNote(row) {
+  if (row.status === 'stale') return { key: 'gaps.district.stale', vars: { date: formatDate(row.boundaryDate) || '' } };
+  if (row.status === 'missing') return { key: 'gaps.district.missing', vars: {} };
+  return null;
+}
+
+// Полоса нажатия у контура района: Leaflet canvas ловит линию на weight/2 + tolerance (2 px) с каждой стороны,
+// то есть всего weight + 4 px. Чтобы у границ нажималась ячейка, а не район, полоса — не больше четверти
+// ячейки на экране и не больше 12 px; если ячейка меньше 24 px, контур не ловит нажатие (0 — снять полосу).
+export const OUTLINE_TAP_TOLERANCE = 2;
+
+export function outlineHitWeight(cellPx) {
+  if (!(cellPx >= 24)) return 0;
+  return Math.max(2, Math.min(12, Math.floor(cellPx / 4) - OUTLINE_TAP_TOLERANCE * 2));
+}
+
+// Район ячейки для текста по нажатию: название и пометка stale (как при нажатии на контур); null — вне районов
+export function districtLabel(data, id, lang) {
+  const it = id ? data?.districts?.items?.find((x) => x.id === id) : null;
+  if (!it) return null;
+  return {
+    name: it.name?.[lang] || it.name?.ru || it.id,
+    note: districtNote({ status: it.status, boundaryDate: it.boundary_date }),
+  };
+}

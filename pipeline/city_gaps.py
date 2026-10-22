@@ -1,11 +1,11 @@
-"""«Карта пробелов данных»: data/processed/city_gaps.json (CityGaps, contract 1.4.0).
+"""«Карта пробелов данных»: data/processed/city_gaps.json (CityGaps, contract 1.4.1).
 
-    python -m pipeline.city_gaps                # poi.jsonl + walk graph -> city_gaps.json
-    python -m pipeline.city_gaps --fetch-districts   # also district boundaries for REPORT
+    python -m pipeline.city_gaps                     # poi.jsonl + walk graph -> city_gaps.json
+    python -m pipeline.city_gaps --fetch-districts   # first refresh districts.json (OSM API)
 
-Where Astana's open data lacks facts, per H3 r8 cell and for the whole city, from the places
-(data/processed/poi.jsonl) and the walk graph already built (walk_graph.npz + meta). Counts
-only, as docs/ARCHITECTURE.md section 5 defines them (readers compute shares and «мало
+Where Astana's open data lacks facts, per H3 r8 cell, per district and for the whole city, from
+the places (data/processed/poi.jsonl) and the walk graph already built (walk_graph.npz + meta).
+Counts only, as docs/ARCHITECTURE.md section 5 defines them (readers compute shares and «мало
 данных»):
 - places: all, without opening hours, wheelchair unknown, without a Kazakh name;
 - walk graph: metres of edges, of them with neither lit (edge bit 2) nor unlit (bit 32);
@@ -16,9 +16,11 @@ exactly the sum over cells; empty cells are left out; cells go by h3_cell. The s
 gives the same file but for built_at. Aggregates of open data only (OSM, ODbL): no places,
 no ids, no requests.
 
-REPORT.md also gets a district table (the full «есть / нет / нет данных» split), when OSM
-boundaries of the city districts are on disk (--fetch-districts, Overpass); without them it
-says so. District rows describe gaps in open data, not the districts themselves.
+Districts (1.4.1) come from data/processed/districts.json (pipeline.districts: the official
+list of the akimat and the OSM boundaries as drawn): a cell belongs to the district whose
+outline holds its centre (h3.cell_to_latlng; even-odd rule; on the line itself, or in two
+outlines, the smaller id). A district's counts are exactly the sum of its cells, the cells
+in no outline are `unassigned`. Without districts.json the file has no districts block.
 """
 
 from __future__ import annotations
@@ -27,45 +29,26 @@ import argparse
 import json
 import logging
 import os
-import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 
 import h3
 import numpy as np
 
 from app.config import get_settings
 from app.hours import ASTANA_TZ
-from app.schemas import GAP_H3_RES, POI, CityGaps, GapCell, GapCounts
-from pipeline.fetch_osm import (
-    ASTANA_BBOX,
-    OverpassError,
-    is_fresh,
-    raw_path,
-    run_query,
-    save_json,
-)
+from app.schemas import GAP_H3_RES, POI, CityGaps, GapCounts
+from pipeline import districts as district_data
 from pipeline.normalize import Edge
 from pipeline.walk_coverage import crossing_class, kerb_class, lit_class
 from pipeline.walk_graph import NODE_CROSSING, load_graph
 
 log = logging.getLogger(__name__)
 
-DISTRICTS_CHUNK = "astana_districts"
-# admin_level of city districts differs between countries: levels 5-9 are fetched and the
-# largest units (the lowest level) lying inside the city are taken. Level 4 and above (the
-# city itself, the region, the country) are never districts
-DISTRICT_LEVELS = ("5", "6", "7", "8", "9")
-# a district of Astana lies inside the city: most of its boundary within the city bbox
-# (the Akmola region districts around it reach far outside)
-DISTRICT_INSIDE_SHARE = 0.9
-BBOX_MARGIN_DEG = 0.05
-OUTSIDE = "вне районов"
-
 LIT = ("yes", "no", "unknown")
+ON_LINE_DEG = 1e-9  # a centre this close to an outline edge is on the line
 
 
 # -------------------------------------------------------------------------- tally
@@ -151,6 +134,60 @@ def total(tallies: Mapping[str, Tally]) -> Tally:
     return out
 
 
+# ---------------------------------------------------------- points in outlines
+
+
+def inside_mask(lats: np.ndarray, lons: np.ndarray, edges: Sequence[Edge]) -> np.ndarray:
+    """normalize.inside for many points at once: the points are sorted by latitude, and each
+    boundary edge only looks at the band of points between its two latitudes."""
+    order = np.argsort(lats, kind="stable")
+    ys, xs = lats[order], lons[order]
+    odd = np.zeros(len(ys), dtype=bool)
+    for (lat1, lon1), (lat2, lon2) in edges:
+        if lat1 == lat2:
+            continue
+        lo, hi = (lat1, lat2) if lat1 < lat2 else (lat2, lat1)
+        a, b = np.searchsorted(ys, lo, side="left"), np.searchsorted(ys, hi, side="left")
+        if a == b:
+            continue  # same rule as inside(): lo <= lat < hi crosses the edge's line
+        x_at = lon1 + (ys[a:b] - lat1) * (lon2 - lon1) / (lat2 - lat1)
+        odd[a:b] ^= xs[a:b] < x_at
+    mask = np.zeros(len(ys), dtype=bool)
+    mask[order] = odd
+    return mask
+
+
+def on_line_mask(lats: np.ndarray, lons: np.ndarray, edges: Sequence[Edge],
+                 eps: float = ON_LINE_DEG) -> np.ndarray:
+    """Points lying on an edge of the outline (within eps degrees)."""
+    out = np.zeros(len(lats), dtype=bool)
+    for (lat1, lon1), (lat2, lon2) in edges:
+        near = ((np.minimum(lat1, lat2) - eps <= lats) & (lats <= np.maximum(lat1, lat2) + eps)
+                & (np.minimum(lon1, lon2) - eps <= lons) & (lons <= np.maximum(lon1, lon2) + eps))
+        if not near.any():
+            continue
+        dy, dx = lat2 - lat1, lon2 - lon1
+        length = np.hypot(dy, dx)
+        cross = np.abs((lats - lat1) * dx - (lons - lon1) * dy) / (length or 1.0)
+        out |= near & (cross <= eps)
+    return out
+
+
+def assign_cells(cells: Sequence[str], outlines: Mapping[str, Sequence]) -> dict[str, str | None]:
+    """{cell: district id or None}: the outline holding the cell centre; on the line, or in
+    two outlines, the smaller id."""
+    centres = [h3.cell_to_latlng(c) for c in cells]
+    lats = np.array([c[0] for c in centres], dtype=np.float64)
+    lons = np.array([c[1] for c in centres], dtype=np.float64)
+    owner: list[str | None] = [None] * len(cells)
+    for did in sorted(outlines, reverse=True):  # smaller ids last: they win
+        edges = district_data.edges_of(outlines[did])
+        hit = inside_mask(lats, lons, edges) | on_line_mask(lats, lons, edges)
+        for i in np.flatnonzero(hit):
+            owner[i] = did
+    return dict(zip(cells, owner, strict=True))
+
+
 # --------------------------------------------------------------------------- build
 
 
@@ -160,52 +197,89 @@ def newest_snapshot(meta: Mapping) -> str:
     return max(dates) if dates else str(meta["osm_snapshot"])[:10]
 
 
+def _sum(cells: Sequence[Mapping]) -> dict[str, int]:
+    return {name: sum(c[name] for c in cells) for name in GapCounts.model_fields}
+
+
+def districts_block(cells: list[dict], districts_file: Mapping) -> dict:
+    """GapDistricts from districts.json; sets "district" on the cells (dicts) in place."""
+    entries = districts_file["districts"]
+    changes = districts_file.get("composition_changes") or []
+    status = {e["id"]: district_data.district_status(e, changes)[0] for e in entries}
+    outlines = {e["id"]: e["outline"] for e in entries if status[e["id"]] != "missing"}
+    owner = assign_cells([c["h3_cell"] for c in cells], outlines)
+    for c in cells:
+        c["district"] = owner[c["h3_cell"]]
+    items = []
+    for e in entries:
+        mine = [c for c in cells if c["district"] == e["id"]]
+        item = {"id": e["id"], "name": e["name"], "status": status[e["id"]],
+                "cell_count": len(mine)}
+        if status[e["id"]] != "missing":
+            item.update(osm_relation=e["osm_relation"], boundary_date=e["boundary_date"],
+                        counts=_sum(mine), outline=e["outline"])
+        items.append(item)
+    rest = [c for c in cells if c["district"] is None]
+    return {
+        "boundaries_date": districts_file["boundaries_date"],
+        "official_list_url": districts_file.get("official_list_url"),
+        "official_list_checked": districts_file.get("official_list_checked"),
+        "items": items,
+        "unassigned": _sum(rest),
+        "unassigned_cells": len(rest),
+    }
+
+
 def build_city_gaps(graph: Mapping[str, np.ndarray], pois: Sequence[POI], meta: Mapping,
-                    built_at: datetime) -> CityGaps:
+                    built_at: datetime, districts_file: Mapping | None = None) -> CityGaps:
     by_cell = tally(graph, pois, cells_of)
     cells = []
     for cell in sorted(by_cell):
         counts = by_cell[cell].counts()
         if counts["poi"] or counts["walk_m"] or counts["crossings"]:  # empty cells: left out
-            cells.append(GapCell(h3_cell=cell, **counts))
-    city = {name: sum(getattr(c, name) for c in cells) for name in GapCounts.model_fields}
-    return CityGaps.model_validate({
+            cells.append({"h3_cell": cell, **counts})
+    data = {
         "built_at": built_at,
         "poi_date": max(str(p.fetched_at)[:10] for p in pois),
         "walk_graph_date": newest_snapshot(meta),
-        "city": city,
-        "cells": [c.model_dump() for c in cells],
-    })
+        "city": _sum(cells),
+    }
+    if districts_file:
+        data["districts"] = districts_block(cells, districts_file)
+    data["cells"] = cells
+    return CityGaps.model_validate(data)
 
 
 def dump(gaps: CityGaps) -> str:
-    """Readable head, one line per cell; the same CityGaps always gives the same text."""
+    """Readable head (an outline ring per line), one line per cell; the same CityGaps always
+    gives the same text."""
     data = gaps.model_dump(mode="json")
     cells = data.pop("cells")
-    head = json.dumps(data, ensure_ascii=False, indent=2)
+    head = district_data.compact_json(data)
     lines = ",\n".join(  # the cell id first: easier to read
         "    " + json.dumps({"h3_cell": c.pop("h3_cell"), **c}, ensure_ascii=False)
         for c in cells)
     return head[:-2] + ',\n  "cells": [\n' + lines + "\n  ]\n}\n"
 
 
-def run(*, built_at: datetime | None = None, fetch_districts_too: bool = False) -> CityGaps:
-    """Build and write settings.city_gaps_path from the files on disk."""
+def run(*, built_at: datetime | None = None, fetch_districts: bool = False) -> CityGaps:
+    """Build and write settings.city_gaps_path from the files on disk (districts.json too)."""
     settings = get_settings()
     processed = settings.poi_path.parent
+    if fetch_districts:
+        district_data.refresh()
     graph_path = settings.walk_graph_path or processed / "walk_graph.npz"
     graph = load_graph(graph_path)
     meta = json.loads(graph_path.with_name("walk_graph_meta.json").read_text(encoding="utf-8"))
     with settings.poi_path.open(encoding="utf-8") as fh:
         pois = [POI.model_validate_json(line) for line in fh if line.strip()]
     gaps = build_city_gaps(graph, pois, meta,
-                           built_at or datetime.now(ASTANA_TZ).replace(microsecond=0))
+                           built_at or datetime.now(ASTANA_TZ).replace(microsecond=0),
+                           district_data.load())
     out = settings.city_gaps_path or processed / "city_gaps.json"
     tmp = out.with_name(out.name + ".tmp")  # next to it: the reader never sees half a file
     tmp.write_text(dump(gaps), encoding="utf-8")
     os.replace(tmp, out)
-    if fetch_districts_too:
-        fetch_districts(raw_dir=settings.data_dir / "raw")
     return gaps
 
 
@@ -242,129 +316,27 @@ def reconcile(city: Mapping[str, int], coverage: Mapping | None,
              "ok": abs(ours - theirs) <= tol + 1e-9} for what, ours, theirs, tol in rows]
 
 
-# ---------------------------------------------------------------------- districts
-
-
-@dataclass
-class District:
-    name: str
-    osm_id: str
-    edges: list[Edge]
-    admin_level: int = 6
-
-
-def districts_query(bbox: tuple[float, float, float, float] = ASTANA_BBOX) -> str:
-    s, w, n, e = bbox
-    levels = "|".join(DISTRICT_LEVELS)
-    return (f"[out:json][timeout:120];\n"
-            f'relation["boundary"="administrative"]["admin_level"~"^({levels})$"]'
-            f"({s},{w},{n},{e});\nout geom;")
-
-
-def fetch_districts(
-    *, force: bool = False, raw_dir: Path | None = None, query_fn: Callable[..., dict] = run_query
-) -> Path | None:
-    """District boundaries (`out geom`) -> data/raw/osm_astana_districts.json. Returns None
-    when Overpass is down and nothing is cached."""
-    path = raw_path(DISTRICTS_CHUNK, raw_dir)
-    if not force and is_fresh(path, ttl_s=30 * 86400):  # boundaries rarely move
-        return path
-    try:
-        payload = query_fn(districts_query(), check_status=True)
-    except OverpassError as exc:
-        log.error("district boundaries failed: %s", exc)
-        return path if path.exists() else None
-    payload.setdefault("qadam", {}).update(
-        {"chunk": DISTRICTS_CHUNK, "fetched_at_unix": int(time.time())}
-    )
-    save_json(path, payload)
-    return path
-
-
-def districts_from(payload: Mapping,
-                   bbox: tuple[float, float, float, float] = ASTANA_BBOX) -> list[District]:
-    """The districts of the city from an `out geom` answer: of the boundaries lying inside the
-    city, those of the lowest admin_level. Member ways are not joined into rings: the
-    even-odd test only needs the boundary edges."""
-    s, w, n, e = bbox
-    s, w, n, e = s - BBOX_MARGIN_DEG, w - BBOX_MARGIN_DEG, n + BBOX_MARGIN_DEG, e + BBOX_MARGIN_DEG
-    found: list[District] = []
-    for el in payload.get("elements", []):
-        tags = el.get("tags") or {}
-        if (el.get("type") != "relation" or tags.get("boundary") != "administrative"
-                or tags.get("admin_level") not in DISTRICT_LEVELS):
-            continue
-        name = tags.get("name:ru") or tags.get("name")
-        lines = [m.get("geometry") or [] for m in el.get("members", [])
-                 if m.get("type") == "way" and m.get("role") in ("outer", "inner", "")]
-        edges: list[Edge] = [((a["lat"], a["lon"]), (b["lat"], b["lon"]))
-                             for line in lines for a, b in zip(line, line[1:], strict=False)]
-        points = [pt for line in lines for pt in line]
-        if not name or not edges:
-            continue
-        inside = sum(1 for pt in points if s <= pt["lat"] <= n and w <= pt["lon"] <= e)
-        if inside / len(points) >= DISTRICT_INSIDE_SHARE:
-            found.append(District(name, f"osm:relation/{el['id']}", edges,
-                                  int(tags["admin_level"])))
-    top = min((d.admin_level for d in found), default=None)
-    return sorted((d for d in found if d.admin_level == top), key=lambda d: d.name)
-
-
-def inside_mask(lats: np.ndarray, lons: np.ndarray, edges: Sequence[Edge]) -> np.ndarray:
-    """normalize.inside for many points at once: the points are sorted by latitude, and each
-    boundary edge only looks at the band of points between its two latitudes."""
-    order = np.argsort(lats, kind="stable")
-    ys, xs = lats[order], lons[order]
-    odd = np.zeros(len(ys), dtype=bool)
-    for (lat1, lon1), (lat2, lon2) in edges:
-        if lat1 == lat2:
-            continue
-        lo, hi = (lat1, lat2) if lat1 < lat2 else (lat2, lat1)
-        a, b = np.searchsorted(ys, lo, side="left"), np.searchsorted(ys, hi, side="left")
-        if a == b:
-            continue  # same rule as inside(): lo <= lat < hi crosses the edge's line
-        x_at = lon1 + (ys[a:b] - lat1) * (lon2 - lon1) / (lat2 - lat1)
-        odd[a:b] ^= xs[a:b] < x_at
-    mask = np.zeros(len(ys), dtype=bool)
-    mask[order] = odd
-    return mask
-
-
-def district_names(lats: np.ndarray, lons: np.ndarray,
-                   districts: Sequence[District]) -> list[str]:
-    names = np.full(len(lats), OUTSIDE, dtype=object)
-    free = np.ones(len(lats), dtype=bool)
-    for d in districts:
-        hit = inside_mask(lats, lons, d.edges) & free
-        names[hit] = d.name
-        free &= ~hit
-    return names.tolist()
-
-
-def district_tallies(raw_dir: Path) -> tuple[list[District], dict[str, Tally]] | None:
-    """For REPORT.md: tallies per district from the boundaries on disk, None without them."""
-    path = raw_path(DISTRICTS_CHUNK, raw_dir)
-    if not path.exists():
-        return None
-    districts = districts_from(json.loads(path.read_text(encoding="utf-8")))
-    if not districts:
-        return None
-    settings = get_settings()
-    processed = settings.poi_path.parent
-    graph = load_graph(settings.walk_graph_path or processed / "walk_graph.npz")
-    with settings.poi_path.open(encoding="utf-8") as fh:
-        pois = [POI.model_validate_json(line) for line in fh if line.strip()]
-    return districts, tally(graph, pois, lambda la, lo: district_names(la, lo, districts))
+def districts_add_up(gaps: Mapping) -> bool:
+    """Districts plus «вне районов» give exactly the city (all counters)."""
+    block = gaps.get("districts")
+    if not block:
+        return True
+    parts = [d["counts"] for d in block["items"] if d.get("counts")] + [block["unassigned"]]
+    return all(sum(p[k] for p in parts) == gaps["city"][k] for k in GapCounts.model_fields)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fetch-districts", action="store_true",
-                        help="also fetch district boundaries (Overpass) for REPORT.md")
+                        help="refresh data/processed/districts.json from the OSM API first")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    gaps = run(fetch_districts_too=args.fetch_districts)
-    print(json.dumps({"cells": len(gaps.cells), **gaps.city.model_dump()}, ensure_ascii=False))
+    gaps = run(fetch_districts=args.fetch_districts)
+    summary = {"cells": len(gaps.cells), **gaps.city.model_dump()}
+    if gaps.districts:
+        summary["districts"] = {d.id: (d.status, d.cell_count) for d in gaps.districts.items}
+        summary["unassigned_cells"] = gaps.districts.unassigned_cells
+    print(json.dumps(summary, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,11 @@ Endpoints (contract):
   GET  /api/landmarks  -> list[Landmark]
   GET  /api/meta       -> {"snapshot_date", "poi_count", "by_category": {...}, "sources": [...]}
   POST /api/recommend  RecommendRequest -> Answer   (422 on invalid input / unknown landmark)
+  GET  /api/city-gaps  -> CityGaps: data/processed/city_gaps.json as is (app/city_gaps.py, read
+                          and strictly checked once at start; Cache-Control public, max-age=3600;
+                          no parameters, extra ones ignored and never logged); 503
+                          {"detail": "city gaps unavailable"} without a good file;
+                          /api/health says "city_gaps": "ready" | "missing"
   /                    -> web/ (StaticFiles, html=True)
 Privacy: log only request_id, latency, h3 resolution and counts — never the cell + query together.
 
