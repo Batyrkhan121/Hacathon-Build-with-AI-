@@ -21,7 +21,7 @@ Windows, Git Bash. В PowerShell те же пути, только через `\`
   `python -m venv .venv && .venv/Scripts/python -m pip install -q -r requirements.txt`
 - Тесты: `.venv/Scripts/python -m pytest -q`
 - Линт: `.venv/Scripts/python -m ruff check app pipeline eval scripts tests`
-- API и UI: `.venv/Scripts/python -m uvicorn app.api:app --reload --port 8000`, затем открыть http://localhost:8000
+- API и UI: `.venv/Scripts/python -m uvicorn app.api:app --reload --port 8000 --no-access-log` (без журнала доступа: в нём была бы строка запроса), затем открыть http://localhost:8000
 - UI на моке, без API: запустить `.venv/Scripts/python -m http.server 5500` из корня, затем открыть http://localhost:5500/web/?mock=1
 - Данные целиком: `.venv/Scripts/python -m pipeline.run_all`
 - Проверка окружения: `.venv/Scripts/python scripts/check_env.py --llm`

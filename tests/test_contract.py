@@ -186,7 +186,7 @@ def _event_card(**over: object) -> dict:
 def test_1_2_0_request_gets_1_3_0_defaults() -> None:
     from app.schemas import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == "1.4.0"  # 1.4.0 adds the city gaps map only
+    assert SCHEMA_VERSION == "1.4.1"  # 1.4.x adds the city gaps map only
     req = RecommendRequest.model_validate({"query": "кофе", "location": {"landmark_id": "expo"}})
     assert (req.route_profile, req.prefs) == ("fastest", None)
     for profile in ("fastest", "accessible", "lit"):
@@ -477,3 +477,59 @@ def test_city_gaps_path_defaults_to_processed_and_can_point_elsewhere(
     get_settings.cache_clear()
     assert get_settings().city_gaps_path == fixture
     get_settings.cache_clear()
+
+
+# ------------------------------------------------------------ 1.4.1: districts (Megah, 22.10)
+
+
+def _district(doc: dict, district_id: str) -> dict:
+    return next(d for d in doc["districts"]["items"] if d["id"] == district_id)
+
+
+def test_city_gaps_mock_districts_add_up_to_the_city() -> None:
+    gaps = CityGaps.model_validate(_gaps())
+    districts = gaps.districts
+    assert districts is not None
+    assert {d.status for d in districts.items} == {"ok", "stale", "missing"}
+    total = districts.unassigned.model_dump()
+    for d in districts.items:
+        for name, value in (d.counts.model_dump() if d.counts else {}).items():
+            total[name] += value
+    assert total == gaps.city.model_dump()
+    cells = sum(d.cell_count for d in districts.items) + districts.unassigned_cells
+    assert cells == len(gaps.cells)
+
+
+def test_city_gaps_without_districts_stays_valid() -> None:
+    doc = _gaps()  # a 1.4.0 file: no districts block, no cell districts
+    doc.pop("districts")
+    for cell in doc["cells"]:
+        cell.pop("district")
+    assert CityGaps.model_validate(doc).districts is None
+
+
+@pytest.mark.parametrize("break_it", [
+    lambda d: d["cells"][0].update(district="nowhere"),
+    lambda d: d["cells"][0].update(district="mock_c"),  # a district without an outline
+    lambda d: _district(d, "mock_a")["counts"].update(poi=10_000, poi_no_hours=0),
+    lambda d: _district(d, "mock_a").update(cell_count=_district(d, "mock_a")["cell_count"] + 1),
+    lambda d: d["districts"]["unassigned"].update(poi=d["districts"]["unassigned"]["poi"] + 1),
+    lambda d: d["districts"].update(unassigned_cells=d["districts"]["unassigned_cells"] + 1),
+    lambda d: _district(d, "mock_c").update(outline=_district(d, "mock_a")["outline"]),
+    lambda d: _district(d, "mock_a").update(outline=[]),
+    lambda d: _district(d, "mock_b").update(counts=None),
+    lambda d: _district(d, "mock_a").update(boundary_date=None),
+    lambda d: _district(d, "mock_a")["name"].pop("kk"),
+    lambda d: _district(d, "mock_a")["outline"][0].pop(),  # ring not closed
+    lambda d: _district(d, "mock_a").update(status="guess"),
+    lambda d: _district(d, "mock_a").update(rating=5),  # no rating of districts
+    lambda d: d["districts"].update(official_list_url="http://example.org/akimat"),
+    lambda d: d["districts"].update(official_list_checked=None),
+    lambda d: d["districts"]["items"].append(dict(_district(d, "mock_c"))),  # duplicate id
+    lambda d: d.pop("districts"),  # cells still name districts
+])
+def test_city_gaps_districts_reject(break_it) -> None:
+    doc = _gaps()
+    break_it(doc)
+    with pytest.raises(ValidationError):
+        CityGaps.model_validate(doc)

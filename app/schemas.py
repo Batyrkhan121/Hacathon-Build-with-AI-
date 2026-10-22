@@ -16,12 +16,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.4.0"
+SCHEMA_VERSION = "1.4.1"
 # 1.1.0: walking route on the OSM walk graph; 1.2.0: cells up to r10;
 # 1.3.0 (wave 8): route_profile, prefs and exclude_poi_ids in the request, route profile facts,
 # event cards, crossing kind unknown; 1.3.1 (wave 8.1): separate likes / avoids vocabularies,
 # conflicting pairs -> 422, MiniRoute.straight_share, Card.venue; 1.4.0 (wave 9): city gaps map
-# (CityGaps in data/processed/city_gaps.json, GET /api/city-gaps); requests and answers unchanged
+# (CityGaps in data/processed/city_gaps.json, GET /api/city-gaps); requests and answers unchanged;
+# 1.4.1 (wave 9.1): districts in CityGaps (GapDistricts, GapCell.district)
 MAX_H3_RES = 10  # finest H3 cell accepted (r10 ≈ 1,8 га in Astana); finer = near-exact point
 
 Lang = Literal["ru", "kk", "en"]
@@ -515,6 +516,10 @@ OSM_ATTRIBUTION = "© OpenStreetMap contributors"
 ODBL_URL = "https://opendatacommons.org/licenses/odbl/1-0/"
 OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+# 1.4.1: districts (Megah, 22.10)
+DistrictStatus = Literal["ok", "stale", "missing"]
+GAP_MAX_DISTRICTS = 20
+GAP_MAX_OUTLINE_POINTS = 4000  # per district, all rings together (simplified OSM boundary)
 
 
 class GapCounts(BaseModel):
@@ -551,6 +556,8 @@ class GapCell(GapCounts):
     """One r8 cell of the map; cells with no places, no walk graph and no crossings are left out."""
 
     h3_cell: str = Field(pattern=r"^[0-9a-f]{15}$")
+    # 1.4.1: the district whose outline holds the cell centre; None = in no district outline
+    district: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$", max_length=40)
 
     @model_validator(mode="after")
     def _r8_cell(self) -> GapCell:
@@ -560,6 +567,72 @@ class GapCell(GapCounts):
             raise ValueError(f"h3_cell must be an H3 cell of resolution {GAP_H3_RES}")
         if self.poi == 0 and self.walk_m == 0 and self.crossings == 0:
             raise ValueError("empty cells are left out of the map")
+        return self
+
+
+LatLon = tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]
+
+
+def _sum_counts(cells: list[GapCell]) -> dict[str, int]:
+    return {name: sum(getattr(cell, name) for cell in cells) for name in GapCounts.model_fields}
+
+
+class GapDistrict(BaseModel):
+    """1.4.1: one district of the official list. `status`: ok — the OSM boundary matches the list;
+    stale — an OSM boundary exists but is outdated (counted by it, and the map says so); missing —
+    no OSM boundary: no outline and no counts, its area falls to `GapDistricts.unassigned`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z0-9_]+$", max_length=40)
+    name: dict[str, str]  # ru / kk / en, as on the official list
+    status: DistrictStatus
+    osm_relation: int | None = Field(default=None, gt=0)  # the OSM boundary relation
+    boundary_date: IsoDate | None = None  # last change of that boundary in OSM
+    cell_count: int = Field(ge=0)  # cells whose centre is inside the outline
+    counts: GapCounts | None = None  # exactly the sum over those cells
+    outline: list[list[LatLon]] = Field(default_factory=list)  # closed rings of (lat, lon)
+
+    @model_validator(mode="after")
+    def _status_fields(self) -> GapDistrict:
+        if set(self.name) != {"ru", "kk", "en"} or not all(v.strip() for v in self.name.values()):
+            raise ValueError("a district needs a name in ru, kk and en")
+        has_boundary = self.status != "missing"
+        parts = (self.osm_relation is not None, self.boundary_date is not None,
+                 self.counts is not None, bool(self.outline))
+        if any(part != has_boundary for part in parts):
+            raise ValueError("a missing district has no boundary, date, counts or outline; "
+                             "ok and stale districts have all of them")
+        if not has_boundary and self.cell_count:
+            raise ValueError("a missing district holds no cells")
+        if any(len(ring) < 4 or ring[0] != ring[-1] for ring in self.outline):
+            raise ValueError("outline rings are closed and have at least 4 points")
+        if sum(len(ring) for ring in self.outline) > GAP_MAX_OUTLINE_POINTS:
+            raise ValueError(f"an outline has at most {GAP_MAX_OUTLINE_POINTS} points")
+        return self
+
+
+class GapDistricts(BaseModel):
+    """1.4.1: the districts block of CityGaps. Districts plus `unassigned` add up to `city`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    boundaries_source: Literal["osm"] = "osm"  # OSM administrative boundaries, ODbL as the rest
+    boundaries_date: IsoDate  # OSM data date of the boundaries used
+    # the akimat page the district list was checked against, and when; None, None: not checked
+    official_list_url: str | None = Field(default=None, pattern=r"^https://", max_length=300)
+    official_list_checked: IsoDate | None = None
+    items: list[GapDistrict] = Field(min_length=1, max_length=GAP_MAX_DISTRICTS)
+    unassigned: GapCounts  # cells whose centre is in no outline: exactly their sum
+    unassigned_cells: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _list_check(self) -> GapDistricts:
+        if (self.official_list_url is None) != (self.official_list_checked is None):
+            raise ValueError("official_list_url and official_list_checked go together")
+        ids = [d.id for d in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("district ids are unique")
         return self
 
 
@@ -586,6 +659,7 @@ class CityGaps(BaseModel):
         "https://www.openstreetmap.org/copyright")
     city: GapCounts  # the whole city: exactly the sum over cells
     cells: list[GapCell] = Field(max_length=GAP_MAX_CELLS)
+    districts: GapDistricts | None = None  # 1.4.1; None: no district data (as in 1.4.0)
 
     @model_validator(mode="after")
     def _consistent(self) -> CityGaps:
@@ -594,7 +668,25 @@ class CityGaps(BaseModel):
         ids = [cell.h3_cell for cell in self.cells]
         if ids != sorted(set(ids)):
             raise ValueError("cells must be unique and sorted by h3_cell")
-        for name in GapCounts.model_fields:
-            if getattr(self.city, name) != sum(getattr(cell, name) for cell in self.cells):
-                raise ValueError(f"city.{name} is not the sum over cells")
+        if self.city.model_dump() != _sum_counts(self.cells):
+            raise ValueError("city is not the sum over cells")
+        if self.districts is None:
+            if any(cell.district is not None for cell in self.cells):
+                raise ValueError("cells name districts, but the file has no districts block")
+            return self
+        # districts + unassigned add up to the city: each district is exactly the sum of its cells
+        by_id = {d.id: d for d in self.districts.items}
+        for cell in self.cells:
+            if cell.district is not None and (cell.district not in by_id
+                                              or by_id[cell.district].status == "missing"):
+                raise ValueError(f"cell {cell.h3_cell}: no outline for district {cell.district!r}")
+        for d in self.districts.items:
+            mine = [cell for cell in self.cells if cell.district == d.id]
+            if d.cell_count != len(mine) or (d.counts is not None
+                                             and d.counts.model_dump() != _sum_counts(mine)):
+                raise ValueError(f"district {d.id}: counts are not the sum over its cells")
+        rest = [cell for cell in self.cells if cell.district is None]
+        if (self.districts.unassigned_cells != len(rest)
+                or self.districts.unassigned.model_dump() != _sum_counts(rest)):
+            raise ValueError("unassigned is not the sum over cells outside the districts")
         return self

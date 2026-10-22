@@ -30,7 +30,8 @@
    "walk_lit_unknown_m": 4747,
    "crossings": 14,
    "crossings_kind_unknown": 5,
-   "crossings_kerb_unknown": 13
+   "crossings_kerb_unknown": 13,
+   "district": null
   },
   {
    "h3_cell": "8821538043fffff",
@@ -42,7 +43,8 @@
    "walk_lit_unknown_m": 5352,
    "crossings": 22,
    "crossings_kind_unknown": 15,
-   "crossings_kerb_unknown": 19
+   "crossings_kerb_unknown": 19,
+   "district": null
   },
   {
    "h3_cell": "8821538049fffff",
@@ -54,7 +56,8 @@
    "walk_lit_unknown_m": 2499,
    "crossings": 4,
    "crossings_kind_unknown": 2,
-   "crossings_kerb_unknown": 4
+   "crossings_kerb_unknown": 4,
+   "district": "mock_b"
   },
   {
    "h3_cell": "882153804bfffff",
@@ -66,7 +69,8 @@
    "walk_lit_unknown_m": 7661,
    "crossings": 6,
    "crossings_kind_unknown": 4,
-   "crossings_kerb_unknown": 6
+   "crossings_kerb_unknown": 6,
+   "district": null
   },
   {
    "h3_cell": "882153804dfffff",
@@ -78,7 +82,8 @@
    "walk_lit_unknown_m": 2910,
    "crossings": 11,
    "crossings_kind_unknown": 3,
-   "crossings_kerb_unknown": 11
+   "crossings_kerb_unknown": 11,
+   "district": "mock_b"
   },
   {
    "h3_cell": "8821538059fffff",
@@ -90,7 +95,8 @@
    "walk_lit_unknown_m": 74,
    "crossings": 0,
    "crossings_kind_unknown": 0,
-   "crossings_kerb_unknown": 0
+   "crossings_kerb_unknown": 0,
+   "district": "mock_a"
   },
   {
    "h3_cell": "882153805dfffff",
@@ -102,7 +108,8 @@
    "walk_lit_unknown_m": 7097,
    "crossings": 30,
    "crossings_kind_unknown": 0,
-   "crossings_kerb_unknown": 25
+   "crossings_kerb_unknown": 25,
+   "district": null
   },
   {
    "h3_cell": "8821538207fffff",
@@ -114,7 +121,8 @@
    "walk_lit_unknown_m": 3861,
    "crossings": 9,
    "crossings_kind_unknown": 4,
-   "crossings_kerb_unknown": 8
+   "crossings_kerb_unknown": 8,
+   "district": "mock_a"
   },
   {
    "h3_cell": "8821538221fffff",
@@ -126,7 +134,8 @@
    "walk_lit_unknown_m": 5061,
    "crossings": 4,
    "crossings_kind_unknown": 1,
-   "crossings_kerb_unknown": 4
+   "crossings_kerb_unknown": 4,
+   "district": "mock_b"
   },
   {
    "h3_cell": "8821538223fffff",
@@ -138,7 +147,8 @@
    "walk_lit_unknown_m": 1672,
    "crossings": 30,
    "crossings_kind_unknown": 1,
-   "crossings_kerb_unknown": 26
+   "crossings_kerb_unknown": 26,
+   "district": "mock_b"
   },
   {
    "h3_cell": "8821538227fffff",
@@ -150,7 +160,8 @@
    "walk_lit_unknown_m": 3794,
    "crossings": 21,
    "crossings_kind_unknown": 13,
-   "crossings_kerb_unknown": 18
+   "crossings_kerb_unknown": 18,
+   "district": "mock_b"
   },
   {
    "h3_cell": "882153822bfffff",
@@ -162,7 +173,8 @@
    "walk_lit_unknown_m": 133,
    "crossings": 0,
    "crossings_kind_unknown": 0,
-   "crossings_kerb_unknown": 0
+   "crossings_kerb_unknown": 0,
+   "district": "mock_a"
   },
   {
    "h3_cell": "8821538231fffff",
@@ -174,7 +186,8 @@
    "walk_lit_unknown_m": 2133,
    "crossings": 17,
    "crossings_kind_unknown": 6,
-   "crossings_kerb_unknown": 14
+   "crossings_kerb_unknown": 14,
+   "district": "mock_a"
   },
   {
    "h3_cell": "8821538233fffff",
@@ -186,7 +199,8 @@
    "walk_lit_unknown_m": 5650,
    "crossings": 20,
    "crossings_kind_unknown": 10,
-   "crossings_kerb_unknown": 18
+   "crossings_kerb_unknown": 18,
+   "district": "mock_a"
   },
   {
    "h3_cell": "8821538235fffff",
@@ -198,7 +212,8 @@
    "walk_lit_unknown_m": 1365,
    "crossings": 27,
    "crossings_kind_unknown": 13,
-   "crossings_kerb_unknown": 23
+   "crossings_kerb_unknown": 23,
+   "district": "mock_b"
   },
   {
    "h3_cell": "8821538237fffff",
@@ -210,7 +225,8 @@
    "walk_lit_unknown_m": 6287,
    "crossings": 11,
    "crossings_kind_unknown": 1,
-   "crossings_kerb_unknown": 9
+   "crossings_kerb_unknown": 9,
+   "district": "mock_a"
   },
   {
    "h3_cell": "8821538239fffff",
@@ -222,7 +238,8 @@
    "walk_lit_unknown_m": 881,
    "crossings": 4,
    "crossings_kind_unknown": 3,
-   "crossings_kerb_unknown": 3
+   "crossings_kerb_unknown": 3,
+   "district": "mock_a"
   },
   {
    "h3_cell": "882153823bfffff",
@@ -234,7 +251,8 @@
    "walk_lit_unknown_m": 129,
    "crossings": 2,
    "crossings_kind_unknown": 0,
-   "crossings_kerb_unknown": 2
+   "crossings_kerb_unknown": 2,
+   "district": "mock_a"
   },
   {
    "h3_cell": "882153823dfffff",
@@ -246,7 +264,132 @@
    "walk_lit_unknown_m": 5004,
    "crossings": 20,
    "crossings_kind_unknown": 10,
-   "crossings_kerb_unknown": 19
+   "crossings_kerb_unknown": 19,
+   "district": "mock_a"
   }
- ]
+ ],
+ "districts": {
+  "boundaries_source": "osm",
+  "boundaries_date": "2026-10-18",
+  "official_list_url": "https://example.org/akimat/districts",
+  "official_list_checked": "2026-10-22",
+  "items": [
+   {
+    "id": "mock_a",
+    "name": {
+     "ru": "Мок-район А",
+     "kk": "Мок-аудан А",
+     "en": "Mock district A"
+    },
+    "status": "ok",
+    "osm_relation": 1000001,
+    "boundary_date": "2026-09-30",
+    "cell_count": 9,
+    "counts": {
+     "poi": 183,
+     "poi_no_hours": 80,
+     "poi_wheelchair_unknown": 157,
+     "poi_no_name_kk": 134,
+     "walk_m": 31428,
+     "walk_lit_unknown_m": 24152,
+     "crossings": 83,
+     "crossings_kind_unknown": 34,
+     "crossings_kerb_unknown": 73
+    },
+    "outline": [
+     [
+      [
+       51.13032,
+       71.39587
+      ],
+      [
+       51.13032,
+       71.47317
+      ],
+      [
+       51.1566,
+       71.47317
+      ],
+      [
+       51.1566,
+       71.39587
+      ],
+      [
+       51.13032,
+       71.39587
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "mock_b",
+    "name": {
+     "ru": "Мок-район Б",
+     "kk": "Мок-аудан Б",
+     "en": "Mock district B"
+    },
+    "status": "stale",
+    "osm_relation": 1000002,
+    "boundary_date": "2019-04-01",
+    "cell_count": 6,
+    "counts": {
+     "poi": 156,
+     "poi_no_hours": 67,
+     "poi_wheelchair_unknown": 127,
+     "poi_no_name_kk": 122,
+     "walk_m": 22545,
+     "walk_lit_unknown_m": 17301,
+     "crossings": 97,
+     "crossings_kind_unknown": 33,
+     "crossings_kerb_unknown": 86
+    },
+    "outline": [
+     [
+      [
+       51.10304,
+       71.39587
+      ],
+      [
+       51.10304,
+       71.43502
+      ],
+      [
+       51.13032,
+       71.43502
+      ],
+      [
+       51.13032,
+       71.39587
+      ],
+      [
+       51.10304,
+       71.39587
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "mock_c",
+    "name": {
+     "ru": "Мок-район В",
+     "kk": "Мок-аудан В",
+     "en": "Mock district C"
+    },
+    "status": "missing",
+    "cell_count": 0
+   }
+  ],
+  "unassigned": {
+   "poi": 133,
+   "poi_no_hours": 84,
+   "poi_wheelchair_unknown": 95,
+   "poi_no_name_kk": 67,
+   "walk_m": 27765,
+   "walk_lit_unknown_m": 24857,
+   "crossings": 72,
+   "crossings_kind_unknown": 24,
+   "crossings_kerb_unknown": 63
+  },
+  "unassigned_cells": 4
+ }
 }
