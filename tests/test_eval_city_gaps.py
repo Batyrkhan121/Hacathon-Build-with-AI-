@@ -341,3 +341,15 @@ def test_even_odd_with_a_hole() -> None:
     assert cg._in_outline(2, 2, [outer, hole])
     assert not cg._in_outline(5, 5, [outer, hole])
     assert not cg._in_outline(12, 5, [outer])
+
+
+
+def test_value_already_in_the_map_is_not_an_echo(raw: dict) -> None:
+    """A district outline point 51.08941 contains the probe «51.0894»: same answer with and
+    without parameters, so nothing was echoed."""
+    raw["districts"]["items"][0]["outline"][0][1] = [51.08941, 71.4]
+    text = json.dumps(raw, ensure_ascii=False)
+    checks = {c.id: c for c in cg.check_privacy(_server(text))}
+    assert checks["privacy_params"].passed, checks["privacy_params"].detail
+    echoed = {c.id: c for c in cg.check_privacy(_server(text, echo=True))}
+    assert not echoed["privacy_params"].passed  # the query text is not in the plain answer

@@ -317,7 +317,9 @@ def check_privacy(get: GetFn, log_lines: Callable[[], list[str]] | None = None) 
         return [Check("privacy_params", title, False, f"HTTP {status0} / {status1}")]
     same = _json(text0) == _json(text1)
     values = probe_forms()
-    in_answer = sorted({v for v in values if v in text1})
+    # an echo is a value that the parameters brought in: one that is in the plain answer too
+    # (e.g. «51.0894» inside an outline point 51.08941) is part of the map, not of the request
+    in_answer = sorted({v for v in values if v in text1 and v not in text0})
     checks = [
         Check("privacy_params", title, same and not in_answer,
               "ответ тот же, значений параметров в нём нет" if same and not in_answer else
