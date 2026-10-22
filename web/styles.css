@@ -3340,3 +3340,62 @@ body:not(.v2) .submit-row .btn-primary {
   min-height: 44px;
   color: var(--accent-strong);
 }
+
+/* T153 (1.4.1): таблица районов — сортировка кнопками в заголовке (44 px), пометки stale/missing строкой под названием */
+.gaps-table .th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.gaps-table th[aria-sort="ascending"] .th-sort,
+.gaps-table th[aria-sort="descending"] .th-sort {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.gaps-table .district-note {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+.gaps-table td.district-note {
+  display: table-cell;
+}
+
+.gaps-table .is-unassigned th,
+.gaps-table .is-unassigned td {
+  border-top: 2px solid var(--line-strong);
+  color: var(--ink-2);
+}
+
+.gaps-districts-note {
+  margin: 8px 0 0;
+  font-size: var(--v2-fs-s);
+  color: var(--ink-2);
+}
+
+/* контуры районов в легенде: сплошная линия — граница из OSM, пунктир — граница устарела */
+.gap-swatch[data-gap="outline"],
+.gap-swatch[data-gap="outline-stale"],
+.gap-swatch[data-gap="missing"] {
+  height: 0;
+  border: 0;
+  border-radius: 0;
+  border-top: 2px solid var(--ink);
+}
+
+.gap-swatch[data-gap="outline-stale"] {
+  border-top-style: dashed;
+}
