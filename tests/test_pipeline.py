@@ -2742,3 +2742,13 @@ def test_the_budget_spent_by_the_parse_stops_the_card_call(deps: Deps, tmp_path:
     assert a.cards and a.data_used.generation == "template"
     assert BUDGET_LINE["ru"] in a.warnings
     assert llm.budget_state() == "reached"
+
+
+def test_budget_spent_by_the_parse_but_cards_from_the_cache_is_not_without_ai(deps: Deps) -> None:
+    """Review remark: the parse hit the budget, the cards came from the disk cache (generation
+    llm): «ответ собран без ИИ» would be false; the parse line names the reason instead."""
+    llm = FakeLLM(parse_fail=LLMUnavailable("spent"), error_kind="budget")
+    a = recommend(req("кофе"), Deps(store=deps.store, llm=llm, settings=deps.settings))
+    assert a.data_used.generation == "llm" and a.intent.parser == "rules"
+    assert BUDGET_LINE["ru"] not in a.warnings
+    assert any("дневной лимит исчерпан" in w for w in a.warnings)

@@ -42,6 +42,7 @@ Notes:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -52,7 +53,7 @@ import traceback
 from collections import Counter, OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
 from typing import Annotated, Any
@@ -214,20 +215,27 @@ class RateLimiter:
 
     The client is client.host, or with `trusted_hops` = N proxies in front the N-th entry of
     X-Forwarded-For from the right — the one the last trusted proxy added, so an entry the
-    client wrote itself does not help; with 0 the header is never read. Counters are keyed by
-    sha256(salt + ip), the salt is random per process, so neither the log nor the memory holds
-    an address; at most `max_clients` of them (least recently seen dropped first)."""
+    client wrote itself does not help; with 0 the header is never read. An IPv6 client counts
+    by its /64 (one subscriber's network), an IPv4-mapped IPv6 by its IPv4. Counters are keyed
+    by sha256(salt + address): neither the log nor the memory holds an address, at most
+    `max_clients` keys (least recently seen dropped first). At the Astana midnight every
+    counter is dropped and the salt changes: nothing is kept longer than its day (the hashes of
+    an IPv4 address are pseudonymous personal data). The minute window runs on a monotonic
+    clock, so moving the wall clock cannot stretch it; the day follows the Astana calendar."""
 
     def __init__(self, per_min: int, per_day: int, trusted_hops: int = 0, *,
                  clock: Callable[[], datetime] | None = None,
+                 monotonic: Callable[[], float] | None = None,
                  max_clients: int = RATE_MAX_CLIENTS) -> None:
         self.per_min = max(0, per_min)
         self.per_day = max(0, per_day)
         self.trusted_hops = max(0, trusted_hops)
         self.max_clients = max_clients
         self._clock = clock or (lambda: datetime.now(ASTANA_TZ))
+        self._monotonic = monotonic or time.monotonic
         self._salt = secrets.token_bytes(16)
-        # key -> [minute window start (unix s), count in it, Astana date, count that day]
+        self._day: date | None = None  # the Astana day the counters and the salt belong to
+        # key -> [minute window start (monotonic s), count in it, count that day]
         self._clients: OrderedDict[str, list[Any]] = OrderedDict()
         self._lock = threading.Lock()
 
@@ -247,29 +255,46 @@ class RateLimiter:
         entries = [e.strip() for v in values for e in v.split(",") if e.strip()]
         return entries[-self.trusted_hops] if len(entries) >= self.trusted_hops else host
 
+    @staticmethod
+    def bucket(ip: str) -> str:
+        """What one client is: an IPv4 address, an IPv6 /64, the IPv4 of an IPv4-mapped IPv6."""
+        try:
+            addr = ipaddress.ip_address(ip.strip("[]"))
+        except ValueError:
+            return ip
+        if isinstance(addr, ipaddress.IPv6Address):
+            if addr.ipv4_mapped is not None:
+                return str(addr.ipv4_mapped)
+            return str(ipaddress.IPv6Network((addr, 64), strict=False))
+        return str(addr)
+
     def _key(self, ip: str) -> str:
-        return hashlib.sha256(self._salt + ip.encode("utf-8", "replace")).hexdigest()[:32]
+        bucket = self.bucket(ip).encode("utf-8", "replace")
+        return hashlib.sha256(self._salt + bucket).hexdigest()[:32]
 
     def hit(self, scope: dict) -> int | None:
         """Count this request: None when it may go on, else the Retry-After seconds."""
         now = self._clock().astimezone(ASTANA_TZ)
-        ts, day = now.timestamp(), now.date()
-        key = self._key(self.client_ip(scope))
+        mono, day = self._monotonic(), now.date()
+        ip = self.client_ip(scope)
         with self._lock:
-            rec = self._clients.pop(key, None) or [ts, 0, day, 0]
-            if ts - rec[0] >= 60:
-                rec[0], rec[1] = ts, 0
-            if rec[2] != day:
-                rec[2], rec[3] = day, 0
+            if day != self._day:  # a new Astana day: drop yesterday's hashes, new salt
+                self._clients.clear()
+                self._salt = secrets.token_bytes(16)
+                self._day = day
+            key = self._key(ip)
+            rec = self._clients.pop(key, None) or [mono, 0, 0]
+            if mono - rec[0] >= 60:
+                rec[0], rec[1] = mono, 0
             retry: int | None = None
-            if self.per_day and rec[3] >= self.per_day:  # until the Astana midnight
+            if self.per_day and rec[2] >= self.per_day:  # until the Astana midnight
                 midnight = datetime.combine(day + timedelta(days=1), dt_time(0), ASTANA_TZ)
                 retry = math.ceil((midnight - now).total_seconds())
             elif self.per_min and rec[1] >= self.per_min:
-                retry = math.ceil(60 - (ts - rec[0]))
+                retry = math.ceil(60 - (mono - rec[0]))
             else:
                 rec[1] += 1
-                rec[3] += 1
+                rec[2] += 1
             self._clients[key] = rec  # the most recently seen at the end
             while len(self._clients) > self.max_clients:
                 self._clients.popitem(last=False)
@@ -431,17 +456,18 @@ def create_app(deps: Deps | None = None) -> FastAPI:
     app.state.city_gaps = None  # bytes of city_gaps.json once the lifespan loaded it
     app.state.prompt_problems = check_prompts()
     llm_slots = threading.BoundedSemaphore(MAX_CONCURRENT_LLM)
+    # ApiGuard first, CORS around it (the last added runs outermost): a 429 / 413 from ApiGuard
+    # carries the CORS headers, so the dev UI on :5500 sees the 429, not a CORS error
+    limits = deps.settings if deps is not None else get_settings()
+    limiter = RateLimiter(limits.rate_per_min, limits.rate_per_day, limits.trusted_proxy_hops)
+    app.state.rate_limiter = limiter
+    app.add_middleware(ApiGuard, limiter=limiter)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=DEV_ORIGINS,
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
-    limits = deps.settings if deps is not None else get_settings()
-    limiter = RateLimiter(limits.rate_per_min, limits.rate_per_day, limits.trusted_proxy_hops)
-    app.state.rate_limiter = limiter
-    app.add_middleware(ApiGuard, limiter=limiter)
-
     @app.exception_handler(RequestValidationError)
     async def request_invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
         # input/ctx may contain private data or NaN; even loc/msg can echo user input.

@@ -37,7 +37,11 @@ waiting for timeouts on every request.
 Daily budget (T161, ARCHITECTURE §5 «Публичное демо»): with LLM_DAILY_BUDGET_USD and both prices
 every answer's `usage` is costed — input tokens with cache writes and reads at
 LLM_PRICE_IN_PER_MTOK, output tokens at LLM_PRICE_OUT_PER_MTOK, per million — and summed per
-Astana day in memory (a restart resets it: the Console spend limit stays the backstop). Before
+Astana day in memory (a restart resets it: the Console spend limit stays the backstop). The call
+goes through `with_raw_response`, so the usage is read from the raw answer BEFORE the SDK checks
+the text: a refused, truncated or schema-breaking answer (pydantic ValidationError inside
+parse) is paid and counted too; an answer without a usable `usage` is charged a cautious
+estimate (the prompt by its length, MAX_TOKENS of output). Before
 every call, the fallback model's too: spent >= budget -> no call, LLMUnavailable with
 last_error "budget" (the pipeline answers without AI and says so). A budget without usable
 prices ("misconfigured") -> Claude is never called (last_error "budget_misconfigured").
@@ -57,6 +61,7 @@ import unicodedata
 from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, TypeVar
 
 import numpy as np
@@ -168,6 +173,33 @@ class _DaySpend:
             self._usd += max(0.0, usd)
 
 
+CHARS_PER_TOKEN_CAUTIOUS = 2.0  # Cyrillic runs ~2–3 chars a token: fewer chars = more tokens
+
+
+def _raw_usage(raw: Any) -> Any:
+    """`usage` of the raw HTTP answer as an object (None when it cannot be read)."""
+    try:
+        body = raw.json()
+    except Exception:  # noqa: BLE001 - then the cautious estimate is charged
+        return None
+    usage = body.get("usage") if isinstance(body, dict) else None
+    return SimpleNamespace(**usage) if isinstance(usage, dict) else None
+
+
+def _has_usage(usage: Any) -> bool:
+    return usage is not None and any(
+        isinstance(getattr(usage, name, None), (int, float))
+        for name in ("input_tokens", "output_tokens"))
+
+
+def estimated_cost_usd(system: str, prompt: str, price_in_per_mtok: float,
+                       price_out_per_mtok: float) -> float:
+    """A cautious charge for a paid answer without `usage`: the input by its length (2 chars
+    a token), the output as MAX_TOKENS — more than any real answer here."""
+    tokens_in = (len(system) + len(prompt)) / CHARS_PER_TOKEN_CAUTIOUS
+    return (tokens_in * price_in_per_mtok + MAX_TOKENS * price_out_per_mtok) / 1e6
+
+
 def usage_cost_usd(usage: Any, price_in_per_mtok: float, price_out_per_mtok: float) -> float:
     """The cost of one answer by its `usage`: input tokens with cache creation and cache reads
     at the input price, output tokens at the output price, both per million tokens."""
@@ -211,12 +243,16 @@ class LLMClient:
             return False
         return self._spend.spent(self._clock()) >= budget
 
-    def _record_usage(self, resp: Any) -> None:
+    def _record_usage(self, usage: Any, system: str = "", prompt: str = "") -> None:
+        """Charge one paid answer: by its usage, or a cautious estimate without one."""
         if self.settings.llm_budget_state != "set":
             return
-        cost = usage_cost_usd(getattr(resp, "usage", None),
-                              float(self.settings.llm_price_in_per_mtok or 0),
-                              float(self.settings.llm_price_out_per_mtok or 0))
+        price_in = float(self.settings.llm_price_in_per_mtok or 0)
+        price_out = float(self.settings.llm_price_out_per_mtok or 0)
+        if _has_usage(usage):
+            cost = usage_cost_usd(usage, price_in, price_out)
+        else:
+            cost = estimated_cost_usd(system, prompt, price_in, price_out)
         self._spend.add(cost, self._clock())
 
     # ------------------------------------------------------------------ state
@@ -365,7 +401,7 @@ class LLMClient:
 
         client = self._get_client().with_options(max_retries=retries)
         try:
-            resp = client.beta.messages.parse(
+            raw = client.beta.messages.with_raw_response.parse(
                 model=model,
                 max_tokens=MAX_TOKENS,
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -375,6 +411,9 @@ class LLMClient:
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )
+            # an HTTP 200 answer is paid: count it before the SDK checks the text (T161)
+            self._record_usage(_raw_usage(raw), system, prompt)
+            resp = raw.parse()
         except ValidationError as exc:
             # The SDK validates inside parse(): refused or truncated text lands here.
             raise _ModelFailed(f"invalid structured output ({exc.error_count()} errors)",
@@ -391,7 +430,6 @@ class LLMClient:
             # 400 (bad request / credit balance), 404 (unknown model), 5xx / 529 after retries
             raise _ModelFailed(f"HTTP {exc.status_code}", kind=_status_kind(exc)) from exc
 
-        self._record_usage(resp)  # a refused or truncated answer costs the same
         if resp.stop_reason == "refusal":
             raise _ModelFailed("stop_reason=refusal", kind="refusal")
         if resp.stop_reason == "max_tokens":

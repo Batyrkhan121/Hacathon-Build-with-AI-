@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterator
 from datetime import datetime as _dt
 from pathlib import Path
+from typing import Any
 
 import h3
 import httpx
@@ -746,21 +747,33 @@ def _scope(host: str = "198.51.100.9", xff: list[str] | None = None) -> dict:
 
 
 class _Clock:
+    """The wall clock (Astana days) and a monotonic one (the minute window), moved together."""
+
     def __init__(self, now: _dt) -> None:
         self.now = now
+        self.mono_s = 1000.0
 
     def __call__(self) -> _dt:
         return self.now
+
+    def mono(self) -> float:
+        return self.mono_s
 
     def tick(self, seconds: float) -> None:
         from datetime import timedelta
 
         self.now = self.now + timedelta(seconds=seconds)
+        self.mono_s += seconds
+
+
+def _limiter(clock: _Clock, per_min: int = 0, per_day: int = 0, hops: int = 0,
+             **kw: Any) -> api.RateLimiter:
+    return api.RateLimiter(per_min, per_day, hops, clock=clock, monotonic=clock.mono, **kw)
 
 
 def test_minute_window_counts_and_resets() -> None:
     clock = _Clock(_dt(2026, 10, 22, 12, 0, 0, tzinfo=ASTANA_TZ))
-    rl = api.RateLimiter(per_min=3, per_day=0, clock=clock)
+    rl = _limiter(clock, per_min=3)
     assert [rl.hit(_scope()) for _ in range(3)] == [None, None, None]
     clock.tick(20)
     assert rl.hit(_scope()) == 40  # Retry-After: the rest of the minute
@@ -771,20 +784,19 @@ def test_minute_window_counts_and_resets() -> None:
 
 def test_day_window_resets_at_astana_midnight() -> None:
     clock = _Clock(_dt(2026, 10, 22, 23, 59, 0, tzinfo=ASTANA_TZ))
-    rl = api.RateLimiter(per_min=0, per_day=2, clock=clock)
+    rl = _limiter(clock, per_day=2)
     assert rl.hit(_scope()) is None and rl.hit(_scope()) is None
     assert rl.hit(_scope()) == 60  # until 00:00 in Astana
     clock.tick(61)  # 00:00:01 on the 23rd (18:59 UTC: the day is Astana's)
     assert rl.hit(_scope()) is None
-    later = api.RateLimiter(per_min=0, per_day=1, clock=_Clock(
-        _dt(2026, 10, 22, 10, 0, tzinfo=ASTANA_TZ)))
+    later = _limiter(_Clock(_dt(2026, 10, 22, 10, 0, tzinfo=ASTANA_TZ)), per_day=1)
     later.hit(_scope())
     assert later.hit(_scope()) == 14 * 3600  # 10:00 -> midnight
 
 
 def test_the_day_limit_wins_over_the_minute_for_retry_after() -> None:
     clock = _Clock(_dt(2026, 10, 22, 23, 0, 0, tzinfo=ASTANA_TZ))
-    rl = api.RateLimiter(per_min=1, per_day=1, clock=clock)
+    rl = _limiter(clock, per_min=1, per_day=1)
     rl.hit(_scope())
     assert rl.hit(_scope()) == 3600
 
@@ -886,3 +898,58 @@ def test_health_says_reached_when_the_budget_is_spent(deps: Deps,
     with TestClient(api.create_app(Deps(store=deps.store, llm=LLMClient(settings),
                                         settings=settings))) as c:
         assert c.get("/api/health").json()["llm_budget"] == "reached"
+
+
+
+# ------------------- review abca90d: no hash outlives its day, monotonic minute, IPv6 /64, CORS
+
+
+def test_counters_and_salt_are_dropped_at_astana_midnight() -> None:
+    """BLOCK 2: the salted hashes of an address are pseudonymous personal data — nothing is
+    kept past its Astana day (before, three-day-old entries were still there)."""
+    clock = _Clock(_dt(2026, 10, 22, 23, 50, tzinfo=ASTANA_TZ))
+    rl = _limiter(clock, per_min=5, per_day=100)
+    for i in range(5):
+        rl.hit(_scope(f"192.0.2.{i}"))
+    assert len(rl) == 5
+    salt = rl._salt
+    old_key = rl._key("192.0.2.0")
+    clock.tick(15 * 60)  # 00:05 on the 23rd
+    rl.hit(_scope("198.51.100.9"))
+    assert len(rl) == 1  # yesterday's five are gone
+    assert rl._salt != salt and rl._key("192.0.2.0") != old_key  # and the salt is new
+    clock.tick(3 * 24 * 3600)
+    rl.hit(_scope("198.51.100.9"))
+    assert len(rl) == 1
+
+
+def test_moving_the_wall_clock_back_cannot_stretch_the_minute() -> None:
+    clock = _Clock(_dt(2026, 10, 22, 12, 0, tzinfo=ASTANA_TZ))
+    rl = _limiter(clock, per_min=1)
+    rl.hit(_scope())
+    from datetime import timedelta
+
+    clock.now -= timedelta(minutes=2)  # the wall clock jumps back, monotonic time goes on
+    clock.mono_s += 20
+    assert rl.hit(_scope()) == 40  # not 180
+
+
+@pytest.mark.parametrize(("a", "b", "same"), [
+    ("2001:db8:1:2::10", "2001:db8:1:2:ffff::1", True),  # one /64: one subscriber
+    ("2001:db8:1:2::10", "2001:db8:1:3::10", False),
+    ("::ffff:203.0.113.7", "203.0.113.7", True),  # IPv4-mapped IPv6 = the IPv4
+    ("203.0.113.7", "203.0.113.8", False),
+])
+def test_ipv6_counts_by_its_64(a: str, b: str, same: bool) -> None:
+    rl = api.RateLimiter(per_min=1, per_day=0)
+    assert rl.hit(_scope(a)) is None
+    assert (rl.hit(_scope(b)) is not None) is same
+
+
+def test_a_429_carries_the_cors_headers(deps: Deps, monkeypatch: pytest.MonkeyPatch) -> None:
+    origin = api.DEV_ORIGINS[0]
+    with _limited_client(deps, monkeypatch, rate_per_min=1, rate_per_day=0) as c:
+        c.post("/api/recommend", json=body(), headers={"Origin": origin})
+        r = c.post("/api/recommend", json=body(), headers={"Origin": origin})
+    assert r.status_code == 429
+    assert r.headers.get("access-control-allow-origin") == origin  # the dev UI sees the 429

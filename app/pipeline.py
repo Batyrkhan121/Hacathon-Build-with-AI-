@@ -869,9 +869,10 @@ def recommend(req: RecommendRequest, deps: Deps) -> Answer:
                 cards = []
     if generation == "llm":
         cards = _untag_whys(cards, gen_candidates, search_intent, ctx, request_id, ev_kw)
-    if parse_reason == "budget" and not llm_down_said:  # spent between the checks
-        warn.append(t["llm_budget"])
+    if parse_reason == "budget" and generation == "template" and not llm_down_said:
+        warn.append(t["llm_budget"])  # spent between the checks, the cards are templates
     elif parse_reason is not None and not llm_down_said:
+        # (with cards from the disk cache the answer is not «without AI»: only the parse was)
         warn.append(t["parse_fallback"].format(
             reason=LLM_REASONS[intent.lang].get(parse_reason, LLM_REASONS[intent.lang]["bug"])))
     if candidates and not cards:
