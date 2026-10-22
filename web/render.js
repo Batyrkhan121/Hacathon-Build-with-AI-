@@ -168,6 +168,8 @@ export function errorText(err) {
       return t('error.tooLarge');
     case 'unavailable':
       return t('error.unavailable');
+    case 'rate_limited':
+      return t('error.rateLimited');
     case 'server':
       return t('error.server', { status: err.status ?? '?' });
     case 'format':
@@ -180,7 +182,7 @@ export function errorText(err) {
 }
 
 // Повтор без ИИ помогает только при сбоях ИИ/сети; при 413, 422 и 503 тот же запрос не пройдёт.
-const NO_AI_USELESS = new Set(['too_large', 'validation', 'unavailable']);
+const NO_AI_USELESS = new Set(['too_large', 'validation', 'unavailable', 'rate_limited']); // лимит — на любой запрос
 
 export function renderError(root, err, { canRetryNoAi, onRetry, onRetryNoAi, onShorten }) {
   const tooLarge = err?.kind === 'too_large';

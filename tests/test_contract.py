@@ -564,6 +564,12 @@ def test_public_demo_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
     with pytest.raises(ValueError):
         get_settings()
+    monkeypatch.setenv("QADAM_RATE_PER_DAY", "300")
+    for bad in ("nan", "inf", "-inf"):
+        monkeypatch.setenv("LLM_DAILY_BUDGET_USD", bad)
+        get_settings.cache_clear()
+        with pytest.raises(ValueError):
+            get_settings()
     get_settings.cache_clear()
 
 

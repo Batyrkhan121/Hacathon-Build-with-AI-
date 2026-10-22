@@ -9,6 +9,7 @@ import {
   GAP_MIN,
   OUTLINE_TAP_TOLERANCE,
   attributionUrl,
+  cityBounds,
   districtLabel,
   districtListChecked,
   districtNote,
@@ -131,7 +132,9 @@ function initMap() {
   if (state.map) return true;
   if (!window.L || !window.h3) return false;
   state.paint = paintStyles();
-  const map = L.map($('gaps-map'), { zoomControl: false, scrollWheelZoom: false, preferCanvas: true }).setView(ASTANA, 11);
+  // zoomSnap 0.25: город заполняет кадр, а не прыгает к целому зуму с большими полями
+  const map = L.map($('gaps-map'), { zoomControl: false, scrollWheelZoom: false, preferCanvas: true, zoomSnap: 0.25 })
+    .setView(ASTANA, 11);
   L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer(TILES, { maxZoom: 19 }).addTo(map); // атрибуция — applyAttribution (язык страницы, rel)
   const renderer = L.canvas({ padding: 0.3, tolerance: OUTLINE_TAP_TOLERANCE });
@@ -147,10 +150,31 @@ function initMap() {
     poly.addTo(group);
     state.cells.set(cell.h3_cell, { poly, cell });
   }
-  if (state.cells.size) map.fitBounds(group.getBounds(), { padding: [8, 8] });
   drawOutlines(map, renderer);
   state.map = map;
+  fitCity(map);
   return true;
+}
+
+// Первый кадр — весь город (cityBounds: контуры районов или ячейки). Контейнер мог быть скрыт или ещё не
+// размечен: invalidateSize перед fitBounds, а если ширина была 0 — подгоняем ещё раз, когда размер появится.
+function fitCity(map) {
+  const bounds = cityBounds(state.data, (id) => h3.cellToBoundary(id));
+  if (!bounds) return;
+  const fit = () => {
+    map.invalidateSize();
+    map.fitBounds(bounds, { padding: [12, 12] });
+    if (state.outlines.size) updateOutlineHits(map); // зум мог не смениться — полосы контуров пересчитать
+  };
+  const el = map.getContainer();
+  fit();
+  if (el.clientWidth > 0 || !window.ResizeObserver) return;
+  const ro = new ResizeObserver(() => {
+    if (el.clientWidth === 0) return;
+    ro.disconnect();
+    fit();
+  });
+  ro.observe(el);
 }
 
 // 1.4.1: районы — тонкие контуры без заливки поверх ячеек (stale — пунктиром). Рисуем линиями, а не
@@ -167,9 +191,7 @@ function drawOutlines(map, renderer) {
     );
     state.outlines.set(item.id, { lines, hits, item });
   }
-  if (!state.outlines.size) return;
-  map.on('zoomend', () => updateOutlineHits(map));
-  updateOutlineHits(map);
+  if (state.outlines.size) map.on('zoomend', () => updateOutlineHits(map));
 }
 
 // Ширина ячейки r8 на экране сейчас: расстояние между противоположными вершинами первой ячейки
@@ -289,14 +311,15 @@ function renderLegend() {
     ),
     el('li', {}, swatch('low'), el('span', { text: t(`gaps.legendLow.${l.unit}`, { min }) })),
     el('li', {}, swatch('none'), el('span', { text: t('gaps.legendNone') })),
-    // контуры — в легенде, только если они нарисованы (не все районы missing и карта загрузилась)
+    // контуры — в легенде, только если они нарисованы (не все районы missing и карта загрузилась);
+    // filter(Boolean): replaceChildren печатает null как текст «null»
     ...(state.outlines.size
       ? [
           el('li', {}, swatch('outline'), el('span', { text: t('gaps.legendOutline') })),
           [...state.outlines.values()].some((o) => o.item.status === 'stale')
             ? el('li', {}, swatch('outline-stale'), el('span', { text: t('gaps.legendOutlineStale') }))
             : null,
-        ]
+        ].filter(Boolean)
       : []),
   );
 }
