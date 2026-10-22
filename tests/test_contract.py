@@ -533,3 +533,40 @@ def test_city_gaps_districts_reject(break_it) -> None:
     break_it(doc)
     with pytest.raises(ValidationError):
         CityGaps.model_validate(doc)
+
+
+# ------------------------------------------------- public demo settings (final package, T161)
+
+
+def test_public_demo_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import get_settings
+
+    names = ("QADAM_RATE_PER_MIN", "QADAM_RATE_PER_DAY", "QADAM_TRUSTED_PROXY_HOPS",
+             "LLM_DAILY_BUDGET_USD", "LLM_PRICE_IN_PER_MTOK", "LLM_PRICE_OUT_PER_MTOK")
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert (s.rate_per_min, s.rate_per_day, s.trusted_proxy_hops) == (0, 0, 0)  # off by default
+    assert s.llm_daily_budget_usd is None and s.llm_budget_state == "none"
+    monkeypatch.setenv("QADAM_RATE_PER_MIN", "20")
+    monkeypatch.setenv("QADAM_TRUSTED_PROXY_HOPS", "1")
+    monkeypatch.setenv("LLM_DAILY_BUDGET_USD", "2.5")
+    get_settings.cache_clear()
+    s = get_settings()
+    assert (s.rate_per_min, s.trusted_proxy_hops, s.llm_daily_budget_usd) == (20, 1, 2.5)
+    assert s.llm_budget_state == "misconfigured"  # a budget without prices: no Claude calls
+    monkeypatch.setenv("LLM_PRICE_IN_PER_MTOK", "3")
+    monkeypatch.setenv("LLM_PRICE_OUT_PER_MTOK", "15")
+    get_settings.cache_clear()
+    assert get_settings().llm_budget_state == "set"
+    monkeypatch.setenv("QADAM_RATE_PER_DAY", "-1")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError):
+        get_settings()
+    get_settings.cache_clear()
+
+
+def test_image_turns_the_rate_limits_on() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "QADAM_RATE_PER_MIN=20" in dockerfile and "QADAM_RATE_PER_DAY=300" in dockerfile

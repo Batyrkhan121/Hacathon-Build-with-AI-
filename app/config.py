@@ -14,6 +14,12 @@ QADAM_EVENTS_PATH (default data/events.json): the dated events file; eval points
 fixture so a test event never goes into data/.
 QADAM_CITY_GAPS_PATH (default data/processed/city_gaps.json): the city gaps map (CityGaps) that
 GET /api/city-gaps serves; tests point it at their own file.
+Public demo (final package, T161): QADAM_RATE_PER_MIN / QADAM_RATE_PER_DAY limit POST
+/api/recommend per client IP (0 = off, the default; the image turns them on);
+QADAM_TRUSTED_PROXY_HOPS = proxies in front that append to X-Forwarded-For (Render: 1).
+LLM_DAILY_BUDGET_USD caps Claude spend per Astana day inside the app (unset = no cap here; the
+Console workspace limit stays the backstop); LLM_PRICE_IN_PER_MTOK / LLM_PRICE_OUT_PER_MTOK are
+USD per million tokens from the price page. A budget without both prices = no Claude at all.
 Never print or log `anthropic_api_key` / `gemini_api_key` / `openrouter_api_key`.
 """
 
@@ -35,6 +41,19 @@ def _bool(name: str, default: bool) -> bool:
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    value = int(raw) if raw else default
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0")
+    return value
+
+
+def _float(name: str) -> float | None:
+    raw = (os.getenv(name) or "").strip()
+    return float(raw) if raw else None
 
 
 @dataclass(frozen=True)
@@ -64,6 +83,25 @@ class Settings:
     events_path: Path | None = None
     # data/processed/city_gaps.json (QADAM_CITY_GAPS_PATH): aggregates of open data, wave 9
     city_gaps_path: Path | None = None
+    # public demo (T161): per-IP limits of POST /api/recommend, 0 = off
+    rate_per_min: int = 0
+    rate_per_day: int = 0
+    trusted_proxy_hops: int = 0
+    # daily Claude spend cap (USD per Astana day) and prices (USD per million tokens)
+    llm_daily_budget_usd: float | None = None
+    llm_price_in_per_mtok: float | None = None
+    llm_price_out_per_mtok: float | None = None
+
+    @property
+    def llm_budget_state(self) -> str:
+        """"none" — no cap in the app; "set" — budget and both prices; "misconfigured" — a
+        budget without usable prices: then no Claude calls (fail safe)."""
+        if self.llm_daily_budget_usd is None:
+            return "none"
+        prices = (self.llm_price_in_per_mtok, self.llm_price_out_per_mtok)
+        if self.llm_daily_budget_usd < 0 or any(p is None or p <= 0 for p in prices):
+            return "misconfigured"
+        return "set"
 
     @property
     def has_llm(self) -> bool:
@@ -131,4 +169,10 @@ def get_settings() -> Settings:
         events_path=Path(os.getenv("QADAM_EVENTS_PATH", data_dir / "events.json")),
         city_gaps_path=Path(os.getenv("QADAM_CITY_GAPS_PATH",
                                       data_dir / "processed" / "city_gaps.json")),
+        rate_per_min=_int("QADAM_RATE_PER_MIN", 0),
+        rate_per_day=_int("QADAM_RATE_PER_DAY", 0),
+        trusted_proxy_hops=_int("QADAM_TRUSTED_PROXY_HOPS", 0),
+        llm_daily_budget_usd=_float("LLM_DAILY_BUDGET_USD"),
+        llm_price_in_per_mtok=_float("LLM_PRICE_IN_PER_MTOK"),
+        llm_price_out_per_mtok=_float("LLM_PRICE_OUT_PER_MTOK"),
     )
