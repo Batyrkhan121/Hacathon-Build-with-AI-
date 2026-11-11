@@ -1,0 +1,18 @@
+services:
+  - type: web
+    runtime: static
+    name: batyrkhan-portfolio
+    branch: portfolio-showcase
+    buildCommand: node scripts/check.mjs
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin

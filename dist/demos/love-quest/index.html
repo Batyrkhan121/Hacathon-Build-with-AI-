@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="ru"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Date QUEST — Пора веселиться</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&amp;family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&amp;family=Unbounded:wght@200..900&amp;family=Onest:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Framer Motion via CDN (Umd version) -->
+
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary-fixed": "#c284ff",
+              "surface-bright": "#2c2c2c",
+              "surface": "#0e0e0e",
+              "error-container": "#a70138",
+              "on-primary-fixed-variant": "#430076",
+              "inverse-primary": "#842cd3",
+              "on-tertiary-fixed": "#39000d",
+              "primary-container": "#c284ff",
+              "outline-variant": "#494847",
+              "on-error": "#490013",
+              "on-secondary-fixed": "#690045",
+              "secondary-container": "#85145a",
+              "on-tertiary-container": "#570018",
+              "primary": "#cc97ff",
+              "surface-container-low": "#131313",
+              "error": "#ff6e84",
+              "surface-container-lowest": "#000000",
+              "on-background": "#ffffff",
+              "inverse-on-surface": "#565554",
+              "secondary-fixed-dim": "#ffabd1",
+              "surface-tint": "#cc97ff",
+              "tertiary-dim": "#f47786",
+              "on-tertiary-fixed-variant": "#711227",
+              "background": "#0e0e0e",
+              "on-secondary-container": "#ffbeda",
+              "tertiary": "#ff95a0",
+              "secondary-fixed": "#ffc0db",
+              "tertiary-fixed": "#ff909c",
+              "surface-dim": "#0e0e0e",
+              "on-surface-variant": "#adaaaa",
+              "on-secondary": "#4a002f",
+              "surface-variant": "#262626",
+              "outline": "#777575",
+              "surface-container": "#1a1919",
+              "primary-fixed-dim": "#b971ff",
+              "tertiary-container": "#fe7e8e",
+              "on-primary-fixed": "#000000",
+              "surface-container-highest": "#262626",
+              "surface-container-high": "#201f1f",
+              "inverse-surface": "#fcf8f8",
+              "on-tertiary": "#680921",
+              "secondary": "#f673b7",
+              "on-secondary-fixed-variant": "#922164",
+              "primary-dim": "#9c48ea",
+              "secondary-dim": "#f271b5",
+              "tertiary-fixed-dim": "#fa7c8b",
+              "error-dim": "#d73357",
+              "on-error-container": "#ffb2b9",
+              "on-primary": "#47007c",
+              "on-primary-container": "#360061",
+              "on-surface": "#ffffff"
+            },
+            fontFamily: {
+              "headline": ["Unbounded", "Space Grotesk"],
+              "body": ["Onest", "Plus Jakarta Sans"],
+              "label": ["Onest", "Plus Jakarta Sans"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        @keyframes float-heart {
+            0% { transform: translateY(100vh) translateX(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 0.1; }
+            90% { opacity: 0.1; }
+            100% { transform: translateY(-20vh) translateX(20px) rotate(20deg); opacity: 0; }
+        }
+        .heart-float {
+            position: fixed;
+            pointer-events: none;
+            z-index: 0;
+            animation: float-heart linear infinite;
+        }
+        .grain-filter {
+            filter: contrast(150%) brightness(100%) opacity(5%);
+            pointer-events: none;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom Intersection Observer Animation classes */
+        .fade-in-up {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .fade-in-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+<link rel="stylesheet" href="demo.css"><script src="demo.js" defer></script></head>
+<body class="bg-background text-on-surface font-body selection:bg-primary selection:text-on-primary overflow-x-hidden" data-demo-screen="index">
+<!-- Luv-Motion Background & Grain -->
+<div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+<div class="absolute inset-0 bg-[radial-gradient(#ffffff11_1px,transparent_1px)] bg-[size:32px_32px]"></div>
+<div class="absolute inset-0 bg-gradient-to-b from-transparent via-primary-dim/5 to-secondary-dim/5"></div>
+<!-- Animated Hearts -->
+<svg class="heart-float text-secondary w-8 h-8" fill="none" stroke="currentColor" stroke-width="1" style="left: 5%; animation-duration: 18s; animation-delay: 0s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-12 h-12" fill="none" stroke="currentColor" stroke-width="1" style="left: 12%; animation-duration: 25s; animation-delay: 5s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-6 h-6" fill="none" stroke="currentColor" stroke-width="1" style="left: 18%; animation-duration: 15s; animation-delay: 2s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-10 h-10" fill="none" stroke="currentColor" stroke-width="1" style="left: 24%; animation-duration: 22s; animation-delay: 8s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-14 h-14" fill="none" stroke="currentColor" stroke-width="1" style="left: 30%; animation-duration: 30s; animation-delay: 12s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-5 h-5" fill="none" stroke="currentColor" stroke-width="1" style="left: 35%; animation-duration: 12s; animation-delay: 1s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-9 h-9" fill="none" stroke="currentColor" stroke-width="1" style="left: 40%; animation-duration: 20s; animation-delay: 15s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-7 h-7" fill="none" stroke="currentColor" stroke-width="1" style="left: 48%; animation-duration: 17s; animation-delay: 3s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-16 h-16" fill="none" stroke="currentColor" stroke-width="1" style="left: 55%; animation-duration: 35s; animation-delay: 6s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-8 h-8" fill="none" stroke="currentColor" stroke-width="1" style="left: 62%; animation-duration: 21s; animation-delay: 10s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-10 h-10" fill="none" stroke="currentColor" stroke-width="1" style="left: 68%; animation-duration: 28s; animation-delay: 0s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-5 h-5" fill="none" stroke="currentColor" stroke-width="1" style="left: 74%; animation-duration: 14s; animation-delay: 4s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-12 h-12" fill="none" stroke="currentColor" stroke-width="1" style="left: 80%; animation-duration: 32s; animation-delay: 9s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-primary w-6 h-6" fill="none" stroke="currentColor" stroke-width="1" style="left: 88%; animation-duration: 19s; animation-delay: 13s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<svg class="heart-float text-secondary w-11 h-11" fill="none" stroke="currentColor" stroke-width="1" style="left: 95%; animation-duration: 26s; animation-delay: 2s;"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+<div class="grain-filter absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]"></div>
+</div>
+<!-- Header -->
+<nav class="fixed top-4 w-[90%] left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-neutral-900/60 backdrop-blur-3xl shadow-[0_0_20px_rgba(168,85,247,0.15)] flex justify-between items-center px-8 py-3 z-50">
+<div class="flex items-center gap-2">
+<span class="text-2xl font-black font-headline text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 uppercase tracking-tighter">
+                Date <span class="inline-block w-2.5 h-2.5 rounded-full bg-secondary shadow-[0_0_10px_#f673b7] mx-0.5 animate-pulse"></span> QUEST
+            </span>
+</div>
+<div class="hidden md:flex gap-8 font-headline font-bold tracking-tight text-sm uppercase">
+<a class="text-pink-500 border-b-2 border-pink-500 pb-1" href="#">Match</a>
+<a class="text-neutral-400 hover:text-purple-300 transition-colors" href="#">Vibe Check</a>
+<a class="text-neutral-400 hover:text-purple-300 transition-colors" href="#">Leaderboard</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-purple-400 hover:scale-105 transition-transform duration-200" data-icon="notifications">notifications</button>
+<button class="material-symbols-outlined text-purple-400 hover:scale-105 transition-transform duration-200" data-icon="account_circle">account_circle</button>
+</div>
+</nav>
+<!-- Hero Section -->
+<main class="relative z-10 pt-32 lg:pt-48 pb-20 px-6 max-w-7xl mx-auto">
+<div class="flex flex-col items-center text-center space-y-10">
+<div class="inline-flex items-center px-4 py-1.5 rounded-full bg-primary-container/10 border border-primary/20 text-primary font-label text-xs tracking-widest uppercase">
+                New Season: Cyber-Romantic
+            </div>
+<h1 class="font-headline font-black text-5xl md:text-8xl leading-tight max-w-5xl tracking-tighter">
+                Пора веселиться.<br/> Отправляйся в 
+                <span class="text-transparent bg-clip-text bg-gradient-to-br from-primary via-secondary to-primary-fixed drop-shadow-[0_0_15px_rgba(204,151,255,0.4)]">QUEST.</span>
+</h1>
+<p class="font-body text-on-surface-variant text-lg md:text-xl max-w-2xl leading-relaxed">
+                Забудь о скучных свайпах. Мы превратили свидания в ролевую игру, где каждый мэтч — это квест, а каждое сообщение — прокачка навыка.
+            </p>
+<div class="flex flex-col sm:flex-row gap-6 items-center">
+<button class="px-10 py-5 bg-secondary text-on-secondary font-headline font-bold text-lg rounded-lg shadow-[0_0_30px_rgba(246,115,183,0.4)] hover:scale-105 active:scale-95 transition-all duration-300 group">
+                    Начать приключение <span class="inline-block group-hover:translate-x-1 transition-transform">⚡</span>
+</button>
+<button class="px-8 py-5 border border-outline-variant hover:bg-white/5 font-headline font-bold text-lg rounded-lg transition-all">
+                    Как это работает?
+                </button>
+</div>
+</div>
+<!-- Hero Graphic (Asymmetric Layout) -->
+<div class="mt-24 grid grid-cols-12 gap-6 h-[500px] md:h-[700px]">
+<!-- Main Hero Card -->
+<div class="col-span-12 md:col-span-7 bg-surface-container-high rounded-lg overflow-hidden relative group fade-in-up">
+<img class="w-full h-full object-cover filter contrast-125 grayscale-[30%] brightness-90 group-hover:scale-105 transition-transform duration-700" data-alt="Raw flash photography of a young couple at a neon party" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgJMDiKOSHucicLVqgJZEMc2F8C4eg0tA6vINDN8fNbwNcC8V3_YVYm9-DCjcDVkeQ3P1xfGd5YtqOawu4UQRUbw9vHIj8rXiyJU4ui9ZT6DgO4kYNvHnOlsF975yJdHhV48XyeLgfK4iZrj2mwxVNsYun05H2Vt6fcNGLKfQO3sD_pScyj-onS71ewfMkCnIKQFH8sLwB6pp6rjIez3YMaDKf8k8XTHxmnA9eP9nM05GUZgGFTvHDysUwBNKXdEuBDm6oSqO4Ri7C"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-container-lowest via-transparent to-transparent"></div>
+<div class="absolute bottom-8 left-8 space-y-2">
+<span class="px-3 py-1 bg-primary text-on-primary font-label text-xs font-bold rounded">LIVE QUEST: NEON NIGHT</span>
+<h3 class="text-3xl font-headline font-bold">Таинственный бар в центре</h3>
+<p class="text-on-surface-variant">42 Игрока прямо сейчас</p>
+</div>
+</div>
+<!-- Side Bento Cards -->
+<div class="col-span-12 md:col-span-5 grid grid-rows-2 gap-6">
+<div class="bg-surface-container-high rounded-lg p-8 relative overflow-hidden group border-l-4 border-primary fade-in-up">
+<div class="relative z-10">
+<span class="material-symbols-outlined text-primary text-4xl mb-4" data-icon="auto_awesome">auto_awesome</span>
+<h4 class="text-2xl font-headline font-bold mb-2">Vibe Check</h4>
+<p class="text-on-surface-variant font-body">Наши алгоритмы анализируют твои музыкальные вкусы и "грязные" шутки.</p>
+</div>
+<div class="absolute -right-10 -bottom-10 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-symbols-outlined text-[150px]" data-icon="psychology">psychology</span>
+</div>
+</div>
+<div class="bg-surface-container-high rounded-lg p-8 relative overflow-hidden group border-l-4 border-secondary fade-in-up">
+<div class="relative z-10">
+<span class="material-symbols-outlined text-secondary text-4xl mb-4" data-icon="trophy">trophy</span>
+<h4 class="text-2xl font-headline font-bold mb-2">Leaderboard</h4>
+<p class="text-on-surface-variant font-body">Зарабатывай очки за лучшие свидания и открывай легендарные локации.</p>
+</div>
+<div class="absolute -right-10 -bottom-10 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-symbols-outlined text-[150px]" data-icon="military_tech">military_tech</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Chaos Feed -->
+<section class="bg-surface-container-low py-32 relative overflow-hidden">
+<div class="max-w-7xl mx-auto px-6">
+<div class="flex justify-between items-end mb-16">
+<div>
+<h2 class="font-headline font-black text-4xl md:text-6xl tracking-tighter uppercase">Лента Хаоса</h2>
+<p class="text-primary font-label mt-4 tracking-[0.2em]">RAW FLASH · REAL VIBES · NO FILTERS</p>
+</div>
+<button class="hidden md:block material-symbols-outlined text-4xl p-4 rounded-full bg-surface-container-high hover:bg-primary/20 transition-colors" data-icon="arrow_forward">arrow_forward</button>
+</div>
+<!-- Raw Flash Gallery -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+<div class="aspect-[3/4] rounded-lg overflow-hidden relative group">
+<img class="w-full h-full object-cover grayscale-[20%] contrast-150 group-hover:scale-110 transition-transform duration-500" data-alt="Gritty flash photo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgJMDiKOSHucicLVqgJZEMc2F8C4eg0tA6vINDN8fNbwNcC8V3_YVYm9-DCjcDVkeQ3P1xfGd5YtqOawu4UQRUbw9vHIj8rXiyJU4ui9ZT6DgO4kYNvHnOlsF975yJdHhV48XyeLgfK4iZrj2mwxVNsYun05H2Vt6fcNGLKfQO3sD_pScyj-onS71ewfMkCnIKQFH8sLwB6pp6rjIez3YMaDKf8k8XTHxmnA9eP9nM05GUZgGFTvHDysUwBNKXdEuBDm6oSqO4Ri7C"/>
+<div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6 backdrop-blur-sm">
+<p class="font-headline font-bold text-white text-lg">@alex_chaos</p>
+<p class="text-white/70 text-sm">Vibe: Industrial Rave</p>
+</div>
+</div>
+<div class="aspect-[3/4] rounded-lg overflow-hidden relative group mt-8 lg:mt-12">
+<img class="w-full h-full object-cover grayscale-[20%] contrast-150 group-hover:scale-110 transition-transform duration-500" data-alt="90s style flash" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgJMDiKOSHucicLVqgJZEMc2F8C4eg0tA6vINDN8fNbwNcC8V3_YVYm9-DCjcDVkeQ3P1xfGd5YtqOawu4UQRUbw9vHIj8rXiyJU4ui9ZT6DgO4kYNvHnOlsF975yJdHhV48XyeLgfK4iZrj2mwxVNsYun05H2Vt6fcNGLKfQO3sD_pScyj-onS71ewfMkCnIKQFH8sLwB6pp6rjIez3YMaDKf8k8XTHxmnA9eP9nM05GUZgGFTvHDysUwBNKXdEuBDm6oSqO4Ri7C"/>
+<div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6 backdrop-blur-sm">
+<p class="font-headline font-bold text-white text-lg">@margo_raw</p>
+<p class="text-white/70 text-sm">Vibe: Retro Arcade</p>
+</div>
+</div>
+<div class="aspect-[3/4] rounded-lg overflow-hidden relative group">
+<img class="w-full h-full object-cover grayscale-[20%] contrast-150 group-hover:scale-110 transition-transform duration-500" data-alt="High contrast flash" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgJMDiKOSHucicLVqgJZEMc2F8C4eg0tA6vINDN8fNbwNcC8V3_YVYm9-DCjcDVkeQ3P1xfGd5YtqOawu4UQRUbw9vHIj8rXiyJU4ui9ZT6DgO4kYNvHnOlsF975yJdHhV48XyeLgfK4iZrj2mwxVNsYun05H2Vt6fcNGLKfQO3sD_pScyj-onS71ewfMkCnIKQFH8sLwB6pp6rjIez3YMaDKf8k8XTHxmnA9eP9nM05GUZgGFTvHDysUwBNKXdEuBDm6oSqO4Ri7C"/>
+<div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6 backdrop-blur-sm">
+<p class="font-headline font-bold text-white text-lg">@quest_master</p>
+<p class="text-white/70 text-sm">Vibe: Underground Techno</p>
+</div>
+</div>
+<div class="aspect-[3/4] rounded-lg overflow-hidden relative group mt-8 lg:mt-12">
+<img class="w-full h-full object-cover grayscale-[20%] contrast-150 group-hover:scale-110 transition-transform duration-500" data-alt="Night city photography" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgJMDiKOSHucicLVqgJZEMc2F8C4eg0tA6vINDN8fNbwNcC8V3_YVYm9-DCjcDVkeQ3P1xfGd5YtqOawu4UQRUbw9vHIj8rXiyJU4ui9ZT6DgO4kYNvHnOlsF975yJdHhV48XyeLgfK4iZrj2mwxVNsYun05H2Vt6fcNGLKfQO3sD_pScyj-onS71ewfMkCnIKQFH8sLwB6pp6rjIez3YMaDKf8k8XTHxmnA9eP9nM05GUZgGFTvHDysUwBNKXdEuBDm6oSqO4Ri7C"/>
+<div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6 backdrop-blur-sm">
+<p class="font-headline font-bold text-white text-lg">@cyber_lover</p>
+<p class="text-white/70 text-sm">Vibe: Midnight City</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Bento Quest Tiers -->
+<section class="py-32 px-6 max-w-7xl mx-auto">
+<h2 class="font-headline font-black text-4xl mb-16 text-center uppercase tracking-tight">Выбери свой уровень сложности</h2>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+<!-- Tier 1 -->
+<div class="bg-surface-container p-10 rounded-lg flex flex-col items-center text-center space-y-6 hover:translate-y-[-8px] transition-all duration-300 flex-1">
+<div class="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-primary text-4xl" data-icon="joystick">joystick</span>
+</div>
+<h3 class="font-headline font-bold text-2xl uppercase">Нуб</h3>
+<p class="text-on-surface-variant font-body">Классические свидания в парках и кофейнях. Минимум риска, максимум комфорта.</p>
+<ul class="text-sm space-y-2 text-left w-full font-body opacity-70">
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-xs" data-icon="check_circle">check_circle</span> 10 Свайпов в день</li>
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-xs" data-icon="check_circle">check_circle</span> Базовый Vibe-Check</li>
+</ul>
+<button class="w-full mt-auto py-3 px-6 rounded-lg border border-primary/40 bg-white/5 hover:bg-primary/10 hover:shadow-[0_0_15px_rgba(168,85,247,0.3)] transition-all font-headline font-bold text-sm uppercase tracking-wider">Начать путь</button></div>
+<!-- Tier 2 (Featured) -->
+<div class="bg-surface-container-high p-10 rounded-lg flex flex-col items-center text-center space-y-6 relative border-2 border-secondary scale-105 shadow-[0_0_40px_rgba(246,115,183,0.2)] flex-1">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 px-4 py-1 bg-secondary text-on-secondary font-label text-[10px] rounded-full uppercase font-bold tracking-[0.2em]">Most Popular</div>
+<div class="w-20 h-20 rounded-full bg-secondary/10 flex items-center justify-center border border-secondary/20">
+<span class="material-symbols-outlined text-secondary text-4xl" data-icon="local_fire_department">local_fire_department</span>
+</div>
+<h3 class="font-headline font-bold text-2xl uppercase">Профи</h3>
+<p class="text-on-surface-variant font-body">Экстремальные свидания, квесты по городу и доступ в закрытые андеграунд тусовки.</p>
+<ul class="text-sm space-y-2 text-left w-full font-body">
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-secondary text-xs" data-icon="star">star</span> Безлимитные мэтчи</li>
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-secondary text-xs" data-icon="star">star</span> Продвинутый Vibe-AI</li>
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-secondary text-xs" data-icon="star">star</span> Доступ к "Ленте Хаоса"</li>
+</ul>
+<button class="w-full mt-auto py-3 px-6 rounded-lg bg-gradient-to-r from-secondary to-pink-600 text-on-secondary shadow-[0_0_25px_rgba(246,115,183,0.4)] hover:scale-[1.02] transition-all font-headline font-bold text-sm uppercase tracking-wider">Стать профи</button></div>
+<!-- Tier 3 -->
+<div class="bg-surface-container p-10 rounded-lg flex flex-col items-center text-center space-y-6 hover:translate-y-[-8px] transition-all duration-300 flex-1">
+<div class="w-20 h-20 rounded-full bg-primary-fixed/10 flex items-center justify-center border border-primary-fixed/20">
+<span class="material-symbols-outlined text-primary-fixed text-4xl" data-icon="diamond">diamond</span>
+</div>
+<h3 class="font-headline font-bold text-2xl uppercase">Легенда</h3>
+<p class="text-on-surface-variant font-body">Для тех, кто ищет спутника для захвата мира (или хотя бы города). VIP мероприятия.</p>
+<ul class="text-sm space-y-2 text-left w-full font-body opacity-70">
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-xs" data-icon="check_circle">check_circle</span> Личный куратор квестов</li>
+<li class="flex items-center gap-2"><span class="material-symbols-outlined text-xs" data-icon="check_circle">check_circle</span> Верификация по ДНК (шутка)</li>
+</ul>
+<button class="w-full mt-auto py-3 px-6 rounded-lg border border-primary/40 bg-white/5 hover:bg-primary/10 hover:shadow-[0_0_15px_rgba(168,85,247,0.3)] transition-all font-headline font-bold text-sm uppercase tracking-wider">Вступить в элиту</button></div>
+</div>
+</section>
+<!-- Footer -->
+<footer class="bg-black/80 backdrop-blur-xl w-full border-t border-white/5 py-12 relative z-10">
+<div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
+<div class="space-y-4">
+<span class="font-headline font-extrabold text-pink-500 text-2xl uppercase tracking-tighter">Date QUEST</span>
+<p class="text-neutral-500 font-body text-xs max-w-xs">Переосмысление романтики через призму геймификации и эстетики сырого цифрового искусства.</p>
+</div>
+<div class="flex justify-center md:justify-start gap-12">
+<div class="space-y-4">
+<h5 class="text-white font-headline text-xs uppercase font-bold tracking-widest">Navigation</h5>
+<ul class="flex flex-col gap-2 font-body text-xs text-neutral-500">
+<li><a class="hover:text-pink-400 transition-colors" href="#">Match</a></li>
+<li><a class="hover:text-pink-400 transition-colors" href="#">Vibe Check</a></li>
+<li><a class="hover:text-pink-400 transition-colors" href="#">Leaderboard</a></li>
+</ul>
+</div>
+<div class="space-y-4">
+<h5 class="text-white font-headline text-xs uppercase font-bold tracking-widest">Legal</h5>
+<ul class="flex flex-col gap-2 font-body text-xs text-neutral-500">
+<li><a class="hover:text-pink-400 transition-colors" href="#">Privacy</a></li>
+<li><a class="hover:text-pink-400 transition-colors" href="#">Terms</a></li>
+<li><a class="hover:text-pink-400 transition-colors" href="#">API</a></li>
+</ul>
+</div>
+</div>
+<div class="flex flex-col items-center md:items-end justify-between">
+<div class="flex gap-4">
+<a class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-secondary transition-all opacity-80 hover:opacity-100" href="#"><span class="material-symbols-outlined text-sm" data-icon="podcasts">podcasts</span></a>
+<a class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-secondary transition-all opacity-80 hover:opacity-100" href="#"><span class="material-symbols-outlined text-sm" data-icon="movie">movie</span></a>
+</div>
+<p class="font-body text-xs font-medium tracking-wide text-neutral-500 mt-6 md:mt-0">
+                    © 2024 Date QUEST. All rights reserved.
+                </p>
+</div>
+</div>
+</footer>
+<!-- Animation script for Bento Cards -->
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const observerOptions = {
+            threshold: 0.15
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.fade-in-up').forEach((el) => {
+            observer.observe(el);
+        });
+    });
+</script>
+<div id="portfolio-demo-bar"><a href="../../index.html#project/love-quest" class="demo-back">← Портфолио</a><span>LOVE QUEST <small>Макеты интерфейса · пример данных</small></span><nav aria-label="Экраны демонстрации"><a href="index.html" aria-current="page">Главная</a><a href="profile.html">Профиль</a><a href="hub.html">Кабинет</a><a href="quest.html">Квест</a><a href="result.html">Результат</a></nav></div><div id="demo-toast" role="status" hidden></div></body></html>

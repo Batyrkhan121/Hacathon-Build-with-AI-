@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Date QUEST - Mission Accomplished</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&amp;family=Onest:wght@300;400;700&amp;family=Space+Grotesk:wght@700&amp;family=Plus+Jakarta+Sans:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<!-- Icons -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                "secondary-fixed": "#ffc0db",
+                "on-secondary": "#4a002f",
+                "error-container": "#a70138",
+                "secondary": "#f673b7",
+                "on-surface": "#ffffff",
+                "surface-dim": "#0e0e0e",
+                "on-surface-variant": "#adaaaa",
+                "surface-container": "#1a1919",
+                "primary": "#cc97ff",
+                "tertiary-fixed": "#ff909c",
+                "inverse-on-surface": "#565554",
+                "on-tertiary-fixed-variant": "#711227",
+                "error": "#ff6e84",
+                "on-tertiary-fixed": "#39000d",
+                "outline": "#777575",
+                "on-error": "#490013",
+                "secondary-dim": "#f271b5",
+                "primary-dim": "#9c48ea",
+                "background": "#0e0e0e",
+                "on-primary-container": "#360061",
+                "tertiary-dim": "#f47786",
+                "primary-fixed": "#c284ff",
+                "on-secondary-fixed": "#690045",
+                "on-secondary-fixed-variant": "#922164",
+                "on-background": "#ffffff",
+                "tertiary": "#ff95a0",
+                "surface-bright": "#2c2c2c",
+                "on-primary": "#47007c",
+                "on-tertiary-container": "#570018",
+                "surface-container-lowest": "#000000",
+                "tertiary-container": "#fe7e8e",
+                "tertiary-fixed-dim": "#fa7c8b",
+                "on-tertiary": "#680921",
+                "surface-container-highest": "#262626",
+                "surface-container-low": "#131313",
+                "primary-container": "#c284ff",
+                "on-primary-fixed-variant": "#430076",
+                "surface": "#0e0e0e",
+                "on-secondary-container": "#ffbeda",
+                "outline-variant": "#494847",
+                "inverse-surface": "#fcf8f8",
+                "primary-fixed-dim": "#b971ff",
+                "surface-variant": "#262626",
+                "error-dim": "#d73357",
+                "surface-tint": "#cc97ff",
+                "on-error-container": "#ffb2b9",
+                "on-primary-fixed": "#000000",
+                "inverse-primary": "#842cd3",
+                "secondary-fixed-dim": "#ffabd1",
+                "secondary-container": "#85145a",
+                "surface-container-high": "#201f1f"
+              },
+              fontFamily: {
+                "headline": ["Unbounded", "cursive"],
+                "body": ["Onest", "sans-serif"],
+                "label": ["Onest", "sans-serif"]
+              },
+              borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+            },
+          },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .dot-grid {
+            background-image: radial-gradient(circle, #333 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+        .shimmer-text {
+            background: linear-gradient(90deg, #FFD700, #F472B6, #FFD700);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shimmer 3s linear infinite;
+        }
+        @keyframes shimmer {
+            to { background-position: 200% center; }
+        }
+        .glow-bloom {
+            box-shadow: 0 0 60px -15px rgba(168, 85, 247, 0.4), 0 0 40px -10px rgba(244, 114, 182, 0.3);
+        }
+        .neon-xp-glow {
+            text-shadow: 0 0 10px rgba(204, 151, 255, 0.8), 0 0 20px rgba(204, 151, 255, 0.5);
+        }
+        
+        @keyframes flyOut {
+            0% { transform: scale(0.1) rotate(0deg); opacity: 0; }
+            50% { transform: scale(1.1) rotate(5deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0); }
+            10%, 30%, 50%, 70%, 90% { transform: translate(-4px, 0); }
+            20%, 40%, 60%, 80% { transform: translate(4px, 0); }
+        }
+        .animate-fly-out {
+            animation: flyOut 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        .animate-shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        .confetti {
+            position: absolute;
+            pointer-events: none;
+            z-index: 100;
+        }
+        @keyframes confetti-fall {
+            0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+        .mission-success-report {
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+        .mission-success-report.visible {
+            opacity: 1;
+        }
+    </style>
+<link rel="stylesheet" href="demo.css"><script src="demo.js" defer></script></head>
+<body class="bg-background text-on-background font-body selection:bg-primary selection:text-on-primary-container overflow-hidden h-screen" onclick="spawnConfetti(event)" data-demo-screen="result">
+<!-- Top Navigation Bar -->
+<header class="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] rounded-full border border-white/10 bg-zinc-900/60 backdrop-blur-3xl flex justify-between items-center px-6 py-3 z-40 shadow-2xl shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+<div class="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 font-headline">DATE QUEST</div>
+<div class="flex gap-4">
+<button class="text-zinc-400 hover:scale-105 hover:text-white transition-all">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-zinc-400 hover:scale-105 hover:text-white transition-all">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="relative min-h-screen w-full flex items-center justify-center p-6 dot-grid overflow-hidden">
+<!-- Mesh Gradients Background Clouds -->
+<div class="absolute inset-0 pointer-events-none overflow-hidden">
+<div class="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary/20 blur-[120px] rounded-full"></div>
+<div class="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-secondary/20 blur-[120px] rounded-full"></div>
+</div>
+<!-- Mission Success Report (Hidden Initially) -->
+<div class="fixed right-8 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-4">
+<div class="bg-zinc-900/40 backdrop-blur-xl border border-white/10 p-6 rounded-3xl flex flex-col items-center gap-4 shadow-2xl glow-bloom h-[400px]">
+<div class="text-[10px] font-headline text-primary-fixed uppercase tracking-widest vertical-text transform -rotate-180" style="writing-mode: vertical-rl;">GLOW INTENSITY</div>
+<div class="relative w-2 h-full bg-zinc-800 rounded-full overflow-hidden border border-white/5">
+<div class="absolute bottom-0 w-full bg-gradient-to-t from-primary to-secondary transition-all duration-150" id="slider-fill" style="height: 50%;"></div>
+<div class="absolute bottom-[50%] left-1/2 -translate-x-1/2 translate-y-1/2 w-6 h-6 bg-white rounded-full border-4 border-primary shadow-[0_0_15px_rgba(168,85,247,0.8)] cursor-grab active:cursor-grabbing hover:scale-110 transition-transform" id="slider-handle">
+</div>
+</div>
+<div class="font-headline text-secondary text-sm font-bold" id="slider-value">50%</div>
+</div>
+</div><div class="mission-success-report relative z-10 w-full max-w-4xl flex flex-col items-center gap-8" id="mission-report">
+<div class="bg-surface-container-high rounded-lg p-10 glow-bloom w-full border border-primary/20 flex flex-col items-center text-center">
+<h2 class="font-headline text-4xl font-black tracking-tighter mb-2 text-primary">MISSION SUCCESS REPORT</h2>
+<div class="w-24 h-1 bg-gradient-to-r from-primary to-secondary mb-8"></div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 w-full mb-10">
+<div class="flex flex-col items-center gap-4">
+<div class="relative">
+<div class="w-32 h-32 rounded-full border-4 border-primary p-1">
+<img alt="Liza Avatar" class="w-full h-full object-cover rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCoYClc5rZYRTZtDl6ndocEaB4h7w207Sr1akbsMnQ_tIBTY9du90GH6q6Dws4izY04hnLaRizfXFP7zHrVGA_bm-y-Tt1nWebLNTUfJq5sVYGkW_ztEr5vD_b8sAwoNb8ixTTTjs5UBfmyoJTy_2XnxiXt_XTrrwxtS3fDCzuHssrYLj0pVVYxy_mNEqK3JXhTH2_1nPKPAQnRKTtFjRE_snCwC99cc9OuIITzznNOuWyllFL1IV9i7dy2qc-GsrFqdljfxE3ygmGd"/>
+</div>
+</div>
+<p class="font-headline text-lg">+625 XP</p>
+</div>
+<div class="flex flex-col items-center gap-4">
+<div class="relative">
+<div class="w-32 h-32 rounded-full border-4 border-secondary p-1">
+<img alt="Mark Avatar" class="w-full h-full object-cover rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBf7c4UDyqW3cuf6tDRE9EQOs2jD0q-nu8zojSpoqGlJwcDJmruFLgxIyydXZIfbtkk_k1oKebphjMH5UgwqQx3Psd1_38VW5IV9QvDrJeLkMgFwc8YKixUdx9FTia8K-ePEd0sYKdZRDI6-NBbXK0VW8Fl2JAU0MvljmMkRN5q9w1gSTnF1tpoaT6MDH-2DqQvQLZqiPZNbIK0AMYmRY1iv4ircNXHgFq2cAS9OH_XSlQmkp0gz1-auFeQxjC9WbZix7NmKCZdqSGw"/>
+</div>
+</div>
+<p class="font-headline text-lg">+625 XP</p>
+</div>
+</div>
+<div class="bg-surface-container-lowest/50 rounded-2xl p-8 border border-white/5 w-full max-w-lg">
+<div class="text-on-surface-variant uppercase tracking-[0.3em] text-xs mb-2">Total Reward Unlocked</div>
+<div class="font-headline text-5xl text-primary neon-xp-glow font-black">FINAL XP EARNED: +1,250</div>
+</div>
+</div>
+<button class="group relative px-12 py-5 border-2 border-primary-fixed text-primary-fixed font-headline font-bold rounded-full overflow-hidden transition-all hover:bg-primary-fixed hover:text-on-primary-fixed shadow-[0_0_30px_rgba(204,151,255,0.2)]" onclick="window.location.reload()">
+<span class="relative z-10">RETURN TO HUB</span>
+<div class="absolute inset-0 bg-primary-fixed/20 blur-xl scale-0 group-hover:scale-150 transition-transform duration-500"></div>
+</button>
+</div>
+<!-- Overlay Intro Sequence -->
+<div class="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center transition-opacity duration-1000" id="intro-overlay">
+<div class="relative animate-shake">
+<div class="animate-fly-out">
+<h1 class="font-headline text-5xl md:text-8xl font-black tracking-tighter shimmer-text text-center px-6 leading-none">
+                        MISSION<br/>ACCOMPLISHED! ⚡
+                    </h1>
+<p class="text-on-surface-variant mt-8 text-center uppercase tracking-[0.4em] font-label text-sm opacity-60">Quest reward sequence initializing...</p>
+</div>
+</div>
+<!-- Initial Fanfare Assets (Placeholder for static render) -->
+<div class="absolute inset-0 pointer-events-none" id="fanfare-layer"></div>
+</div>
+</main>
+<!-- Background Decoration -->
+<div class="fixed bottom-0 left-0 w-full h-1/2 pointer-events-none opacity-20 overflow-hidden">
+<svg class="w-full h-full text-secondary fill-current" viewbox="0 0 800 400">
+<path d="M0,400 C150,300 300,450 450,350 C600,250 750,350 800,300 L800,400 L0,400 Z" opacity="0.5"></path>
+</svg>
+</div>
+<script>
+        // Transition Logic
+        setTimeout(() => {
+            const overlay = document.getElementById('intro-overlay');
+            const report = document.getElementById('mission-report');
+            
+            overlay.classList.add('opacity-0');
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                report.classList.add('visible');
+            }, 1000);
+        }, 2500);
+
+        // Confetti Engine
+        function spawnConfetti(e) {
+            const colors = ['#cc97ff', '#f673b7', '#ff95a0', '#FFD700'];
+            const icons = ['favorite', 'bolt', 'star'];
+            const count = 12;
+            
+            const x = e ? e.clientX : window.innerWidth / 2;
+            const y = e ? e.clientY : window.innerHeight / 2;
+
+            for (let i = 0; i < count; i++) {
+                const conf = document.createElement('div');
+                conf.className = 'confetti material-symbols-outlined';
+                conf.innerText = icons[Math.floor(Math.random() * icons.length)];
+                conf.style.color = colors[Math.floor(Math.random() * colors.length)];
+                conf.style.left = x + 'px';
+                conf.style.top = y + 'px';
+                conf.style.fontSize = (Math.random() * 20 + 10) + 'px';
+                conf.style.fontVariationSettings = "'FILL' 1";
+                
+                const destX = (Math.random() - 0.5) * 400;
+                const destY = (Math.random() - 0.5) * 400;
+                
+                document.body.appendChild(conf);
+
+                conf.animate([
+                    { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
+                    { transform: `translate(${destX}px, ${destY}px) rotate(${Math.random() * 360}deg)`, opacity: 0 }
+                ], {
+                    duration: 1000 + Math.random() * 1000,
+                    easing: 'cubic-bezier(0, .9, .57, 1)'
+                }).onfinish = () => conf.remove();
+            }
+        }
+
+        // Automatic Fanfare on load
+        window.addEventListener('DOMContentLoaded', () => {
+            const interval = setInterval(() => {
+                spawnConfetti();
+            }, 300);
+            setTimeout(() => clearInterval(interval), 2000);
+        });
+    </script>
+<script>
+    const handle = document.getElementById('slider-handle');
+    const fill = document.getElementById('slider-fill');
+    const valueDisplay = document.getElementById('slider-value');
+    const sliderContainer = handle.parentElement;
+    const glowClouds = document.querySelectorAll('[class~="bg-primary/20"], [class~="bg-secondary/20"]');
+
+    let isDragging = false;
+
+    function updateSlider(clientY) {
+        const rect = sliderContainer.getBoundingClientRect();
+        let percentage = ((rect.bottom - clientY) / rect.height) * 100;
+        percentage = Math.max(0, Math.min(100, percentage));
+
+        handle.style.bottom = `${percentage}%`;
+        fill.style.height = `${percentage}%`;
+        valueDisplay.innerText = `${Math.round(percentage)}%`;
+
+        // Update background glow intensity
+        const opacity = (percentage / 100) * 0.4 + 0.1;
+        glowClouds.forEach(cloud => {
+            cloud.style.opacity = opacity;
+            cloud.style.filter = `blur(${120 * (percentage/100 + 0.5)}px)`;
+        });
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        document.body.style.userSelect = 'none';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        updateSlider(e.clientY);
+    });
+
+    window.addEventListener('mouseup', () => {
+        isDragging = false;
+        document.body.style.userSelect = 'auto';
+    });
+
+    // Click on track to jump
+    sliderContainer.addEventListener('mousedown', (e) => {
+        if (e.target === handle) return;
+        updateSlider(e.clientY);
+    });
+</script><div id="portfolio-demo-bar"><a href="../../index.html#project/love-quest" class="demo-back">← Портфолио</a><span>LOVE QUEST <small>Макеты интерфейса · пример данных</small></span><nav aria-label="Экраны демонстрации"><a href="index.html">Главная</a><a href="profile.html">Профиль</a><a href="hub.html">Кабинет</a><a href="quest.html">Квест</a><a href="result.html" aria-current="page">Результат</a></nav></div><div id="demo-toast" role="status" hidden></div></body></html>

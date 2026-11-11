@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>DATE QUEST - Initializing Profile</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&amp;family=Onest:wght@400;500;700&amp;family=Space+Grotesk:wght@400;700&amp;family=Plus+Jakarta+Sans:wght@400;500;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                "on-tertiary-fixed": "#39000d",
+                "on-primary-fixed": "#000000",
+                "surface-dim": "#0e0e0e",
+                "on-primary-container": "#360061",
+                "on-tertiary": "#680921",
+                "secondary-fixed-dim": "#ffabd1",
+                "surface-container-highest": "#262626",
+                "surface-bright": "#2c2c2c",
+                "on-primary": "#47007c",
+                "on-secondary-fixed": "#690045",
+                "error": "#ff6e84",
+                "secondary-dim": "#f271b5",
+                "primary": "#cc97ff",
+                "on-secondary-fixed-variant": "#922164",
+                "surface": "#0e0e0e",
+                "tertiary-fixed": "#ff909c",
+                "surface-container-lowest": "#000000",
+                "inverse-primary": "#842cd3",
+                "error-dim": "#d73357",
+                "outline-variant": "#494847",
+                "surface-container-high": "#201f1f",
+                "on-background": "#ffffff",
+                "inverse-on-surface": "#565554",
+                "inverse-surface": "#fcf8f8",
+                "background": "#0e0e0e",
+                "tertiary-fixed-dim": "#fa7c8b",
+                "surface-tint": "#cc97ff",
+                "error-container": "#a70138",
+                "secondary-fixed": "#ffc0db",
+                "outline": "#777575",
+                "tertiary": "#ff95a0",
+                "primary-fixed-dim": "#b971ff",
+                "surface-variant": "#262626",
+                "on-surface": "#ffffff",
+                "secondary": "#f673b7",
+                "primary-dim": "#9c48ea",
+                "tertiary-dim": "#f47786",
+                "surface-container-low": "#131313",
+                "on-tertiary-fixed-variant": "#711227",
+                "on-secondary-container": "#ffbeda",
+                "on-surface-variant": "#adaaaa",
+                "tertiary-container": "#fe7e8e",
+                "secondary-container": "#85145a",
+                "on-error-container": "#ffb2b9",
+                "on-error": "#490013",
+                "surface-container": "#1a1919",
+                "primary-fixed": "#c284ff",
+                "primary-container": "#c284ff",
+                "on-primary-fixed-variant": "#430076",
+                "on-tertiary-container": "#570018",
+                "on-secondary": "#4a002f"
+              },
+              fontFamily: {
+                "headline": ["Unbounded", "cursive"],
+                "body": ["Onest", "sans-serif"],
+                "label": ["Onest", "sans-serif"]
+              },
+              borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+              animation: {
+                'gradient-x': 'gradient-x 3s ease infinite',
+                'float': 'float 6s ease-in-out infinite',
+              },
+              keyframes: {
+                'gradient-x': {
+                  '0%, 100%': { 'background-size': '200% 200%', 'background-position': 'left center' },
+                  '50%': { 'background-size': '200% 200%', 'background-position': 'right center' },
+                },
+                'float': {
+                  '0%, 100%': { transform: 'translateY(0) scale(1)' },
+                  '50%': { transform: 'translateY(-20px) scale(1.05)' },
+                }
+              }
+            },
+          },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .luv-motion-bg {
+            background: radial-gradient(circle at 50% 50%, #0e0e0e 0%, #000000 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        .floating-heart {
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.15;
+            filter: blur(40px);
+            border-radius: 50%;
+            transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .glass-panel {
+            background: rgba(26, 25, 25, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .neon-input:focus {
+            box-shadow: 0 0 15px rgba(204, 151, 255, 0.3), inset 0 0 5px rgba(204, 151, 255, 0.1);
+            border-color: #cc97ff;
+        }
+        .magnetic-button {
+            transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.3s ease;
+        }
+    </style>
+<style>
+  @keyframes lightning-strike {
+    0% { stroke-dashoffset: 100; opacity: 0; }
+    10% { opacity: 1; }
+    40% { stroke-dashoffset: 0; opacity: 1; }
+    60% { opacity: 0.4; }
+    80% { opacity: 1; }
+    100% { stroke-dashoffset: 0; opacity: 0; }
+  }
+  .lightning-svg {
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+  }
+  .group:hover .lightning-svg {
+    animation: lightning-strike 0.5s ease-out forwards infinite;
+  }
+  .glow-intensify:hover {
+    box-shadow: 0 0 40px rgba(246, 115, 183, 0.6), 0 0 80px rgba(246, 115, 183, 0.2);
+  }
+</style><link rel="stylesheet" href="demo.css"><script src="demo.js" defer></script></head>
+<body class="bg-surface-container-lowest text-on-surface font-body h-screen flex flex-col selection:bg-primary/30 luv-motion-bg overflow-hidden" data-demo-screen="profile">
+<!-- Top Navigation Bar (Fixed) -->
+<nav class="shrink-0 z-[100] w-full px-4 py-4">
+<div class="max-w-7xl mx-auto flex items-center justify-between bg-surface-container/60 backdrop-blur-xl border border-white/5 rounded-full px-8 py-3 shadow-2xl">
+<!-- Left: Logo -->
+<div class="flex items-center gap-2">
+<span class="font-headline text-lg font-black tracking-tighter text-on-surface uppercase">
+                    DATE QUEST
+                </span>
+<span class="w-2 h-2 bg-secondary rounded-full shadow-[0_0_10px_#f673b7] animate-pulse"></span>
+</div>
+<!-- Center: Nav Links -->
+<div class="hidden md:flex items-center gap-8">
+<a class="font-headline text-[10px] font-bold tracking-[0.2em] text-on-surface-variant hover:text-primary transition-colors uppercase" href="#">Explorer</a>
+<a class="font-headline text-[10px] font-bold tracking-[0.2em] text-on-surface-variant hover:text-primary transition-colors uppercase" href="#">Vibe Stream</a>
+<a class="font-headline text-[10px] font-bold tracking-[0.2em] text-on-surface-variant hover:text-primary transition-colors uppercase" href="#">Matches</a>
+<div class="relative">
+<a class="font-headline text-[10px] font-bold tracking-[0.2em] text-primary uppercase" href="#">Profile</a>
+<div class="absolute -bottom-1 left-0 w-full h-0.5 bg-primary shadow-[0_0_8px_#cc97ff]"></div>
+</div>
+</div>
+<!-- Right: User Profile -->
+<div class="flex items-center gap-6">
+<button class="text-on-surface-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-xl">notifications</span>
+</button>
+<div class="h-6 w-px bg-white/10"></div>
+<div class="flex items-center gap-3">
+<span class="font-headline text-[11px] font-black text-on-surface tracking-tight uppercase">Alex_Chaos</span>
+<div class="w-8 h-8 rounded-full border-2 border-primary/50 overflow-hidden">
+<img alt="Avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBQ_caLgk4ogVYLtXWH11VBT4gI_pyLMz9a-BH-Ce8xiP4ZjWfE42LJ-D6p1JlX_sVfYWXZ5PMNxB-YyLvszOUraQJl3jWpnBMCuhYXRBhxbTh3IGWt8uhuuyvrnRSXqh5_Db5304cy49vZsaFvyBqIIi8mG-_o_WMYiXMBoBhRDwsSEriXHEpgfTpP0BK-YAMR6BQO5xYGwgsYqGhfqrBJ117ig_tSJfpmPgTQLcYzy0ERbZc3zjyMlgyCkT7YsXShuP-QrIk1MyB5"/>
+</div>
+</div>
+</div>
+</div>
+</nav>
+<!-- Scrollable Content Area -->
+<div class="flex-1 overflow-y-auto custom-scrollbar relative">
+<!-- Animated Background Elements -->
+<div class="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+<div class="floating-heart w-[500px] h-[500px] bg-primary/20 -top-24 -left-24 animate-float" style="animation-duration: 15s;"></div>
+<div class="floating-heart w-[400px] h-[400px] bg-secondary/15 bottom-0 -right-20 animate-float" style="animation-duration: 18s; animation-delay: -2s;"></div>
+<div class="floating-heart w-[300px] h-[300px] bg-primary/10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-float" style="animation-duration: 20s; animation-delay: -5s;"></div>
+</div>
+<!-- Progress Navigation -->
+<nav class="w-full z-50 pt-8 px-6 relative">
+<div class="max-w-md mx-auto">
+<div class="flex justify-between items-center mb-3">
+<span class="font-headline text-[10px] tracking-[0.2em] text-primary font-black uppercase">Protocol Step: 01/03</span>
+<span class="font-headline text-[10px] tracking-[0.2em] text-on-surface-variant font-medium">CHARACTER_IDENT</span>
+</div>
+<div class="h-1 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-primary w-1/3 rounded-full shadow-[0_0_15px_#cc97ff] transition-all duration-1000 ease-out"></div>
+</div>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="relative z-10 pb-12 px-6 max-w-lg mx-auto flex flex-col items-center pt-12">
+<!-- Header Section -->
+<header class="text-center mb-16">
+<h1 class="font-headline text-4xl md:text-5xl font-black text-on-surface tracking-tighter uppercase mb-4 leading-none inline-flex items-center text-center">
+                    ENTER THE ARENA
+                    <span class="inline-block w-3 h-3 bg-secondary rounded-full ml-3 shadow-[0_0_15px_#f673b7] animate-pulse"></span>
+</h1>
+<p class="text-on-surface-variant text-lg font-medium tracking-wide opacity-80">
+                    Define your digital identity.
+                </p>
+</header>
+<!-- Avatar Selection Bento Component -->
+<section class="w-full flex justify-center mb-14">
+<div class="relative group cursor-pointer transition-transform duration-500 hover:scale-[1.02]">
+<div class="absolute -inset-4 bg-gradient-to-tr from-primary/20 to-secondary/20 rounded-full blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
+<div class="relative flex flex-col items-center justify-center bg-surface-container border border-white/5 aspect-square w-64 h-64 rounded-full overflow-hidden glass-panel group-hover:border-primary/50 transition-all duration-500 shadow-2xl">
+<div class="flex flex-col items-center gap-4 text-center p-6">
+<span class="material-symbols-outlined text-5xl text-primary/70 transition-transform duration-500 group-hover:scale-110" style="font-variation-settings: 'wght' 200;">add_a_photo</span>
+<div class="space-y-1">
+<span class="block font-headline text-[11px] font-bold text-on-surface uppercase tracking-widest">Upload Avatar</span>
+<span class="block font-body text-[10px] text-on-surface-variant tracking-wider">SYNC WITH GOOGLE</span>
+</div>
+</div>
+</div>
+<!-- Mini Badge -->
+<div class="absolute bottom-6 right-8 bg-secondary text-on-secondary text-[10px] font-headline font-black px-4 py-1.5 rounded-full shadow-xl shadow-secondary/20 border border-white/10 z-20">
+                        LVL. 01
+                    </div>
+</div>
+</section>
+<!-- Form Fields Section -->
+<section class="w-full space-y-10 mb-14">
+<div class="space-y-3 group">
+<label class="font-headline text-[10px] font-bold text-primary tracking-[0.2em] uppercase ml-1 opacity-80 group-focus-within:opacity-100 transition-opacity" for="nickname">Codename (Nickname)</label>
+<div class="relative">
+<input class="neon-input w-full bg-surface-container-low/50 border border-white/10 rounded-xl py-5 px-8 text-on-surface font-headline text-sm tracking-tight focus:ring-0 transition-all outline-none placeholder:text-white/10" id="nickname" placeholder="e.g., NEON_VIOLET" type="text"/>
+<div class="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none opacity-40 group-focus-within:opacity-100 group-focus-within:text-primary transition-all">
+<span class="material-symbols-outlined text-lg">alternate_email</span>
+</div>
+</div>
+</div>
+<!-- Identity Tags (Visual Flair) -->
+<div class="flex flex-wrap gap-3 justify-center">
+<div class="bg-surface-container-high/40 px-5 py-2.5 rounded-full text-[10px] font-headline font-bold text-on-surface-variant border border-white/5 backdrop-blur-sm hover:border-primary/30 transition-colors cursor-default">ARCHETYPE: EXPLORER</div>
+<div class="bg-surface-container-high/40 px-5 py-2.5 rounded-full text-[10px] font-headline font-bold text-on-surface-variant border border-white/5 backdrop-blur-sm hover:border-secondary/30 transition-colors cursor-default">ORIGIN: UNKNOWN</div>
+</div>
+</section>
+<!-- Footer Actions -->
+<footer class="w-full mt-auto mb-16">
+<button class="magnetic-button group relative w-full overflow-hidden rounded-xl p-[2px] transition-all hover:scale-[1.01] active:scale-95 glow-intensify">
+<div class="absolute inset-0 bg-gradient-to-r from-[#f673b7] via-[#cc97ff] to-[#f673b7] animate-gradient-x"></div>
+<div class="relative bg-surface-container-lowest rounded-[calc(0.75rem-1px)] transition-colors duration-500 overflow-hidden">
+<svg class="lightning-svg absolute inset-0 w-full h-full pointer-events-none z-20 opacity-0 group-hover:opacity-100" fill="none" preserveaspectratio="none" viewbox="0 0 100 40" xmlns="http://www.w3.org/2000/svg">
+<path d="M10 20 L40 5 L35 20 L65 15 L60 35 L90 20" filter="drop-shadow(0 0 4px #f673b7)" stroke="#f673b7" stroke-width="0.5"></path>
+<path d="M5 25 L35 10 L30 25 L60 20 L55 40 L85 25" filter="drop-shadow(0 0 3px #cc97ff)" stroke="#cc97ff" stroke-width="0.3"></path>
+</svg>
+<div class="flex items-center justify-center gap-4 py-5 px-8 group-hover:bg-white/[0.03] transition-all">
+<span class="font-headline text-sm font-black tracking-[0.2em] text-on-surface">INITIALIZE PROFILE</span>
+<span class="material-symbols-outlined text-on-surface group-hover:animate-pulse" style="font-variation-settings: 'FILL' 1;">bolt</span>
+</div>
+</div>
+</button>
+<p class="text-center mt-8 text-neutral-600 font-headline text-[9px] tracking-[0.3em] uppercase opacity-60">
+                    Secure link established // Date Quest Protocol
+                </p>
+</footer>
+</main>
+<!-- Global Footer -->
+<div class="relative z-10 w-full pb-16 flex flex-col items-center gap-6 bg-transparent px-6 text-center">
+<div class="h-px w-24 bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+<span class="font-body font-bold uppercase tracking-[0.2em] text-[10px] text-primary/60">© 2024 DATE QUEST. PROTOCOL ACTIVE.</span>
+<div class="flex flex-wrap justify-center gap-x-8 gap-y-4">
+<a class="text-neutral-600 font-body font-bold uppercase tracking-widest text-[9px] hover:text-primary transition-all duration-300 hover:tracking-[0.25em]" href="#">PRIVACY_CORE</a>
+<a class="text-neutral-600 font-body font-bold uppercase tracking-widest text-[9px] hover:text-primary transition-all duration-300 hover:tracking-[0.25em]" href="#">LICENSE_AGREEMENT</a>
+<a class="text-neutral-600 font-body font-bold uppercase tracking-widest text-[9px] hover:text-primary transition-all duration-300 hover:tracking-[0.25em]" href="#">SYSTEM_STATUS</a>
+</div>
+</div>
+</div>
+<script>
+        // Simple Magnetic Button Effect
+        const button = document.querySelector('.magnetic-button');
+        if (button) {
+            button.addEventListener('mousemove', (e) => {
+                const rect = button.getBoundingClientRect();
+                const x = e.clientX - rect.left - rect.width / 2;
+                const y = e.clientY - rect.top - rect.height / 2;
+                button.style.transform = `translate(${x * 0.15}px, ${y * 0.3}px) scale(1.02)`;
+            });
+            button.addEventListener('mouseleave', () => {
+                button.style.transform = 'translate(0, 0) scale(1)';
+            });
+        }
+
+        // Mouse follow parallax for background elements
+        document.addEventListener('mousemove', (e) => {
+            const hearts = document.querySelectorAll('.floating-heart');
+            const x = e.clientX / window.innerWidth;
+            const y = e.clientY / window.innerHeight;
+            
+            hearts.forEach((heart, i) => {
+                const speed = (i + 1) * 20;
+                heart.style.transform = `translate(${x * speed}px, ${y * speed}px)`;
+            });
+        });
+    </script>
+<div id="portfolio-demo-bar"><a href="../../index.html#project/love-quest" class="demo-back">← Портфолио</a><span>LOVE QUEST <small>Макеты интерфейса · пример данных</small></span><nav aria-label="Экраны демонстрации"><a href="index.html">Главная</a><a href="profile.html" aria-current="page">Профиль</a><a href="hub.html">Кабинет</a><a href="quest.html">Квест</a><a href="result.html">Результат</a></nav></div><div id="demo-toast" role="status" hidden></div></body></html>
